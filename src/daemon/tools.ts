@@ -14,7 +14,7 @@ import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { downloadToInbox } from './media.ts'
-import { speakable, synthesize, ttsEnabled, type Voice } from '../voice/tts.ts'
+import { forVoice, synthesize, ttsEnabled, type Voice } from '../voice/tts.ts'
 import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
@@ -194,7 +194,7 @@ function wantsVoice(d: Daemon, c: ChatRef, asked: boolean): boolean {
 
 /** Synthesized voice for a reply, or null (too long, empty, TTS failed — the text still goes). */
 async function voiceFor(d: Daemon, text: string): Promise<Voice | null> {
-  const spoken = speakable(text)
+  const spoken = forVoice(text)
   if (!spoken || spoken.length > settings.voiceMaxChars) return null
   try {
     return await synthesize(spoken)
@@ -224,7 +224,7 @@ async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>):
   const text = String(args.text ?? '').trim()
   if (!text) throw new Error('text is required')
   if (!ttsEnabled()) throw new Error('TTS is off (TTS_PROVIDER=off) — reply with text instead')
-  const spoken = speakable(text)
+  const spoken = forVoice(text)
   if (spoken.length > settings.voiceMaxChars) throw new Error(`text is longer than VOICE_MAX_CHARS (${settings.voiceMaxChars}) — send it as text`)
   const v = await synthesize(spoken)
   const caption = str(args.caption)

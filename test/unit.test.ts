@@ -314,3 +314,22 @@ describe('voice text', async () => {
     expect(speakable('смотри https://example.com/a?b=1 тут')).toBe('смотри ссылка тут')
   })
 })
+
+describe('speech normalization', async () => {
+  const { normalizeForSpeech: n, numberWords } = await import('../src/voice/normalize.ts')
+  test('numbers in words', () => {
+    expect(numberWords(77)).toBe('семьдесят семь')
+    expect(numberWords(2021)).toBe('две тысячи двадцать один')
+    expect(numberWords(1600)).toBe('тысяча шестьсот')
+    expect(numberWords(1_000_001)).toBe('миллион один')
+    expect(n('тесты 77 из 77, в 23:16')).toBe('тесты семьдесят семь из семьдесят семь, в двадцать три шестнадцать')
+    expect(n('41%, 3.5, #36, 1.1.1, 09:05')).toBe('сорок один процент, три целых пять, номер тридцать шесть, один точка один точка один, девять ноль пять')
+  })
+  test('Latin read in Cyrillic', () => {
+    expect(n('Claude Code и Telegram бот')).toBe('клод код и телеграм бот')
+    expect(n('PR, CPU, GitHub, OpenAI, tmux')).toBe('пи-ар, си-пи-ю, гитхаб, оупен эй-ай, ти-макс')
+    expect(n('large-v3-turbo')).toBe('лардж-ви три-турбо')
+    expect(n('Привет')).toBe('Привет')
+    expect(/[A-Za-z0-9]/.test(n('Random English words like Kubernetes and Postgres 15'))).toBe(false)
+  })
+})
