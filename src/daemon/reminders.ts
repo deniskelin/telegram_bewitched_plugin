@@ -8,7 +8,7 @@
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { isOwner } from '../access.ts'
-import { escapeHtml } from '../format.ts'
+import { clip, escapeHtml } from '../format.ts'
 import type { ChatRef, Daemon } from './daemon.ts'
 import { button } from './stream.ts'
 
@@ -155,7 +155,7 @@ function remindersScreen(d: Daemon, chatId: string, threadId: number | undefined
   const lines = [`⏰ <b>Напоминания</b> (${mine.length})`]
   for (const r of mine) lines.push(`• ${fmtWhen(r)} — ${escapeHtml(r.text.length > 100 ? r.text.slice(0, 99) + '…' : r.text)}`)
   if (!mine.length) lines.push('Нет. ' + escapeHtml(USAGE.split('\n')[0]))
-  const kb = new InlineKeyboard(mine.slice(0, 20).map(r => [button(`🗑 ${fmtWhen(r)} · ${r.text}`.slice(0, 40), `rm:del:${r.id}`)]))
+  const kb = new InlineKeyboard(mine.slice(0, 20).map(r => [button(clip(`🗑 ${fmtWhen(r)} · ${r.text}`, 40), `rm:del:${r.id}`)]))
   return { text: lines.join('\n'), kb }
 }
 

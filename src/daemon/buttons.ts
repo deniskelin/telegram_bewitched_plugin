@@ -8,7 +8,7 @@ import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { isOwner } from '../access.ts'
 import type { QuestionRow } from '../db.ts'
-import { safeMeta } from '../format.ts'
+import { clip, safeMeta } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button, type ButtonStyle } from './stream.ts'
 
@@ -26,7 +26,7 @@ export function parseOptions(raw: unknown): Option[] {
   })
   if (opts.length < 1 || opts.length > 10) throw new Error('options: 1–10 items')
   for (const o of opts) {
-    o.label = o.label.trim().slice(0, 40)
+    o.label = clip(o.label.trim(), 40)
     if (!o.label) throw new Error('option label is empty')
   }
   return opts

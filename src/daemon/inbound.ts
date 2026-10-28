@@ -11,7 +11,7 @@ import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
-import { safeMeta } from '../format.ts'
+import { clip, safeMeta } from '../format.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
@@ -319,7 +319,7 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
 function permissionKb(requestId: string, tool: string, more: boolean): InlineKeyboard {
   const first = [button('✅ Разрешить', `perm:allow:${requestId}`, 'success'), button('❌ Запретить', `perm:deny:${requestId}`, 'danger')]
   if (more) first.unshift(button('Подробнее', `perm:more:${requestId}`))
-  return new InlineKeyboard([first, [button(`♾ Всегда ${tool} в этой сессии`.slice(0, 40), `perm:always:${requestId}`)]])
+  return new InlineKeyboard([first, [button(clip(`♾ Всегда ${tool} в этой сессии`, 40), `perm:always:${requestId}`)]])
 }
 
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {

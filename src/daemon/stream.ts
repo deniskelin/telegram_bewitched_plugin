@@ -13,7 +13,7 @@
 import { InlineKeyboard } from 'grammy'
 import { prefsFor, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
-import { fmtDuration, maskSecrets } from '../format.ts'
+import { clip, fmtDuration, maskSecrets } from '../format.ts'
 import { isMessageNotModified, sendDraft } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 
@@ -46,7 +46,7 @@ export type ButtonStyle = 'primary' | 'success' | 'danger'
 
 /** Callback button with Bot API 9.4 `style` (unknown to the bundled grammY types). */
 export function button(text: string, data: string, style?: ButtonStyle, disabled = false) {
-  return { text, callback_data: data, ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
+  return { text: clip(text, 64), callback_data: data, ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
 }
 
 export class Streams {

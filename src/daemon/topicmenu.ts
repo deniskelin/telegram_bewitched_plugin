@@ -8,7 +8,7 @@ import { InlineKeyboard, type Context } from 'grammy'
 import { isOwner } from '../access.ts'
 import { settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
-import { escapeHtml } from '../format.ts'
+import { clip, escapeHtml } from '../format.ts'
 import { topicLink } from '../tg.ts'
 import type { Daemon } from './daemon.ts'
 import { launchForTopic } from './launch.ts'
@@ -41,7 +41,7 @@ export function topicsList(d: Daemon, chatId: string, archived = false): Screen 
 
   const kb: Btn[][] = []
   for (const [i, t] of shown.slice(0, 40).entries()) {
-    const b = button(`${archived ? '🗄' : '📁'} ${plainName(t)}`.slice(0, 40), `tm:t:${t.thread_id}`)
+    const b = button(clip(`${archived ? '🗄' : '📁'} ${plainName(t)}`, 40), `tm:t:${t.thread_id}`)
     if (i % 2 === 0) kb.push([b])
     else kb.at(-1)!.push(b)
   }
