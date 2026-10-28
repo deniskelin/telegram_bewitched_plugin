@@ -298,9 +298,10 @@ export function fmtReset(at: Date, now: number): string {
   return `сброс ${when} (через ${days ? `${days} д ${Math.floor((left % 86_400_000) / 3600_000)} ч` : fmtDuration(left)})`
 }
 
+/** 20 segments, 5% each. */
 export function bar(percent: number): string {
-  const n = Math.max(0, Math.min(10, Math.round(percent / 10)))
-  return '▰'.repeat(n) + '▱'.repeat(10 - n)
+  const n = Math.max(0, Math.min(20, Math.round(percent / 5)))
+  return '▰'.repeat(n) + '▱'.repeat(20 - n)
 }
 
 /** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
@@ -416,42 +417,55 @@ async function fireResetNotice(d: Daemon, label: string, key: string): Promise<v
   resetTimers.delete(key)
   const to = owner()
   if (!to) return
-  // Requested by hand for this window: done now.
-  if (d.store.get(`limit_notify:${label}`) === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
+  // Asked for in /usage for this window (maybe silently): done now.
+  const req = parseRequest(d.store.get(`limit_notify:${label}`))
+  const silent = req?.at === key.split('|')[1] && req.silent
+  if (req?.at === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
   // The 10-minute check would otherwise announce the same reset again.
   d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
-  await d.bot.api.sendMessage(to, `✅ Токены обновились: лимит «${escapeHtml(label)}» сброшен, можно пользоваться.`, { parse_mode: 'HTML' })
+  await d.bot.api.sendMessage(to, `✅ Токены обновились: лимит «${escapeHtml(label)}» сброшен, можно пользоваться.`, { parse_mode: 'HTML', disable_notification: silent })
     .catch(err => d.log(`reset notice failed: ${err}`))
 }
 
-/** "🔔 Напомнить о сбросе" in /usage: remembered in the store, so a restart keeps it. */
-export function requestResetNotice(d: Daemon, label: string, resetsAt: Date): void {
-  d.store.set(`limit_notify:${label}`, resetsAt.toISOString())
+/** Stored as "<iso>" or "<iso>|silent". */
+function parseRequest(raw: string | null): { at: string; silent: boolean } | null {
+  if (!raw) return null
+  const [at, mode] = raw.split('|')
+  return { at, silent: mode === 'silent' }
+}
+
+/** "🔔 Напомнить о сбросе" / "🔕 Тихо" in /usage: remembered in the store, so a restart keeps it. */
+export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false): void {
+  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${silent ? '|silent' : ''}`)
   scheduleResetNotice(d, label, resetsAt)
 }
 
 function rescheduleRequested(d: Daemon): void {
   // Timers live in memory: after a restart, set again the ones asked for in /usage.
   for (const key of d.store.keys('limit_notify:')) {
-    const at = d.store.get(key)
-    if (at) scheduleResetNotice(d, key.slice('limit_notify:'.length), new Date(at))
+    const req = parseRequest(d.store.get(key))
+    if (req) scheduleResetNotice(d, key.slice('limit_notify:'.length), new Date(req.at))
   }
 }
 
-/** Under /usage: a 🔔 per limit with a reset time; ✅ marks the ones already asked for. */
+/** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
 export function usageKeyboard(d: Daemon): InlineKeyboard | undefined {
   const l = lastLimits()
   if (!l) return undefined
   const rows = l.limits.items.flatMap((it, i) => {
     if (!it.resetsAt) return []
-    const asked = d.store.get(`limit_notify:${it.label}`) === it.resetsAt.toISOString()
-    return [[button(`${asked ? '✅' : '🔔'} Напомнить о сбросе: ${it.label}`, `lr:${i}`)]]
+    const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
+    const asked = req?.at === it.resetsAt.toISOString() ? req : null
+    return [[
+      button(`${asked && !asked.silent ? '✅' : '🔔'} Напомнить о сбросе: ${it.label}`, `lr:${i}`),
+      button(`${asked?.silent ? '✅' : '🔕'} Тихо`, `lr:${i}:s`),
+    ]]
   })
   return rows.length ? new InlineKeyboard(rows) : undefined
 }
 
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^lr:(\d+)$/.exec(data)
+  const m = /^lr:(\d+)(:s)?$/.exec(data)
   if (!m) return false
   if (!ctx.from || String(ctx.from.id) !== owner()) {
     await ctx.answerCallbackQuery({ text: 'Только для владельца подписки.' }).catch(() => {})
@@ -462,8 +476,9 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
     await ctx.answerCallbackQuery({ text: 'Данные о лимитах устарели — откройте /usage заново.' }).catch(() => {})
     return true
   }
-  requestResetNotice(d, it.label, it.resetsAt)
-  await ctx.answerCallbackQuery({ text: `🔔 Напомню ${fmtReset(it.resetsAt, Date.now()).replace(/^сброс /, '')}` }).catch(() => {})
+  const silent = !!m[2]
+  requestResetNotice(d, it.label, it.resetsAt, silent)
+  await ctx.answerCallbackQuery({ text: `${silent ? '🔕 Тихо напомню' : '🔔 Напомню'} ${fmtReset(it.resetsAt, Date.now()).replace(/^сброс /, '')}` }).catch(() => {})
   await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
   return true
 }

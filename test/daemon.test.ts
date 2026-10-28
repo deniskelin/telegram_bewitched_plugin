@@ -380,7 +380,7 @@ describe('topics', () => {
       const text = String(r.body.text)
       expect(auth).toBe('Bearer tok')
       expect(text).toContain('Подписка</b>: Max 20x')
-      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▱▱▱▱▱▱')
+      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱')
       expect(text).toContain('Неделя: <b>7%</b>')
       expect(text).toContain('через 3 д')
       expect(text).toContain('За неделю: Claude Code 90%, Chats 10%')
@@ -527,9 +527,9 @@ describe('topics', () => {
       await check(4)
       await check(3)
       expect(notices()).toEqual([
-        '⚠️ Лимит «5 часов»: <b>85%</b> ▰▰▰▰▰▰▰▰▰▱',
-        '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰',
-        '✅ Лимит «5 часов» восстановился: 4% ▱▱▱▱▱▱▱▱▱▱',
+        '⚠️ Лимит «5 часов»: <b>85%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱',
+        '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱',
+        '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
       ])
       expect(renderDashboard(d)).toContain('📊 5 часов 3%')
 
@@ -546,6 +546,15 @@ describe('topics', () => {
       await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔔 Напомню'))
       expect(d.store.get('limit_notify:5 часов')).toBeTruthy()
       expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Напомнить о сбросе: 5 часов')
+      // 🔕: the same reminder, delivered without sound.
+      tg.push(callbackQuery('lr:0:s'))
+      await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔕 Тихо напомню'))
+      expect(d.store.get('limit_notify:5 часов')).toEndWith('|silent')
+      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Тихо')
+      const { requestResetNotice } = await import('../src/daemon/usage.ts')
+      requestResetNotice(d, 'Тихий', new Date(Date.now() - 29_900), true)
+      const quiet = await tg.waitFor('sendMessage', c => String(c.body.text).includes('лимит «Тихий» сброшен'))
+      expect(quiet.body.disable_notification).toBe(true)
       tg.push(callbackQuery('lr:0', { from: 222 }))
       await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Только для владельца подписки.')
     } finally {
