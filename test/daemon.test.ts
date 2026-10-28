@@ -1081,6 +1081,22 @@ describe('voice', () => {
   }, 20_000)
 })
 
+describe('server stats', () => {
+  test('/server: CPU, memory, disks, sessions; 🔄 refreshes; owner only', async () => {
+    tg.push(textMessage({ text: '/server' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const text = String(r.body.text)
+    for (const part of ['⚙️ CPU: <b>', '🧠 Память: <b>', '💾 Диск /: <b>', '🤖 Claude Code:', '🔥 <b>Больше всего CPU</b>', '🐘 <b>Больше всего памяти</b>']) expect(text).toContain(part)
+    expect(JSON.stringify(r.body.reply_markup)).toContain('srv:refresh')
+    tg.push(callbackQuery('srv:refresh'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const before = tg.callsOf('sendMessage').length
+    tg.push(textMessage({ from: 333, text: '/server' }))
+    await Bun.sleep(1500)
+    expect(tg.callsOf('sendMessage').slice(before).some(c => String(c.body.text).startsWith('🖥'))).toBe(false)
+  }, 15_000)
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

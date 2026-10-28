@@ -136,6 +136,7 @@ void d.startPolling(bot => {
     { command: 'invite', description: 'Пригласить пользователя' },
     { command: 'users', description: 'Пользователи и удаление доступа' },
     { command: 'usage', description: 'Лимиты подписки и расход' },
+    { command: 'server', description: 'Нагрузка сервера: CPU, память, диски' },
     { command: 'digest', description: 'Итоги дня' },
     { command: 'reports', description: 'Отчёты о потреблении с графиком' },
     { command: 'status', description: 'Состояние бота и демона' },
