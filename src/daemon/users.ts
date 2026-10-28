@@ -45,8 +45,7 @@ function fmtSize(n: number): string {
 }
 
 function label(d: Daemon, id: string): string {
-  const name = d.userName(id)
-  return name ? `${name} (${id})` : id
+  return d.userLabel(id)
 }
 
 /** What removal will touch, for the confirmation. */
@@ -112,6 +111,7 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
   const reminders = listReminders(d)
   d.store.set('reminders', JSON.stringify(reminders.filter(r => r.chatId !== id)))
   d.store.set(`user_name:${id}`, null)
+  d.store.set(`user_info:${id}`, null)
   done.push(`✅ история лички: ${msgs} сообщ., очередь: ${queued}, напоминаний: ${reminders.length - listReminders(d).length}`)
 
   if (o.kick && d.topicsChatId) {

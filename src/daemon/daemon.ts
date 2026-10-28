@@ -58,6 +58,8 @@ export type Session = {
   argv: string[]
 }
 
+export type UserInfo = { first?: string; last?: string; username?: string }
+
 export type SockData = { decoder: LineDecoder; session: Session | null }
 
 export type PendingPermission = {
@@ -148,9 +150,31 @@ export class Daemon {
     return m ? m[1] : null
   }
 
-  /** How to call a user: their last Telegram name, else the one saved when they were invited. */
-  userName(userId: string): string | null {
-    return this.store.lastSenderName(userId) ?? this.store.get(`user_name:${userId}`)
+  /** Telegram profile of a user as last seen (messages, invite, getChat). */
+  userInfo(userId: string): UserInfo | null {
+    try {
+      return JSON.parse(this.store.get(`user_info:${userId}`) ?? 'null')
+    } catch {
+      return null
+    }
+  }
+
+  rememberUser(userId: string, info: UserInfo): void {
+    const clean: UserInfo = {
+      ...(info.first ? { first: info.first } : {}),
+      ...(info.last ? { last: info.last } : {}),
+      ...(info.username ? { username: info.username } : {}),
+    }
+    const json = JSON.stringify(clean)
+    if (json !== '{}' && this.store.get(`user_info:${userId}`) !== json) this.store.set(`user_info:${userId}`, json)
+  }
+
+  /** "Денис Келин (@deniskelin, 140211098)": full name, username if any, and the id. */
+  userLabel(userId: string): string {
+    const i = this.userInfo(userId)
+    const name = [i?.first, i?.last].filter(Boolean).join(' ') || this.store.get(`user_name:${userId}`) || this.store.lastSenderName(userId)
+    if (name && name !== i?.username) return `${name} (${[i?.username ? `@${i.username}` : null, userId].filter(Boolean).join(', ')})`
+    return i?.username ? `@${i.username} (${userId})` : userId
   }
 
   userSession(userId: string): Session | null {

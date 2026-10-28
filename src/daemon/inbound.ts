@@ -116,7 +116,7 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
       return launchForTopic(d, chat.chatId, target.threadId, target.projectKey)
     case 'user_offline':
       d.store.addPending(userPendingKey(target.userId), text, meta)
-      return launchUserSession(d, target.userId, d.userName(target.userId) ?? target.userId, { chatId: chat.chatId, threadId: chat.threadId })
+      return launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId: chat.chatId, threadId: chat.threadId })
     case 'offline':
     case 'waiting':
       d.store.addPending(target.projectKey, text, meta)
@@ -173,6 +173,7 @@ async function handleInbound(
     forward: msg.forward_origin ? JSON.stringify(msg.forward_origin) : null,
   })
   if (threadId != null) d.store.touchTopic(chatId, threadId)
+  d.rememberUser(String(from.id), { first: from.first_name, last: from.last_name, username: from.username })
 
   // Permission reply typed as text ("yes abcde").
   const permMatch = PERMISSION_REPLY_RE.exec(text)
@@ -235,7 +236,7 @@ async function handleInbound(
   }
   if (target.kind === 'user_offline') {
     d.store.addPending(userPendingKey(target.userId), text, meta)
-    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name, { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
+    void launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
     return
   }
   if (target.kind === 'launch') {

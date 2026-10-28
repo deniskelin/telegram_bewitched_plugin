@@ -34,7 +34,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
   if (d.activeSessions().some(o => o.projectKey === s.projectKey)) return // restarted meanwhile
   const role = d.roleOf(s)
   const user = d.userIdOf(s)
-  const name = user ? `👤 ${d.userName(user) ?? user}` : role === 'main' ? '👑 главная' : `📂 ${s.projectName}`
+  const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? '👑 главная' : `📂 ${s.projectName}`
   const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey) }
   const id = randomBytes(4).toString('hex')
   d.store.set(`wd:${id}`, JSON.stringify(restart))
