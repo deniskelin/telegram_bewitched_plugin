@@ -59,6 +59,19 @@ export async function tmuxLaunch(dir: string): Promise<string> {
   return run(['new-window', '-d', '-P', '-F', '#{window_index}', '-t', `${sess}:`, '-n', name, '-c', dir, settings.launchCmd])
 }
 
+export type TmuxLocation = { session: string; window: string; windowName: string; pane: string }
+
+/** Session, window and pane of a tmux pane id — what you need to attach from a terminal. */
+export async function tmuxLocation(pane: string): Promise<TmuxLocation | null> {
+  try {
+    const out = await run(['display-message', '-p', '-t', pane, '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}'])
+    const [session, window, windowName, idx] = out.split('\t')
+    return session ? { session, window, windowName, pane: idx } : null
+  } catch {
+    return null
+  }
+}
+
 async function say(d: Daemon, chatId: string, threadId: number | undefined, html: string): Promise<void> {
   await d.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', ...(threadId != null ? { message_thread_id: threadId } : {}) }).catch(err => d.log(`launch notice failed: ${err}`))
 }

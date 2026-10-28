@@ -292,6 +292,11 @@ export class Store {
     this.db.query('INSERT INTO pending (project_key, content, meta, created_at) VALUES (?, ?, ?, ?)').run(projectKey, content, JSON.stringify(meta), Date.now())
   }
 
+  pendingCount(projectKey: string, ttlH: number): number {
+    const cutoff = Date.now() - ttlH * 3600_000
+    return this.db.query<{ n: number }, [string, number]>('SELECT COUNT(*) AS n FROM pending WHERE project_key = ? AND created_at >= ?').get(projectKey, cutoff)?.n ?? 0
+  }
+
   takePending(projectKey: string, ttlH: number): { content: string; meta: Record<string, string>; created_at: number }[] {
     const cutoff = Date.now() - ttlH * 3600_000
     const rows = this.db.query<{ id: number; content: string; meta: string; created_at: number }, [string, number]>(

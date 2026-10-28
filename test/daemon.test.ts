@@ -272,6 +272,28 @@ describe('topics', () => {
     await main.inbound(x => x.content === 'снова главной')
   })
 
+  test('/topics shows a card per session with its tmux target, plus topics without a session', async () => {
+    d.tmuxLocation = async p => (p === '%9' ? { session: 'work', window: '2', windowName: 'tmuxed', pane: '0' } : null)
+    const t = new FakeClient()
+    await t.connect({ cwd: '/tmp/tmuxed', projectRoot: '/tmp/tmuxed', tmuxPane: '%9', branch: 'feat', claudePid: 99 })
+    await tg.waitFor('createForumTopic', c => c.body.name === 'tmuxed')
+    tg.push(textMessage({ text: '/topics' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии и топики'))
+    const text = String(r.body.text)
+    expect(r.body.parse_mode).toBe('HTML')
+    expect(text.indexOf('👑 <b>Главная</b>')).toBeLessThan(text.indexOf('📂 <b>proj</b>'))
+    expect(text).toContain(`#${sessionId}`)
+    expect(text).toContain('🖥 tmux: <b>work</b> · окно 2 «tmuxed» · панель 0')
+    expect(text).toContain('tmux attach -t work:2')
+    expect(text).toContain('⏹ Стоп: доступен')
+    expect(text).toContain('🌿 <code>feat</code>')
+    expect(text).toContain('🖥 не в tmux')
+    expect(text).toContain('💤 <b>Без сессии</b>')
+    expect(text).toContain('/tmp/other')
+    expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
+    t.close()
+  })
+
   test('notify over HTTP reaches a topic by name; bad token is rejected', async () => {
     const url = `http://127.0.0.1:${settings.httpPort}/notify`
     const bad = await fetch(url, { method: 'POST', headers: { authorization: 'Bearer nope' }, body: '{}' })
