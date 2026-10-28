@@ -969,6 +969,18 @@ describe('user labels', () => {
     d.rememberUser('903', { username: 'cee' })
     expect(d.userLabel('903')).toBe('@cee (903)')
     expect(d.userLabel('904')).toBe('904')
+    // A long name in a session button must not be cut inside an emoji (Telegram rejects such text).
+    const { sessionsList } = await import('../src/daemon/menu.ts')
+    d.rememberUser('111', { first: 'Лиза', last: 'Келина-Длиннофамильная', username: 'lizka_kuz' })
+    process.env.USER_SESSIONS = 'on'
+    const u = new FakeClient()
+    await u.connect({ cwd: `${process.env.USERS_DIR}/111`, projectRoot: `${process.env.USERS_DIR}/111`, claudePid: 9911 })
+    const list = await sessionsList(d)
+    for (const row of (list.kb as unknown as { inline_keyboard: { text: string }[][] }).inline_keyboard) {
+      for (const b of row) expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(b.text)).toBe(false)
+    }
+    u.close()
+    process.env.USER_SESSIONS = 'off'
     tg.push(textMessage({ from: 111, text: 'кто я' }))
     await Bun.sleep(200)
     expect(d.userLabel('111')).toBe('Den (@den, 111)')

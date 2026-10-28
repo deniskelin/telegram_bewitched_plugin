@@ -7,7 +7,7 @@
 import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { isOwner, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
-import { escapeHtml } from '../format.ts'
+import { clip, escapeHtml } from '../format.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
@@ -38,7 +38,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
 
   const rows: Btn[][] = []
   for (const [i, s] of list.entries()) {
-    const b = button(`${sessionLabel(d, s)} ${statusLabel(s).slice(0, 2)}`.slice(0, 40), `sm:s:${s.id}`)
+    const b = button(clip(`${sessionLabel(d, s)} ${statusLabel(s).slice(0, 2)}`, 40), `sm:s:${s.id}`)
     if (i % 2 === 0) rows.push([b])
     else rows.at(-1)!.push(b)
   }
@@ -65,7 +65,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s.alwaysAllow.size) rows.push([button('♾ Снова спрашивать разрешения', `sm:aar:${s.id}`)])
   if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button('🧠 Модель', `sm:mdl:${s.id}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-  if (link) rows.push([InlineKeyboard.url(`💬 Открыть топик «${s.topic!.name}»`.slice(0, 40), link)])
+  if (link) rows.push([InlineKeyboard.url(clip(`💬 Открыть топик «${s.topic!.name}»`, 40), link)])
 
   // The current value is marked; tapping it again does nothing harmful.
   rows.push(([0, 1, 2] as const).map(v => button(`${p.verbose === v ? '• ' : ''}${verboseBadge(v)}`, `sm:v:${s.id}:${v}`, p.verbose === v ? 'primary' : undefined)))
@@ -251,7 +251,7 @@ export function permissionsScreen(d: Daemon): Screen {
     const who = s ? sessionLabel(d, s) : `#${p.sessionId}`
     const desc = p.description.length > 80 ? p.description.slice(0, 79) + '…' : p.description
     lines.push(`• ${escapeHtml(who)} · <b>${escapeHtml(p.tool_name)}</b>${desc ? ` — ${escapeHtml(desc)}` : ''}`)
-    rows.push([button(`✅ ${p.tool_name} · ${who}`.slice(0, 40), `perm:allow:${rid}`, 'success'), button('❌', `perm:deny:${rid}`, 'danger')])
+    rows.push([button(clip(`✅ ${p.tool_name} · ${who}`, 40), `perm:allow:${rid}`, 'success'), button('❌', `perm:deny:${rid}`, 'danger')])
   }
   if (!items.length) lines.push('Ничего не ждёт.')
   rows.push([button('« К сессиям', 'sm:list'), button('🔄', 'sm:perms')])

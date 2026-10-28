@@ -122,3 +122,12 @@ export function fmtDuration(ms: number): string {
   if (m < 60) return r ? `${m} мин ${r} с` : `${m} мин`
   return `${Math.floor(m / 60)} ч ${m % 60} мин`
 }
+
+/**
+ * At most `max` characters, cut on whole code points (a cut through an emoji's
+ * surrogate pair makes Telegram reject the text as invalid UTF-8), with "…".
+ */
+export function clip(s: string, max: number): string {
+  const chars = Array.from(s)
+  return chars.length <= max ? s : chars.slice(0, max - 1).join('') + '…'
+}

@@ -10,7 +10,7 @@ import { existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { join, resolve, sep } from 'path'
 import { loadAccess, owner, saveAccess } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
-import { escapeHtml } from '../format.ts'
+import { clip, escapeHtml } from '../format.ts'
 import { userPendingKey, type Daemon } from './daemon.ts'
 import { show } from './menu.ts'
 import { listReminders } from './reminders.ts'
@@ -132,7 +132,7 @@ function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   for (const id of rest) {
     const s = d.userSession(id)
     lines.push(`👤 ${escapeHtml(label(d, id))} · ${s ? `сессия #${s.id}` : 'сессия не запущена'}`)
-    kb.push([button(`🚫 ${label(d, id)}`.slice(0, 40), `ur:ask:${id}`)])
+    kb.push([button(clip(`🚫 ${label(d, id)}`, 40), `ur:ask:${id}`)])
   }
   if (!rest.length) lines.push('', 'Кроме вас — никого.')
   kb.push([button('👥 Пригласить', 'inv:start')])

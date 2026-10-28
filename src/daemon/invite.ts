@@ -10,7 +10,7 @@ import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { loadAccess, owner, saveAccess } from '../access.ts'
 import { settings } from '../config.ts'
-import { escapeHtml } from '../format.ts'
+import { clip, escapeHtml } from '../format.ts'
 import type { Daemon } from './daemon.ts'
 import { screenKb, sessionName } from './launch.ts'
 import { button } from './stream.ts'
@@ -106,7 +106,7 @@ export async function onUserAdded(d: Daemon, id: string): Promise<void> {
   }
   let groupLink: string | null = null
   if (d.topicsChatId) {
-    groupLink = await d.bot.api.createChatInviteLink(d.topicsChatId, { name: `invite ${name}`.slice(0, 32), member_limit: 1 })
+    groupLink = await d.bot.api.createChatInviteLink(d.topicsChatId, { name: clip(`invite ${name}`, 32), member_limit: 1 })
       .then(l => l.invite_link ?? null, err => { d.log(`invite link failed: ${err}`); return null })
     if (!groupLink) done.push('⚠️ Ссылку в группу сделать не вышло: дайте боту право «Приглашать пользователей» или добавьте человека в группу сами.')
   }

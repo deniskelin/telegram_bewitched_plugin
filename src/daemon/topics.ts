@@ -11,7 +11,7 @@ import { join } from 'path'
 import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
-import { fmtDuration, safeMeta } from '../format.ts'
+import { clip, fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
@@ -376,7 +376,7 @@ function splitNameArg(arg: string): [string, string] | null {
 function topicsListKeyboard(d: Daemon, rows: TopicRow[]): InlineKeyboard {
   const kb: ReturnType<typeof button>[][] = []
   for (const t of rows.slice(0, 20)) {
-    const row = [button(`${t.status === 'archived' ? '🗄' : '📁'} ${t.name.replace(ARCHIVE_PREFIX, '')}`.slice(0, 40), `tp:info:${t.thread_id}`)]
+    const row = [button(clip(`${t.status === 'archived' ? '🗄' : '📁'} ${t.name.replace(ARCHIVE_PREFIX, '')}`, 40), `tp:info:${t.thread_id}`)]
     row.push(t.status === 'archived' ? button('↩️', `tp:unar:${t.thread_id}`) : button('🗄', `tp:ar:${t.thread_id}`))
     row.push(button('🗑', `tp:del:${t.thread_id}`, 'danger'))
     kb.push(row)

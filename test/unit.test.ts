@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { chunk, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
+import { chunk, clip, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
 import { isPassiveLaunch } from '../src/proc.ts'
 import { Store } from '../src/db.ts'
 import { parseOptions } from '../src/daemon/buttons.ts'
@@ -23,6 +23,16 @@ describe('format', () => {
     expect(maskSecrets('TOKEN 123456789:AAHfiqksKZ8aaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe('TOKEN •••')
     expect(maskSecrets('export API_KEY=abc123')).toBe('export API_KEY=•••')
     expect(maskSecrets('ghp_abcdefghijklmnopqrstuvwxyz0123')).toBe('•••')
+  })
+
+  test('clip cuts on code points, never inside an emoji', () => {
+    const s = '👤 Лиза Келина (@lizka_kuz, 478996623) 🟢'
+    const c = clip(s, 20)
+    expect(Array.from(c).length).toBe(20)
+    expect(s.slice(0, 40)).not.toBe(s) // what used to happen: a cut inside 🟢
+    expect(Buffer.from(c, 'utf8').toString('utf8')).toBe(c)
+    expect(clip('👤'.repeat(30), 21)).toBe('👤'.repeat(20) + '…')
+    expect(clip('short', 40)).toBe('short')
   })
 
   test('summarizeTool', () => {
