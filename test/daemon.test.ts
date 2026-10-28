@@ -367,3 +367,21 @@ describe('paired users', () => {
     expect(client.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === 'я чужой')).toBe(false)
   })
 })
+
+describe('reconnects', () => {
+  test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
+    const pid = process.pid // alive, so it survives pruning
+    const a = new FakeClient()
+    await a.connect({ cwd: '/tmp/re', projectRoot: '/tmp/re', claudePid: pid })
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🟢 Сессия подключена') && c.body.message_thread_id != null && d.store.topicForProject('-100500', '/tmp/re')?.thread_id === c.body.message_thread_id)
+    a.close()
+    await Bun.sleep(100)
+    const before = tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🟢')).length
+    const b = new FakeClient()
+    await b.connect({ cwd: '/tmp/re', projectRoot: '/tmp/re', claudePid: pid })
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🟢')).length).toBe(before)
+    expect(b.msgs.some(m => m.t === 'inbound')).toBe(false)
+    b.close()
+  })
+})

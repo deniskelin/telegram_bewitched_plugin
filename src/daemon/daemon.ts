@@ -180,7 +180,9 @@ export class Daemon {
       lastChat: null,
       turn: null,
       notes: [],
-      reconnect: h.reconnect === true,
+      // The daemon may have restarted (and lost its memory) while this Claude
+      // process kept running: remember greeted processes in the store.
+      reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),
     }
     this.sessions.set(id, s)
     this.log(`session ${id} connected: ${projectKey}${h.passive ? ' (passive)' : ''} pid=${h.claudePid}`)
@@ -198,6 +200,14 @@ export class Daemon {
   }
 
   // --- IPC server ---
+
+  /** Forget greeted Claude processes that are gone (pids get recycled). */
+  pruneGreeted(): void {
+    for (const k of this.store.keys('greeted:')) {
+      const pid = Number(k.slice('greeted:'.length))
+      if (!isAlive(pid) || !cmdlineOf(pid).length) this.store.set(k, null)
+    }
+  }
 
   listen(sockFile = SOCK_FILE): void {
     rmSync(sockFile, { force: true })
@@ -244,6 +254,7 @@ export class Daemon {
         } catch (err) {
           this.log(`session ${session.id} setup failed: ${err}`)
         }
+        if (session.claudePid != null) this.store.set(`greeted:${session.claudePid}`, String(Date.now()))
         this.send(session, { t: 'welcome', session: session.id, topic: session.topic })
         this.onSessionsChanged()
         return

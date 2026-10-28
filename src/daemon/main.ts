@@ -75,6 +75,7 @@ function shutdown(code = 0): void {
 process.on('SIGTERM', () => shutdown())
 process.on('SIGINT', () => shutdown())
 
+d.pruneGreeted()
 d.listen()
 startHttp(d)
 startQuestionExpiry(d)

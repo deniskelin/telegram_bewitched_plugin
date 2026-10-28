@@ -146,7 +146,9 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
       s.branch ? `🌿 ${s.branch}` : null,
       s.tmuxPane ? '⏹ Стоп доступен (tmux)' : '⏹ Стоп недоступен: сессия не в tmux',
     ].filter(Boolean).join('\n')
-    await sendToSession(d, s, c => d.bot.api.sendMessage(c.chatId, card, { message_thread_id: c.threadId, disable_notification: true })).catch(() => {})
+    // One status card per topic: replace the previous one instead of stacking them up.
+    const sent = await sendToSession(d, s, c => d.bot.api.sendMessage(c.chatId, card, { message_thread_id: c.threadId, disable_notification: true })).catch(() => null)
+    if (sent) replaceStatusCard(d, String(sent.chat.id), s.topic?.threadId, sent.message_id)
   }
 
   const parts: string[] = []
@@ -175,11 +177,21 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
 }
 
+function replaceStatusCard(d: Daemon, chatId: string, threadId: number | undefined, messageId: number): void {
+  const key = `status_card:${chatId}:${threadId ?? 0}`
+  const prev = Number(d.store.get(key))
+  if (prev && prev !== messageId) void d.bot.api.deleteMessage(chatId, prev).catch(() => {})
+  d.store.set(key, String(messageId))
+}
+
 export function onSessionGone(d: Daemon, s: Session): void {
   if (!s.topic || s.passive) return
   // Another live session may still serve this topic (TOPIC_MODE=project).
   if (d.activeSessions().some(o => o.topic?.threadId === s.topic!.threadId && o.topic.chatId === s.topic!.chatId)) return
-  void d.bot.api.sendMessage(s.topic.chatId, '⚪️ Сессия отключена', { message_thread_id: s.topic.threadId, disable_notification: true }).catch(() => {})
+  const { chatId, threadId } = s.topic
+  void d.bot.api.sendMessage(chatId, '⚪️ Сессия отключена', { message_thread_id: threadId, disable_notification: true })
+    .then(m => replaceStatusCard(d, chatId, threadId, m.message_id))
+    .catch(() => {})
 }
 
 // --------------------------------------------------------------------------
