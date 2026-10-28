@@ -42,7 +42,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
     if (i % 2 === 0) rows.push([b])
     else rows.at(-1)!.push(b)
   }
-  rows.push([...(d.permissions.size ? [button(`🔐 Разрешения (${d.permissions.size})`, 'sm:perms')] : []), button('🔄 Обновить', 'sm:list')])
+  rows.push([...(d.permissions.size ? [button(`🔐 Разрешения (${d.permissions.size})`, 'sm:perms')] : []), button('👥 Пригласить', 'inv:start'), button('🔄 Обновить', 'sm:list')])
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 

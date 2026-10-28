@@ -96,6 +96,8 @@ export class FakeTelegram {
         return { id: Number(body.chat_id), type: 'supergroup', title: 'Test Group', is_forum: true }
       case 'getChatMember':
         return { status: 'administrator', user: { id: 999, is_bot: true, first_name: 'Test' }, can_manage_topics: true, can_pin_messages: true, can_delete_messages: true }
+      case 'createChatInviteLink':
+        return { invite_link: 'https://t.me/+fakeInvite', creator: { id: 999, is_bot: true, first_name: 'Test' }, creates_join_request: false, is_primary: false, is_revoked: false, name: body.name, member_limit: body.member_limit }
       case 'getFile':
         return { file_id: body.file_id, file_unique_id: 'u1', file_path: 'photos/x.jpg' }
       default:

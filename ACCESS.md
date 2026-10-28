@@ -16,6 +16,10 @@ All state lives in `~/.claude/channels/telegram-bewitched/access.json`. The `/te
 | `ackReaction` quirk | Fixed whitelist only; non-whitelisted emoji silently do nothing |
 | Config file | `~/.claude/channels/telegram-bewitched/access.json` |
 
+## Inviting from the bot
+
+The owner (the first entry in `allowFrom`) can also add people without pairing codes: `/invite` in the bot's DM, or «👥 Пригласить» in `/sessions`. Telegram's contact picker returns the person's user ID; after a confirmation the bot adds it to `allowFrom`, prepares `USERS_DIR/<id>` and starts their session, creates a single-use link to the topics group (needs the bot's "invite users" right) and sends the owner a message to forward. Everyone in `allowFrom` has the same full rights. Works in `static` mode only after a restart (the file is written, the snapshot is not).
+
 ## DM policies
 
 `dmPolicy` controls how DMs from senders not on the allowlist are handled.
