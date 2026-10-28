@@ -1,5 +1,5 @@
 /**
- * Session cards for /sessions and /topics: type, status, id, folder, branch,
+ * Session cards for /sessions: type, status, id, folder, branch,
  * topic, tmux target to attach from a terminal, stop availability, timing.
  */
 
@@ -14,8 +14,6 @@ import { remoteControl } from './remote.ts'
 import { sessionCostLine } from './usage.ts'
 import { guessTranscript, transcriptInfo } from './transcript.ts'
 
-const ARCHIVE_PREFIX = '🗄 '
-const MAX_MESSAGE = 4000
 
 export function statusLabel(s: Session): string {
   if (s.status === 'waiting') return '🟡 ждёт разрешения'
@@ -92,7 +90,7 @@ function transcriptOf(s: Session, argv: string[]): string | null {
  * topic), the essentials in a quote (how to attach, mode/stop/RC, model and
  * context, current action) and the rest in a collapsed quote.
  */
-export async function sessionCard(d: Daemon, s: Session, o: { lastTool?: boolean } = {}): Promise<string> {
+export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
   const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
@@ -138,7 +136,7 @@ export async function sessionCard(d: Daemon, s: Session, o: { lastTool?: boolean
   }
   const cost = sessionCostLine(s)
   if (cost) main.push(cost)
-  if (s.lastTool && o.lastTool !== false) {
+  if (s.lastTool) {
     const tool = escapeHtml(s.lastTool.text.slice(0, 80))
     main.push(s.turn && s.lastTool.at >= s.turn.start ? `🔧 ${tool}` : `🔧 ${tool} · ${fmtDuration(now - s.lastTool.at)} назад`)
   }
@@ -180,50 +178,7 @@ export async function passiveBlock(d: Daemon): Promise<string | null> {
   return `👻 <b>Без канала</b> (${list.length}) — сообщений не получают\n` + items.join('\n')
 }
 
-/** Footer shared by both reports. */
+/** Footer of the /sessions list. */
 export function footer(d: Daemon): string {
   return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() ? '' : ' · главная не запущена'}`
-}
-
-export async function topicsReport(d: Daemon, chatId: string): Promise<string[]> {
-  const list = sortedSessions(d)
-  const rows = d.store.topics(chatId)
-  const blocks = [`📋 <b>Сессии и топики</b> · сессий ${list.length}, топиков ${rows.length}`]
-  // The overview leaves out the last action: it is in the session's own card in /sessions.
-  for (const s of list) blocks.push(await sessionCard(d, s, { lastTool: false }))
-
-  const served = new Set(list.map(s => s.topic && `${s.topic.chatId}:${s.topic.threadId}`).filter(Boolean))
-  const idle = rows.filter(t => t.status !== 'archived' && !served.has(`${t.chat_id}:${t.thread_id}`)
-    && !(t.project_key && list.some(s => s.projectKey === t.project_key)))
-  if (idle.length) {
-    const main = d.mainSession()
-    blocks.push(`💤 <b>Без сессии</b>${main ? ' — пишет главная' : ''}\n` + idle.map(t => {
-      const link = topicLink(t.chat_id, t.thread_id)
-      const name = escapeHtml(t.name)
-      const n = t.project_key ? d.store.pendingCount(t.project_key, settings.pendingTtlH) : 0
-      return `• ${link ? `<a href="${link}">${name}</a>` : name}${n ? ` · в очереди ${n}` : ''}`
-        + (t.project_key ? `\n   <code>${escapeHtml(t.project_key)}</code>` : '\n   не привязан к проекту')
-    }).join('\n'))
-  }
-  const archived = rows.filter(t => t.status === 'archived')
-  if (archived.length) blocks.push(`🗄 <b>Архив</b>: ${archived.map(t => escapeHtml(t.name.replace(ARCHIVE_PREFIX, ''))).join(', ')}`)
-  const passive = await passiveBlock(d)
-  if (passive) blocks.push(passive)
-  blocks.push(footer(d))
-  return pack(blocks)
-}
-
-/** Blocks joined by blank lines, split into messages under Telegram's limit. */
-function pack(blocks: string[]): string[] {
-  const out: string[] = []
-  let cur = ''
-  for (const b of blocks) {
-    const next = cur ? `${cur}\n\n${b}` : b
-    if (next.length > MAX_MESSAGE && cur) {
-      out.push(cur)
-      cur = b
-    } else cur = next
-  }
-  if (cur) out.push(cur)
-  return out
 }

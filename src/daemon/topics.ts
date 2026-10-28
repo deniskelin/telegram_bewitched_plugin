@@ -17,8 +17,9 @@ import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Sessi
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
 import { sessionsList } from './menu.ts'
+import { topicsList } from './topicmenu.ts'
 import { limitsLine } from './usage.ts'
-import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -384,7 +385,7 @@ function topicsListKeyboard(d: Daemon, rows: TopicRow[]): InlineKeyboard {
 }
 
 /** Sessions currently served by a topic. */
-function sessionsOfTopic(d: Daemon, chatId: string, threadId: number): Session[] {
+export function sessionsOfTopic(d: Daemon, chatId: string, threadId: number): Session[] {
   const t = d.store.topic(chatId, threadId)
   return d.activeSessions().filter(s => (s.topic?.chatId === chatId && s.topic.threadId === threadId) || (t?.project_key != null && s.projectKey === t.project_key))
 }
@@ -447,17 +448,6 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   const requireControl = (ctx: Context): boolean => isControlChat(d, ctx)
   const topicsChat = (): string | null => d.topicsChatId
 
-  /** Several HTML messages; the keyboard goes under the last one. */
-  const replyReport = async (ctx: Context, parts: string[], kb?: InlineKeyboard) => {
-    for (const [i, text] of parts.entries()) {
-      await ctx.reply(text, {
-        parse_mode: 'HTML',
-        link_preview_options: { is_disabled: true },
-        ...(i === parts.length - 1 && kb ? { reply_markup: kb } : {}),
-      })
-    }
-  }
-
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
     const { text, kb } = await sessionsList(d)
@@ -468,8 +458,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
     if (!chat) return void ctx.reply('Группа для топиков не подключена. В личке с ботом: /connect_group')
-    const rows = d.store.topics(chat)
-    await replyReport(ctx, await topicsReport(d, chat), rows.length ? topicsListKeyboard(d, rows) : undefined)
+    const { text, kb } = topicsList(d, chat)
+    await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb, message_thread_id: threadOf(ctx) })
   })
 
   bot.command('send', async ctx => {

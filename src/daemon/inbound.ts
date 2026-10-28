@@ -21,6 +21,7 @@ import { handleWatchdogCallback } from './watchdog.ts'
 import { digestReport, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
+import { handleTopicMenu } from './topicmenu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -420,6 +421,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
+    if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

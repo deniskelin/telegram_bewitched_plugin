@@ -17,9 +17,9 @@ import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { transcriptInfo } from './transcript.ts'
 
-const MAX_MESSAGE = 4000
-type Screen = { text: string; kb: InlineKeyboard }
-type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>
+export const MAX_MESSAGE = 4000
+export type Screen = { text: string; kb: InlineKeyboard }
+export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>
 
 export async function sessionsList(d: Daemon): Promise<Screen> {
   const list = sortedSessions(d)
@@ -114,7 +114,7 @@ async function gitScreen(s: Session): Promise<Screen> {
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
-async function show(ctx: Context, sc: Screen): Promise<void> {
+export async function show(ctx: Context, sc: Screen): Promise<void> {
   await ctx.editMessageText(sc.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: sc.kb })
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
