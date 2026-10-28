@@ -378,6 +378,12 @@ describe('topics', () => {
       expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
       expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
       expect(text).not.toContain('📂 sub')
+      // The same replies: today's cost in the session card and in the daily digest.
+      const { sessionCostLine, digestReport } = await import('../src/daemon/usage.ts')
+      expect(sessionCostLine(d.sessions.get(sessionId)!)).toBe('💸 сегодня $0.50 · 3.0 млн ток.')
+      const digest = await digestReport(d)
+      expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
+      expect(digest).toContain('📂 proj · $0.50')
     } finally {
       api.stop()
       delete process.env.USAGE_API_URL
