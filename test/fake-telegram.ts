@@ -10,6 +10,8 @@ export class FakeTelegram {
   private nextMessageId = 1000
   private nextThreadId = 50
   private server: ReturnType<typeof Bun.serve>
+  /** Files served for getFile + /file/bot<token>/<path>, by file_id. */
+  files = new Map<string, Buffer>()
   /** Methods that should fail with this description. */
   failures = new Map<string, { code: number; description: string }>()
 
@@ -46,6 +48,8 @@ export class FakeTelegram {
 
   private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
+    const f = /^\/file\/bot[^/]+\/files\/([\w-]+)\.\w+$/.exec(url.pathname)
+    if (f) return this.files.has(f[1]) ? new Response(new Uint8Array(this.files.get(f[1])!)) : new Response('not found', { status: 404 })
     const m = /^\/bot[^/]+\/(\w+)$/.exec(url.pathname)
     if (!m) return new Response('not found', { status: 404 })
     const method = m[1]
@@ -96,7 +100,10 @@ export class FakeTelegram {
         return { id: Number(body.chat_id), type: 'supergroup', title: 'Test Group', is_forum: true }
       case 'getChatMember':
         return { status: 'administrator', user: { id: 999, is_bot: true, first_name: 'Test' }, can_manage_topics: true, can_pin_messages: true, can_delete_messages: true }
+      case 'createChatInviteLink':
+        return { invite_link: 'https://t.me/+fakeInvite', creator: { id: 999, is_bot: true, first_name: 'Test' }, creates_join_request: false, is_primary: false, is_revoked: false, name: body.name, member_limit: body.member_limit }
       case 'getFile':
+        if (this.files.has(String(body.file_id))) return { file_id: body.file_id, file_unique_id: `u${body.file_id}`, file_path: `files/${body.file_id}.oga` }
         return { file_id: body.file_id, file_unique_id: 'u1', file_path: 'photos/x.jpg' }
       default:
         return true

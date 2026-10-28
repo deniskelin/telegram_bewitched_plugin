@@ -7,12 +7,15 @@ import { InputFile, InlineKeyboard } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { extname, join } from 'path'
-import { assertAllowedChat, assertSendable, loadAccess, owner } from '../access.ts'
+import { assertAllowedChat, assertSendable, loadAccess, owner, prefsFor } from '../access.ts'
 import { INBOX_DIR, MEMORY_DIR, settings } from '../config.ts'
 import { chunk } from '../format.ts'
 import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
+import { downloadToInbox } from './media.ts'
+import { forVoice, synthesize, ttsEnabled, type Voice } from '../voice/tts.ts'
+import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
 
@@ -123,6 +126,24 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const replyMode = access.replyToMode ?? 'first'
   const ids: number[] = []
 
+  // By voice: asked for, or the chat's /voice mode (always / mirror on a spoken message).
+  const voice = wantsVoice(d, c, args.voice === true) ? await voiceFor(d, text) : null
+  if (voice && settings.voiceWithText === 'caption' && format === 'text' && text.length <= 1024 && !/```/.test(text)) {
+    const id = await sendVoiceMsg(d, s, c, voice, { caption: text, replyTo: replyMode !== 'off' ? replyTo : undefined })
+    recordOut(d, c, id, text)
+    ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
+    finishReply(d, s, c)
+    return idsResult(ids)
+  }
+  // Voice only, unless the text has something a voice can't carry (code).
+  if (voice && settings.voiceWithText === 'none' && !/```/.test(text)) {
+    const id = await sendVoiceMsg(d, s, c, voice, { replyTo: replyMode !== 'off' ? replyTo : undefined })
+    recordOut(d, c, id, text)
+    ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
+    finishReply(d, s, c)
+    return idsResult(ids)
+  }
+
   await withTopicRetry(d, s, c, async cc => {
     c.threadId = cc.threadId
     if (format === 'rich') {
@@ -156,9 +177,61 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
       }
     }
   })
+  if (voice) ids.push(await sendVoiceMsg(d, s, c, voice, {}))
   ids.push(...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
   finishReply(d, s, c)
   return idsResult(ids)
+}
+
+// --- voice replies ---
+
+function wantsVoice(d: Daemon, c: ChatRef, asked: boolean): boolean {
+  if (!ttsEnabled()) return false
+  if (asked) return true
+  const mode = prefsFor(c.chatId, c.threadId).voice
+  return mode === 'always' || (mode === 'mirror' && d.lastSpeech.get(`${c.chatId}:${c.threadId ?? 0}`) === true)
+}
+
+/** Synthesized voice for a reply, or null (too long, empty, TTS failed — the text still goes). */
+async function voiceFor(d: Daemon, text: string): Promise<Voice | null> {
+  const spoken = forVoice(text)
+  if (!spoken || spoken.length > settings.voiceMaxChars) return null
+  try {
+    return await synthesize(spoken)
+  } catch (err) {
+    d.log(`tts failed, sending text: ${err}`)
+    return null
+  }
+}
+
+async function sendVoiceMsg(d: Daemon, s: Session, c: ChatRef, v: Voice, o: { caption?: string; replyTo?: number }): Promise<number> {
+  let id = 0
+  await withTopicRetry(d, s, c, async cc => {
+    c.threadId = cc.threadId
+    const sent = await d.bot.api.sendVoice(cc.chatId, new InputFile(v.ogg, 'voice.ogg'), {
+      ...threadOpt(cc), duration: v.duration,
+      ...(o.caption ? { caption: o.caption } : {}),
+      ...(o.replyTo != null ? { reply_parameters: { message_id: o.replyTo } } : {}),
+    })
+    id = sent.message_id
+  })
+  return id
+}
+
+async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>): Promise<string> {
+  const c = resolveChat(d, s, args)
+  assertAllowedChat(c.chatId)
+  const text = String(args.text ?? '').trim()
+  if (!text) throw new Error('text is required')
+  if (!ttsEnabled()) throw new Error('TTS is off (TTS_PROVIDER=off) — reply with text instead')
+  const spoken = forVoice(text)
+  if (spoken.length > settings.voiceMaxChars) throw new Error(`text is longer than VOICE_MAX_CHARS (${settings.voiceMaxChars}) — send it as text`)
+  const v = await synthesize(spoken)
+  const caption = str(args.caption)
+  const id = await sendVoiceMsg(d, s, c, v, { caption: caption ? caption.slice(0, 1024) : undefined, replyTo: int(args.reply_to) })
+  recordOut(d, c, id, caption ?? text)
+  finishReply(d, s, c)
+  return `sent voice (id: ${id}, ${v.duration} s)`
 }
 
 function finishReply(d: Daemon, s: Session, c: ChatRef): void {
@@ -263,6 +336,9 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
     case 'reply':
       return reply(d, s, args)
 
+    case 'reply_voice':
+      return replyVoice(d, s, args)
+
     case 'ask_user':
       return askUser(d, s, args)
 
@@ -286,20 +362,8 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       return `edited (id: ${id})`
     }
 
-    case 'download_attachment': {
-      const file = await d.bot.api.getFile(String(args.file_id))
-      if (!file.file_path) throw new Error('Telegram returned no file_path — file may have expired')
-      const res = await fetch(`${settings.apiRoot ?? 'https://api.telegram.org'}/file/bot${d.token}/${file.file_path}`)
-      if (!res.ok) throw new Error(`download failed: HTTP ${res.status}`)
-      const buf = Buffer.from(await res.arrayBuffer())
-      const rawExt = file.file_path.includes('.') ? file.file_path.split('.').pop()! : 'bin'
-      const ext = rawExt.replace(/[^a-zA-Z0-9]/g, '') || 'bin'
-      const uniqueId = (file.file_unique_id ?? '').replace(/[^a-zA-Z0-9_-]/g, '') || 'dl'
-      const path = join(INBOX_DIR, `${Date.now()}-${uniqueId}.${ext}`)
-      mkdirSync(INBOX_DIR, { recursive: true })
-      writeFileSync(path, buf)
-      return path
-    }
+    case 'download_attachment':
+      return downloadToInbox(d, String(args.file_id))
 
     case 'get_history': {
       const c = historyChat(d, s, args)
@@ -320,6 +384,21 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       const m = d.store.getMessage(c.chatId, Number(args.message_id))
       if (!m) return 'not found in history'
       return JSON.stringify({ ...m, forward: m.forward ? JSON.parse(m.forward) : null }, null, 2)
+    }
+
+    case 'remind': {
+      const c = resolveChat(d, s, args)
+      assertAllowedChat(c.chatId)
+      const text = String(args.text ?? '').trim()
+      if (!text) throw new Error('text is required')
+      const mins = Number(args.in_minutes)
+      const at = str(args.at)
+      let when: { at: number; daily: boolean } | null = null
+      if (Number.isFinite(mins) && mins > 0) when = { at: Date.now() + mins * 60_000, daily: false }
+      else if (at) when = parseWhen(`${args.daily === true ? 'каждый день ' : ''}${at} x`)
+      if (!when) throw new Error('give in_minutes > 0 or at "HH:MM"')
+      const r = addReminder(d, { chatId: c.chatId, threadId: c.threadId, text, at: when.at, daily: when.daily, userId: d.userIdOf(s) ?? owner() ?? c.chatId })
+      return `reminder ${r.id} set: ${fmtWhen(r)} (${new Date(r.at).toISOString()})`
     }
 
     case 'save_memory': {

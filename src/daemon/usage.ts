@@ -9,7 +9,11 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
-import type { Daemon } from './daemon.ts'
+import { InlineKeyboard, type Context } from 'grammy'
+import { owner } from '../access.ts'
+import { button } from './stream.ts'
+import type { Daemon, Session } from './daemon.ts'
+import { commitsSince } from './git.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -82,8 +86,18 @@ export function parseLimits(r: UsageResponse): Limits {
 
 let limitsCache: { at: number; value: Limits | string } | null = null
 
+/** The last limits fetched, however old (for the dashboard: it never fetches itself). */
+export function lastLimits(): { at: number; limits: Limits } | null {
+  return limitsCache && typeof limitsCache.value !== 'string' ? { at: limitsCache.at, limits: limitsCache.value } : null
+}
+
+/** Forget the cached answer (tests, and the watcher wants a fresh one). */
+export function resetLimitsCache(): void {
+  limitsCache = null
+}
+
 /** Limits, or why they are missing. Cached for a minute: /usage pressed twice is one request. */
-export async function fetchLimits(o: OAuth | null): Promise<Limits | string> {
+export async function fetchLimits(o: OAuth | null = readOAuth()): Promise<Limits | string> {
   if (!settings.usageLimits) return 'отключены (USAGE_LIMITS=off)'
   if (!o?.accessToken) return 'нет OAuth-токена подписки в .credentials.json'
   if (o.expiresAt && o.expiresAt < Date.now()) return 'токен истёк, Claude Code обновит его при следующем запросе'
@@ -214,7 +228,10 @@ function* jsonlFiles(dir: string, depth = 0): Generator<string> {
   }
 }
 
-/** Every reply of the last `days` days across all projects; unchanged files come from the cache. */
+/** Two months and a day: a monthly report compares with the month before. */
+const CACHE_DAYS = 64
+
+/** Every reply of the last `days` (< CACHE_DAYS) days across all projects; unchanged files come from the cache. */
 export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DIR): Entry[] {
   const since = now - days * 86_400_000
   const out = new Map<string, Entry>()
@@ -226,8 +243,10 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
     } catch {
       continue
     }
-    if (st.mtimeMs < since) continue
+    if (st.mtimeMs < now - CACHE_DAYS * 86_400_000) continue
     alive.add(file)
+    // Nothing in the window, but keep it cached for the longer windows.
+    if (st.mtimeMs < since && fileCache.has(file)) continue
     let c = fileCache.get(file)
     if (!c || c.mtime !== st.mtimeMs || c.size !== st.size) {
       let text: string
@@ -236,8 +255,8 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
       } catch {
         continue
       }
-      // Parse a day more than asked so the cached copy stays useful as the window slides.
-      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, since - 86_400_000) }
+      // Always CACHE_DAYS, whatever the caller asked: the cached copy serves every window as it slides.
+      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, now - CACHE_DAYS * 86_400_000) }
       fileCache.set(file, c)
     }
     for (const e of c.entries) if (e.ts >= since) out.set(e.id.startsWith('line:') ? `${file}:${e.id}` : e.id, e)
@@ -250,27 +269,27 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
 // Report
 // --------------------------------------------------------------------------
 
-type Sum = { tokens: number; cost: number; unpriced: number }
+export type Sum = { tokens: number; cost: number; unpriced: number }
 
-function add(s: Sum, e: Entry): void {
+export function add(s: Sum, e: Entry): void {
   s.tokens += e.input + e.output + e.write5m + e.write1h + e.read
   const c = costOf(e)
   if (c == null) s.unpriced++
   else s.cost += c
 }
 
-function fmtTok(n: number): string {
+export function fmtTok(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)} млрд`
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} млн`
   if (n >= 1e3) return `${Math.round(n / 1e3)} тыс.`
   return String(n)
 }
 
-function fmtSum(s: Sum): string {
+export function fmtSum(s: Sum): string {
   return `${fmtTok(s.tokens)} ток. · $${s.cost.toFixed(2)}${s.unpriced ? ` (+${s.unpriced} без цены)` : ''}`
 }
 
-function fmtReset(at: Date, now: number): string {
+export function fmtReset(at: Date, now: number): string {
   const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   const sameDay = new Date(now).toDateString() === at.toDateString()
   const when = sameDay ? `в ${time}` : `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${time}`
@@ -279,17 +298,18 @@ function fmtReset(at: Date, now: number): string {
   return `сброс ${when} (через ${days ? `${days} д ${Math.floor((left % 86_400_000) / 3600_000)} ч` : fmtDuration(left)})`
 }
 
-function bar(percent: number): string {
-  const n = Math.max(0, Math.min(10, Math.round(percent / 10)))
-  return '▰'.repeat(n) + '▱'.repeat(10 - n)
+/** 20 segments, 5% each. */
+export function bar(percent: number): string {
+  const n = Math.max(0, Math.min(20, Math.round(percent / 5)))
+  return '▰'.repeat(n) + '▱'.repeat(20 - n)
 }
 
 /** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
-function ownerOf(d: Daemon, cwd: string): string {
+export function ownerOf(d: Daemon, cwd: string): string {
   if (!cwd) return '❔ неизвестно'
   const rel = relative(settings.usersDir, cwd)
   const user = /^(\d+)(\/|$)/.exec(rel)?.[1]
-  if (user) return `👤 ${d.store.lastSenderName(user) ?? user}`
+  if (user) return `👤 ${d.userLabel(user)}`
   if (cwd === d.mainKey()) return `👑 ${basename(cwd) || cwd}`
   return `📂 ${basename(cwd) || cwd}`
 }
@@ -333,4 +353,214 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   out.push(`🗂 <b>По сессиям</b>, 7 дней\n<blockquote expandable>${owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n')}</blockquote>`)
   out.push('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>')
   return out.join('\n\n')
+}
+
+// --------------------------------------------------------------------------
+// Limit alerts
+// --------------------------------------------------------------------------
+
+type LimitState = { level: number; resetsAt: string | null; notified?: boolean }
+
+/**
+ * Tell the owner when a limit crosses an alert threshold, and when a window
+ * that was over the first threshold resets. One message per crossing: the
+ * reached level is remembered per limit in the store.
+ */
+export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
+  const thresholds = settings.limitAlerts
+  const to = owner()
+  if (!thresholds.length || !to || !settings.usageLimits) return
+  if (limitsCache && now - limitsCache.at >= 60_000) limitsCache = null
+  const limits = await fetchLimits()
+  if (typeof limits === 'string') return
+  for (const l of limits.items) {
+    const key = `limit:${l.label}`
+    const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
+    const resetsAt = l.resetsAt?.toISOString() ?? null
+    const level = thresholds.filter(t => l.percent >= t).at(-1) ?? 0
+    const reset = l.resetsAt ? `\n${fmtReset(l.resetsAt, now)}` : ''
+    const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
+    // The reset timer (below) already said so, on the minute; this is the fallback if it didn't run.
+    if (prev.level > 0 && level === 0 && !prev.notified) {
+      await d.bot.api.sendMessage(to, `✅ Лимит «${escapeHtml(l.label)}» восстановился: ${Math.round(l.percent)}% ${bar(l.percent)}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+    } else if (level > (newWindow ? 0 : prev.level)) {
+      const icon = level >= thresholds.at(-1)! ? '🚨' : '⚠️'
+      await d.bot.api.sendMessage(to, `${icon} Лимит «${escapeHtml(l.label)}»: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${reset}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+    }
+    d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
+    // Over a threshold: say "tokens are back" exactly when the window resets.
+    if (level > 0 && l.resetsAt) scheduleResetNotice(d, l.label, l.resetsAt)
+  }
+  rescheduleRequested(d)
+  d.onSessionsChanged()
+}
+
+// --------------------------------------------------------------------------
+// Reset notices, on the minute
+// --------------------------------------------------------------------------
+
+const resetTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/**
+ * One message to the owner when this window resets (a little after resets_at,
+ * so the API already counts the new window). Idempotent per window.
+ */
+export function scheduleResetNotice(d: Daemon, label: string, resetsAt: Date, now = Date.now()): void {
+  const key = `${label}|${resetsAt.toISOString()}`
+  if (resetTimers.has(key) || resetsAt.getTime() < now - 60_000) return
+  const t = setTimeout(() => void fireResetNotice(d, label, key), Math.max(0, resetsAt.getTime() + 30_000 - now))
+  t.unref?.()
+  resetTimers.set(key, t)
+}
+
+async function fireResetNotice(d: Daemon, label: string, key: string): Promise<void> {
+  resetTimers.delete(key)
+  const to = owner()
+  if (!to) return
+  // Asked for in /usage for this window (maybe silently): done now.
+  const req = parseRequest(d.store.get(`limit_notify:${label}`))
+  const silent = req?.at === key.split('|')[1] && req.silent
+  if (req?.at === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
+  // The 10-minute check would otherwise announce the same reset again.
+  d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
+  await d.bot.api.sendMessage(to, `✅ Токены обновились: лимит «${escapeHtml(label)}» сброшен, можно пользоваться.`, { parse_mode: 'HTML', disable_notification: silent })
+    .catch(err => d.log(`reset notice failed: ${err}`))
+}
+
+/** Stored as "<iso>" or "<iso>|silent". */
+function parseRequest(raw: string | null): { at: string; silent: boolean } | null {
+  if (!raw) return null
+  const [at, mode] = raw.split('|')
+  return { at, silent: mode === 'silent' }
+}
+
+/** "🔔 Напомнить о сбросе" / "🔕 Тихо" in /usage: remembered in the store, so a restart keeps it. */
+export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false): void {
+  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${silent ? '|silent' : ''}`)
+  scheduleResetNotice(d, label, resetsAt)
+}
+
+function rescheduleRequested(d: Daemon): void {
+  // Timers live in memory: after a restart, set again the ones asked for in /usage.
+  for (const key of d.store.keys('limit_notify:')) {
+    const req = parseRequest(d.store.get(key))
+    if (req) scheduleResetNotice(d, key.slice('limit_notify:'.length), new Date(req.at))
+  }
+}
+
+/** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
+export function usageKeyboard(d: Daemon): InlineKeyboard {
+  const l = lastLimits()
+  const rows: ReturnType<typeof button>[][] = (l?.limits.items ?? []).flatMap((it, i) => {
+    if (!it.resetsAt) return []
+    const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
+    const asked = req?.at === it.resetsAt.toISOString() ? req : null
+    return [[
+      button(`${asked && !asked.silent ? '✅' : '🔔'} Напомнить о сбросе: ${it.label}`, `lr:${i}`),
+      button(`${asked?.silent ? '✅' : '🔕'} Тихо`, `lr:${i}:s`),
+    ]]
+  })
+  rows.push([button('« Статистика', 'hub:stats')])
+  return new InlineKeyboard(rows)
+}
+
+export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const m = /^lr:(\d+)(:s)?$/.exec(data)
+  if (!m) return false
+  if (!ctx.from || String(ctx.from.id) !== owner()) {
+    await ctx.answerCallbackQuery({ text: 'Только для владельца подписки.' }).catch(() => {})
+    return true
+  }
+  const it = lastLimits()?.limits.items[Number(m[1])]
+  if (!it?.resetsAt) {
+    await ctx.answerCallbackQuery({ text: 'Данные о лимитах устарели — откройте /usage заново.' }).catch(() => {})
+    return true
+  }
+  const silent = !!m[2]
+  requestResetNotice(d, it.label, it.resetsAt, silent)
+  await ctx.answerCallbackQuery({ text: `${silent ? '🔕 Тихо напомню' : '🔔 Напомню'} ${fmtReset(it.resetsAt, Date.now()).replace(/^сброс /, '')}` }).catch(() => {})
+  await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
+  return true
+}
+
+export function startLimitWatch(d: Daemon): void {
+  rescheduleRequested(d)
+  const min = settings.limitCheckMin
+  if (min <= 0) return
+  const tick = () => void checkLimits(d).catch(err => d.log(`limit check failed: ${err}`))
+  setTimeout(tick, 15_000).unref?.()
+  setInterval(tick, min * 60_000).unref?.()
+}
+
+/** "📊 5 часов 42% · Неделя 31%" for the pinned dashboard; null before the first fetch. */
+export function limitsLine(): string | null {
+  const l = lastLimits()
+  if (!l || !l.limits.items.length) return null
+  return '📊 ' + l.limits.items.map(i => `${i.label} ${Math.round(i.percent)}%`).join(' · ')
+}
+
+// --------------------------------------------------------------------------
+// Per-session cost and the daily digest
+// --------------------------------------------------------------------------
+
+function startOfDay(now: number): number {
+  const t = new Date(now)
+  t.setHours(0, 0, 0, 0)
+  return t.getTime()
+}
+
+/** "💸 сегодня $1.23 · 4.5 млн ток." for a session card; null before its first reply today. */
+export function sessionCostLine(s: Session, now = Date.now()): string | null {
+  const since = startOfDay(now)
+  const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  for (const e of collectEntries(now, 1)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
+  return sum.tokens ? `💸 сегодня $${sum.cost.toFixed(2)} · ${fmtTok(sum.tokens)} ток.` : null
+}
+
+/** What happened today: spend by session and commits per project folder. */
+export async function digestReport(d: Daemon, now = Date.now()): Promise<string> {
+  const since = startOfDay(now)
+  const entries = collectEntries(now, 1).filter(e => e.ts >= since)
+  const total: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  const byFolder = new Map<string, Sum>()
+  for (const e of entries) {
+    add(total, e)
+    const sum = byFolder.get(e.cwd) ?? { tokens: 0, cost: 0, unpriced: 0 }
+    add(sum, e)
+    byFolder.set(e.cwd, sum)
+  }
+  const folders = new Set([...byFolder.keys(), ...d.activeSessions().map(s => s.projectKey)].filter(Boolean))
+  const date = new Date(now).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+  const out = [`🌙 <b>Итоги дня</b> · ${date}`, `💸 ${fmtSum(total)} в ценах API`]
+  const rows: { cost: number; text: string }[] = []
+  for (const dir of folders) {
+    const sum = byFolder.get(dir)
+    const commits = await commitsSince(dir, new Date(since))
+    if (!sum && !commits?.length) continue
+    const lines = [`${ownerOf(d, dir)}${sum ? ` · $${sum.cost.toFixed(2)}` : ''}${commits?.length ? ` · коммитов ${commits.length}` : ''}`]
+    for (const c of (commits ?? []).slice(0, 3)) lines.push(`   • ${escapeHtml(c.length > 80 ? c.slice(0, 79) + '…' : c)}`)
+    if ((commits?.length ?? 0) > 3) lines.push(`   … ещё ${commits!.length - 3}`)
+    rows.push({ cost: sum?.cost ?? 0, text: lines.join('\n') })
+  }
+  rows.sort((a, b) => b.cost - a.cost)
+  out.push(rows.length ? rows.map(r => r.text).join('\n') : 'Сегодня сессии ничего не делали.')
+  const limits = limitsLine()
+  if (limits) out.push(limits)
+  return out.join('\n\n')
+}
+
+/** Send the digest once a day at DIGEST_AT (checked every minute). */
+export function startDigest(d: Daemon): void {
+  setInterval(() => {
+    const at = settings.digestAt
+    const to = owner()
+    if (!at || !to) return
+    const now = new Date()
+    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const key = `digest:${now.toDateString()}`
+    if (hm < at || d.store.get(key)) return
+    d.store.set(key, '1')
+    void digestReport(d).then(text => d.bot.api.sendMessage(to, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }))
+      .catch(err => d.log(`digest failed: ${err}`))
+  }, 60_000).unref?.()
 }

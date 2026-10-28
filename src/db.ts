@@ -311,6 +311,11 @@ export class Store {
     return rows.map(r => ({ content: r.content, meta: JSON.parse(r.meta), created_at: r.created_at }))
   }
 
+  /** Drop every queued message for this key (a removed user's). */
+  dropPending(projectKey: string): number {
+    return this.db.query('DELETE FROM pending WHERE project_key = ?').run(projectKey).changes
+  }
+
   close(): void {
     this.db.close()
   }

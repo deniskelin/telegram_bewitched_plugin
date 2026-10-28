@@ -4,7 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
@@ -275,7 +275,7 @@ describe('topics', () => {
     await main.inbound(x => x.content === 'снова главной')
   })
 
-  test('/topics shows a card per session with its tmux target, plus topics without a session', async () => {
+  test('session card has the tmux target, RC, model; /topics is a menu of topics; 👁 screen', async () => {
     d.tmuxLocation = async p => (p === '%9' ? { session: 'work', window: '2', windowName: 'tmuxed', pane: '0', tail: '> \n  ? for shortcuts   /rc active\n' } : null)
     const t = new FakeClient()
     await t.connect({ cwd: '/tmp/tmuxed', projectRoot: '/tmp/tmuxed', tmuxPane: '%9', branch: 'feat', claudePid: 99 })
@@ -294,28 +294,57 @@ describe('topics', () => {
       headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
       body: JSON.stringify({ event: 'PreToolUse', claudePid: 99, data: { session_id: 'abc-123', transcript_path: transcript, permission_mode: 'plan', tool_name: 'Bash', tool_input: { command: 'ls', description: 'List files' } } }),
     })
-    tg.push(textMessage({ text: '/topics' }))
-    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии и топики'))
-    const text = String(r.body.text)
-    expect(r.body.parse_mode).toBe('HTML')
-    expect(text.indexOf('👑 <b>Главная</b>')).toBeLessThan(text.indexOf('📂 <b>proj</b>'))
-    expect(text).toContain(`#${sessionId}`)
+    // The session card (from the /sessions menu) has everything about the session.
+    const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
+    tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
+    const c1 = await tg.waitFor('editMessageText', c => String(c.body.text).includes('📂 <b>tmuxed</b>'))
+    const text = String(c1.body.text)
+    expect(c1.body.parse_mode).toBe('HTML')
     expect(text).toContain('📂 <b>tmuxed</b> «my-box» · 🔵 работает')
     expect(text).toContain('🌿 feat · 💬 <a href=')
-    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)</blockquote>')
-    expect(text).not.toContain('🔧')
+    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
     expect(text).toContain('<blockquote expandable>🆔')
     expect(text).toContain('🖥 сессия work · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
-    expect(text).toContain('🖥 не в tmux')
-    expect(text).toContain('📱 RC ?')
-    expect(text).toContain('💤 <b>Без сессии</b>')
-    expect(text).toContain('/tmp/other')
-    expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
-    // The last action is in the session's own card.
-    const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
-    tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
-    await tg.waitFor('editMessageText', c => String(c.body.text).includes('🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>'))
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const c2 = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && String(c.body.text).includes('📂 <b>proj</b>'))
+    expect(String(c2.body.text)).toContain('🖥 не в tmux')
+    expect(String(c2.body.text)).toContain('📱 RC ?')
+
+    // /topics: a menu of topics; the one without a session can be started from its screen.
+    tg.push(textMessage({ text: '/topics' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📂 <b>Топики</b>'))
+    expect(String(r.body.text)).toContain('📁 <b>tmuxed</b> · 🔵 работает')
+    expect(String(r.body.text)).toContain('📁 <b>other</b> · 💤 без сессии')
+    const otherThread = d.store.topicForProject(group, '/tmp/other')!.thread_id
+    expect(JSON.stringify(r.body.reply_markup)).toContain(`tm:t:${otherThread}`)
+    tg.push(callbackQuery(`tm:t:${otherThread}`))
+    const ts = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>'))
+    expect(String(ts.body.text)).toContain('<code>/tmp/other</code>')
+    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:run:${otherThread}`)
+    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:ar:${otherThread}`)
+    tg.push(callbackQuery(`tm:del:${otherThread}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Удалить топик «other»'))
+    tg.push(callbackQuery(`tm:t:${otherThread}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>') && tg.callsOf('editMessageText').length > 0)
+    expect(d.store.topic(group, otherThread)).toBeTruthy()
+
+    // 👁 screen of its pane with keys; the keys go to tmux, the screen is captured again.
+    const pressed: string[][] = []
+    d.tmuxCapture = async t => (t === '%9' ? 'Load development channels?\n❯ 1. Yes\n  2. No\n\n\n' : null)
+    d.tmuxKeys = async (t, k) => { pressed.push([t, ...k]) }
+    expect(JSON.stringify(c1.body.reply_markup)).toContain('tx:p9')
+    tg.push(callbackQuery('tx:p9'))
+    const scr = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>%9</code>'))
+    expect(String(scr.body.text)).toContain('<pre>Load development channels?\n❯ 1. Yes\n  2. No</pre>')
+    expect(JSON.stringify(scr.body.reply_markup)).toContain(`sm:s:${tmuxed.id}`)
+    tg.push(callbackQuery('tx:p9:e'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нажато: ⏎ Enter')
+    expect(pressed).toEqual([['%9', 'Enter']])
+    tg.push(callbackQuery('tx:p9;rm', {}))
+    tg.push(callbackQuery('tx:p9:e', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(pressed.length).toBe(1)
     t.close()
   })
 
@@ -351,7 +380,7 @@ describe('topics', () => {
       const text = String(r.body.text)
       expect(auth).toBe('Bearer tok')
       expect(text).toContain('Подписка</b>: Max 20x')
-      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▱▱▱▱▱▱')
+      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱')
       expect(text).toContain('Неделя: <b>7%</b>')
       expect(text).toContain('через 3 д')
       expect(text).toContain('За неделю: Claude Code 90%, Chats 10%')
@@ -360,6 +389,37 @@ describe('topics', () => {
       expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
       expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
       expect(text).not.toContain('📂 sub')
+      // The same replies: today's cost in the session card and in the daily digest.
+      const { sessionCostLine, digestReport } = await import('../src/daemon/usage.ts')
+      expect(sessionCostLine(d.sessions.get(sessionId)!)).toBe('💸 сегодня $0.50 · 3.0 млн ток.')
+      const digest = await digestReport(d)
+      expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
+      expect(digest).toContain('📂 proj · $0.50')
+
+      // Period reports: off by default; switched on, the day report goes out once after midnight.
+      const { sendDueReports } = await import('../src/daemon/reports.ts')
+      tg.push(textMessage({ text: '/reports' }))
+      const rs = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Отчёты о потреблении</b>'))
+      expect(String(rs.body.text)).toContain('⬜️ За сутки')
+      tg.push(callbackQuery('rp:t:day'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).includes('✅ За сутки'))
+      const tomorrow = new Date(Date.now() + 86_400_000)
+      tomorrow.setHours(0, 30, 0, 0)
+      const photos = () => tg.callsOf('sendPhoto').length
+      const before = photos()
+      await sendDueReports(d, tomorrow)
+      expect(photos()).toBe(before + 1)
+      const rep = tg.callsOf('sendMessage').at(-1)!
+      expect(String(rep.body.text)).toStartWith('📊 <b>Статистика за сутки</b>')
+      expect(String(rep.body.text)).toContain('💸 3.0 млн ток. · $0.50')
+      expect(String(rep.body.text)).toContain('• 📂 proj: $0.50')
+      await sendDueReports(d, tomorrow)
+      expect(photos()).toBe(before + 1)
+      tg.push(callbackQuery('rp:now:week'))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за неделю</b>'))
+      expect(photos()).toBe(before + 2)
+      tg.push(callbackQuery('rp:t:day'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).includes('⬜️ За сутки'))
     } finally {
       api.stop()
       delete process.env.USAGE_API_URL
@@ -369,6 +429,139 @@ describe('topics', () => {
     tg.push(textMessage({ text: '/usage', from: 222 }))
     await Bun.sleep(300)
     expect(tg.callsOf('sendMessage').length).toBe(before)
+  })
+
+  test('session control: /compact, /clear after confirmation, /model typed into the pane; context notice once', async () => {
+    const { checkContext } = await import('../src/daemon/menu.ts')
+    const { mkdtempSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/ctl', projectRoot: '/tmp/ctl', tmuxPane: '%11', claudePid: 1212 })
+    await tg.waitFor('createForumTopic', x => x.body.name === 'ctl')
+    const s = [...d.sessions.values()].find(x => x.projectKey === '/tmp/ctl')!
+    const typed: string[] = []
+    d.tmuxType = async (t, text) => { typed.push(`${t} ${text}`) }
+
+    tg.push(callbackQuery(`sm:cmp:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /compact')
+    tg.push(callbackQuery(`sm:clr:${s.id}`))
+    await tg.waitFor('editMessageText', x => String(x.body.text).startsWith(`Очистить разговор сессии #${s.id}`))
+    expect(typed).toEqual(['%11 /compact'])
+    tg.push(callbackQuery(`sm:clrok:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /clear')
+    tg.push(callbackQuery(`sm:mdl:${s.id}`))
+    const models = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🧠 Модель'))
+    expect(JSON.stringify(models.body.reply_markup)).toContain(`sm:model:${s.id}:sonnet`)
+    tg.push(callbackQuery(`sm:model:${s.id}:sonnet`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /model claude-sonnet-5-5')
+    s.status = 'working'
+    tg.push(callbackQuery(`sm:cmp:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => String(x.body.text).startsWith('Сессия работает'))
+    s.status = 'idle'
+    expect(typed).toEqual(['%11 /compact', '%11 /clear', '%11 /model claude-sonnet-5-5'])
+
+    // 90k of a 100k window: one notice with a /compact button.
+    const tr = `${mkdtempSync(`${tmpdir()}/ctx-`)}/t.jsonl`
+    writeFileSync(tr, JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 0, cache_read_input_tokens: 90_000, output_tokens: 0 } } }) + '\n')
+    s.claude.transcript = tr
+    process.env.CONTEXT_WINDOW = '100000'
+    try {
+      await checkContext(d, s)
+      await checkContext(d, s)
+      const notes = tg.callsOf('sendMessage').filter(x => String(x.body.text).includes('Контекст сессии') && String(x.body.text).includes(`#${s.id}`))
+      expect(notes.length).toBe(1)
+      expect(String(notes[0].body.text)).toContain('заполнен на <b>90%</b>')
+      expect(notes[0].body.message_thread_id).toBe(s.topic!.threadId)
+      const edits = tg.callsOf('editMessageReplyMarkup').length
+      tg.push(callbackQuery(`sm:cmpn:${s.id}`))
+      await tg.waitFor('editMessageReplyMarkup', () => tg.callsOf('editMessageReplyMarkup').length > edits)
+      expect(typed.at(-1)).toBe('%11 /compact')
+    } finally {
+      delete process.env.CONTEXT_WINDOW
+      c.close()
+    }
+  })
+
+  test('🌿 git: status, last commits, diff as a file', async () => {
+    const { mkdtempSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { execFileSync } = await import('child_process')
+    const repo = mkdtempSync(`${tmpdir()}/repo-`)
+    const git = (...a: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a])
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    git('add', '.')
+    git('commit', '-qm', 'first commit')
+    writeFileSync(join(repo, 'a.txt'), 'two\n')
+    const c = new FakeClient()
+    await c.connect({ cwd: repo, projectRoot: repo, branch: 'main', claudePid: 1313 })
+    const s = [...d.sessions.values()].find(x => x.projectKey === repo)!
+    try {
+      tg.push(callbackQuery(`sm:git:${s.id}`))
+      const g = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🌿 <b>Git</b>') && String(x.body.text).includes(s.projectName))
+      expect(String(g.body.text)).toContain('M a.txt')
+      expect(String(g.body.text)).toContain('first commit')
+      tg.push(callbackQuery(`sm:gdf:${s.id}`))
+      const doc = await tg.waitFor('sendDocument', x => String(x.body.caption ?? '').includes(s.projectName))
+      expect(String(doc.body.caption)).toContain('1 файл')
+    } finally {
+      c.close()
+    }
+  })
+
+  test('limit alerts: one notice per threshold crossed, a notice when the window resets; dashboard line', async () => {
+    const { checkLimits, resetLimitsCache } = await import('../src/daemon/usage.ts')
+    const { renderDashboard } = await import('../src/daemon/topics.ts')
+    let percent = 50
+    let resets = Date.now() + 3600_000
+    const api = Bun.serve({ port: 0, fetch: () => Response.json({ limits: [{ kind: 'session', percent, resets_at: new Date(resets).toISOString() }] }) })
+    process.env.USAGE_API_URL = `http://127.0.0.1:${api.port}/`
+    const notices = () => tg.callsOf('sendMessage').filter(c => /Лимит «5 часов»/.test(String(c.body.text))).map(c => String(c.body.text).split('\n')[0])
+    const check = async (p: number) => { percent = p; resetLimitsCache(); await checkLimits(d) }
+    try {
+      await check(50)
+      await check(85)
+      await check(87)
+      await check(96)
+      resets += 5 * 3600_000
+      await check(4)
+      await check(3)
+      expect(notices()).toEqual([
+        '⚠️ Лимит «5 часов»: <b>85%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱▱▱',
+        '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱',
+        '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
+      ])
+      expect(renderDashboard(d)).toContain('📊 5 часов 3%')
+
+      // On the minute: a window over a threshold gets a "tokens are back" at its reset (here: already due).
+      const { scheduleResetNotice, usageKeyboard } = await import('../src/daemon/usage.ts')
+      scheduleResetNotice(d, 'Тест', new Date(Date.now() - 29_900))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест» сброшен'))
+      expect(JSON.parse(d.store.get('limit:Тест')!)).toMatchObject({ level: 0, notified: true })
+
+      // /usage offers 🔔 per limit; pressing it remembers the request.
+      const kb = JSON.stringify(usageKeyboard(d))
+      expect(kb).toContain('🔔 Напомнить о сбросе: 5 часов')
+      tg.push(callbackQuery('lr:0'))
+      await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔔 Напомню'))
+      expect(d.store.get('limit_notify:5 часов')).toBeTruthy()
+      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Напомнить о сбросе: 5 часов')
+      // 🔕: the same reminder, delivered without sound.
+      tg.push(callbackQuery('lr:0:s'))
+      await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔕 Тихо напомню'))
+      expect(d.store.get('limit_notify:5 часов')).toEndWith('|silent')
+      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Тихо')
+      const { requestResetNotice } = await import('../src/daemon/usage.ts')
+      requestResetNotice(d, 'Тихий', new Date(Date.now() - 29_900), true)
+      const quiet = await tg.waitFor('sendMessage', c => String(c.body.text).includes('лимит «Тихий» сброшен'))
+      expect(quiet.body.disable_notification).toBe(true)
+      tg.push(callbackQuery('lr:0', { from: 222 }))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Только для владельца подписки.')
+    } finally {
+      api.stop()
+      delete process.env.USAGE_API_URL
+      resetLimitsCache()
+    }
   })
 
   test('/verbose without an argument shows the level; with one sets it', async () => {
@@ -466,11 +659,78 @@ describe('topics', () => {
 
   test('permission request goes to the strict topic and the verdict returns to the session', async () => {
     client.sock.write(encode({ t: 'perm_req', request_id: 'abcde', tool_name: 'Bash', description: 'run', input_preview: '{"command":"ls"}' }))
-    const msg = await tg.waitFor('sendMessage', c => String(c.body.text).includes('🔐'))
+    const msg = await tg.waitFor('sendMessage', c => c.body.text === '🔐 proj: Bash')
     expect(msg.body.chat_id).toBe(group)
     tg.push(callbackQuery('perm:allow:abcde', { chat: Number(group) }))
     const v = await client.wait(m => m.t === 'perm')
     expect(v).toEqual({ t: 'perm', request_id: 'abcde', behavior: 'allow' })
+  })
+
+  test('♾ always: later requests for the tool are allowed silently; /permissions lists waiting ones; reset in the card', async () => {
+    const asks = () => tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🔐 proj: ')).length
+    client.sock.write(encode({ t: 'perm_req', request_id: 'bcdef', tool_name: 'Edit', description: 'edit a.ts', input_preview: '{}' }))
+    const msg = await tg.waitFor('sendMessage', c => c.body.text === '🔐 proj: Edit')
+    expect(JSON.stringify(msg.body.reply_markup)).toContain('perm:always:bcdef')
+
+    tg.push(textMessage({ text: '/permissions' }))
+    const list = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🔐 <b>Ждут разрешения</b> (1)'))
+    expect(String(list.body.text)).toContain('<b>Edit</b> — edit a.ts')
+    expect(JSON.stringify(list.body.reply_markup)).toContain('perm:allow:bcdef')
+
+    tg.push(callbackQuery('perm:always:bcdef', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'bcdef')).toMatchObject({ behavior: 'allow' })
+    const before = asks()
+    client.sock.write(encode({ t: 'perm_req', request_id: 'cdefg', tool_name: 'Edit', description: 'edit b.ts', input_preview: '{}' }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'cdefg')).toMatchObject({ behavior: 'allow' })
+    expect(asks()).toBe(before)
+
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes('♾ без вопросов: Edit'))
+    expect(JSON.stringify(card.body.reply_markup)).toContain(`sm:aar:${sessionId}`)
+    tg.push(callbackQuery(`sm:aar:${sessionId}`))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '🔐 Разрешения снова спрашиваются')
+    client.sock.write(encode({ t: 'perm_req', request_id: 'defgh', tool_name: 'Edit', description: 'edit c.ts', input_preview: '{}' }))
+    await tg.waitFor('sendMessage', () => asks() > before)
+    tg.push(callbackQuery('perm:deny:defgh', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'defgh')).toMatchObject({ behavior: 'deny' })
+  })
+
+  test('⏰ /remind: posted in the chat and delivered to its session when due; daily moves on; 🗑 removes; remind tool', async () => {
+    const { fireDue, listReminders } = await import('../src/daemon/reminders.ts')
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind 2h проверь CI' }))
+    const ok = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ Напомню') && String(c.body.text).includes('проверь CI'))
+    expect(ok.body.message_thread_id).toBe(thread)
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind каждый день 9:00 сводка' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ Напомню каждый день в 09:00'))
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind когда-нибудь' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Формат: /remind'))
+
+    const ci = listReminders(d).find(r => r.text === 'проверь CI')!
+    await fireDue(d, ci.at + 1000)
+    await tg.waitFor('sendMessage', c => c.body.text === '⏰ проверь CI' && c.body.message_thread_id === thread)
+    const m = await client.inbound(x => x.meta.event === 'reminder')
+    expect(m.content).toContain('проверь CI')
+    expect(m.meta.thread_id).toBe(String(thread))
+    expect(listReminders(d).some(r => r.id === ci.id)).toBe(false)
+
+    const daily = listReminders(d).find(r => r.daily)!
+    await fireDue(d, daily.at + 1000)
+    await client.inbound(x => x.meta.event === 'reminder' && x.content.includes('сводка'))
+    expect(listReminders(d).find(r => r.id === daily.id)!.at).toBe(daily.at + 86_400_000)
+
+    tg.push(textMessage({ chat: Number(group), thread, text: '/reminders' }))
+    const list = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ <b>Напоминания</b> (1)'))
+    expect(JSON.stringify(list.body.reply_markup)).toContain(`rm:del:${daily.id}`)
+    tg.push(callbackQuery(`rm:del:${daily.id}`, { chat: Number(group) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '🗑 Напоминание удалено')
+    expect(listReminders(d).length).toBe(0)
+
+    const r = await client.call('remind', { text: 'проверь деплой', in_minutes: 5 })
+    expect(r.ok).toBe(true)
+    expect(listReminders(d)[0]).toMatchObject({ text: 'проверь деплой', chatId: group, threadId: thread })
+    const bad = await client.call('remind', { text: 'x' })
+    expect(bad.ok).toBe(false)
   })
 
   test('stop button without tmux only notes the stop for the next message', async () => {
@@ -590,6 +850,291 @@ describe('paired users', () => {
   })
 })
 
+describe('invite', () => {
+  test('the owner picks a contact, confirms; the user is allowlisted, their session starts, an invitation is ready', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const launches: string[] = []
+    const ok = d.launchSession
+    d.launchSession = async (dir, o) => { launches.push(`${dir} ${o?.name}`); return '9' }
+    process.env.USER_SESSIONS = 'on'
+    try {
+      tg.push(textMessage({ text: '/invite' }))
+      const ask = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Кого пригласить?'))
+      const req = (ask.body.reply_markup as { keyboard: { request_users?: { request_id: number } }[][] }).keyboard[0][0].request_users!
+      expect(req).toMatchObject({ user_is_bot: false, max_quantity: 1, request_username: true })
+
+      tg.push({ message: { message_id: 90001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' }, chat: { id: 111, type: 'private', first_name: 'Den' },
+        users_shared: { request_id: req.request_id, users: [{ user_id: 555, first_name: 'Ann', username: 'ann' }] } } })
+      const confirm = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('👥 Пригласить <b>Ann</b>?'))
+      expect(String(confirm.body.text)).toContain('полный доступ')
+      expect(loadAccess().allowFrom).not.toContain('555')
+
+      tg.push(callbackQuery('inv:ok:555'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Ann добавлен'))
+      expect(loadAccess().allowFrom).toContain('555')
+      expect(launches).toEqual([`${process.env.USERS_DIR}/555 claude-555`])
+      const inv = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))
+      expect(String(inv.body.text)).toContain('https://t.me/testbot?start=hello')
+      expect(String(inv.body.text)).toContain('https://t.me/+fakeInvite')
+      expect(tg.callsOf('createChatInviteLink').at(-1)!.body.member_limit).toBe(1)
+
+      // Only the first allowlisted user invites; a stale confirmation does nothing.
+      const before = tg.callsOf('sendMessage').length
+      tg.push(textMessage({ from: 555, text: '/invite' }))
+      tg.push(callbackQuery('inv:ok:555'))
+      await tg.waitFor('answerCallbackQuery', () => true)
+      await Bun.sleep(200)
+      expect(tg.callsOf('sendMessage').filter((c, i) => i >= before && String(c.body.text).startsWith('Кого пригласить')).length).toBe(0)
+    } finally {
+      d.launchSession = ok
+      process.env.USER_SESSIONS = 'off'
+      const a = loadAccess()
+      a.allowFrom = a.allowFrom.filter(x => x !== '555')
+      saveAccess(a)
+    }
+  })
+})
+
+describe('allowlist watcher', () => {
+  test('a user added outside the bot (access skill) gets a folder, a session and an invitation for the owner, once', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { newUsers, onUserAdded } = await import('../src/daemon/invite.ts')
+    const launches: string[] = []
+    const ok = d.launchSession
+    d.launchSession = async (dir, o) => { launches.push(`${dir} ${o?.name}`); return '4' }
+    process.env.USER_SESSIONS = 'on'
+    try {
+      newUsers(d) // baseline
+      const a = loadAccess()
+      a.allowFrom.push('777')
+      saveAccess(a)
+      expect(newUsers(d)).toEqual(['777'])
+      expect(newUsers(d)).toEqual([])
+      await onUserAdded(d, '777')
+      expect(launches).toEqual([`${process.env.USERS_DIR}/777 claude-777`])
+      const note = tg.callsOf('sendMessage').find(c => String(c.body.text).startsWith('👥 <b>777</b> в списке доступа'))!
+      expect(String(note.body.chat_id)).toBe('111')
+      expect(JSON.stringify(note.body.reply_markup)).toContain('tx:w4')
+      expect(String(note.body.text)).toContain('<code>/telegram-bewitched:access remove 777</code>')
+      expect(tg.callsOf('sendMessage').some(c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))).toBe(true)
+    } finally {
+      d.launchSession = ok
+      process.env.USER_SESSIONS = 'off'
+      const a = loadAccess()
+      a.allowFrom = a.allowFrom.filter(x => x !== '777')
+      saveAccess(a)
+    }
+  })
+})
+
+describe('remove user', () => {
+  test('from the session card: confirmation lists what goes; then access, session window, folder, transcripts and DM data are gone', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { projectTranscriptDir } = await import('../src/daemon/transcript.ts')
+    const { addReminder, listReminders } = await import('../src/daemon/reminders.ts')
+    const { userPendingKey } = await import('../src/daemon/daemon.ts')
+    const dir = `${process.env.USERS_DIR}/888`
+    const tr = projectTranscriptDir(dir)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'notes.txt'), 'x'.repeat(2000))
+    mkdirSync(tr, { recursive: true })
+    writeFileSync(join(tr, 's.jsonl'), '{}')
+    const a = loadAccess()
+    a.allowFrom.push('888')
+    saveAccess(a)
+    d.store.addMessage({ chat_id: '888', thread_id: null, message_id: 1, direction: 'in', from_id: '888', from_name: 'bob', date: 1, text: 'hi', kind: 'text', file_id: null, reply_to: null, quote: null, forward: null })
+    d.store.addPending(userPendingKey('888'), 'queued', {})
+    addReminder(d, { chatId: '888', text: 'r', at: Date.now() + 3600_000, daily: false, userId: '888' })
+    const killed: string[] = []
+    d.tmuxKillWindow = async t => { killed.push(t) }
+    process.env.USER_SESSIONS = 'on'
+    const c = new FakeClient()
+    await c.connect({ cwd: dir, projectRoot: dir, tmuxPane: '%31', claudePid: 8888 })
+    const s = d.userSession('888')!
+
+    tg.push(callbackQuery(`sm:s:${s.id}`))
+    await tg.waitFor('editMessageText', x => String(x.body.text).includes(`#${s.id}`) && JSON.stringify(x.body.reply_markup ?? '').includes('ur:ask:888'))
+    tg.push(callbackQuery('ur:ask:888'))
+    const conf = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 Удалить <b>bob (888)</b>?'))
+    expect(String(conf.body.text)).toContain(`папка <code>${dir}</code> (2 КБ)`)
+    expect(String(conf.body.text)).toContain(`транскрипты Claude Code <code>${tr}</code>`)
+    expect(String(conf.body.text)).toContain(`сессия #${s.id} и её окно tmux`)
+    expect(JSON.stringify(conf.body.reply_markup)).toContain('ur:kick:888')
+
+    tg.push(callbackQuery('ur:ok:888', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === 'Удалять пользователей может только владелец.')
+    expect(loadAccess().allowFrom).toContain('888')
+
+    tg.push(callbackQuery('ur:kick:888'))
+    const res = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 <b>bob (888)</b> удалён.'))
+    expect(String(res.body.text)).toContain('✅ исключён из группы')
+    expect(loadAccess().allowFrom).not.toContain('888')
+    expect(killed).toEqual(['%31'])
+    expect(existsSync(dir)).toBe(false)
+    expect(existsSync(tr)).toBe(false)
+    expect(d.store.history('888', null, 10).length).toBe(0)
+    expect(d.store.pendingCount(userPendingKey('888'), 1000)).toBe(0)
+    expect(listReminders(d).some(r => r.chatId === '888')).toBe(false)
+    expect(tg.callsOf('banChatMember').at(-1)!.body.user_id).toBe(888)
+    expect(tg.callsOf('unbanChatMember').at(-1)!.body.only_if_banned).toBe(true)
+
+    tg.push(callbackQuery('ur:ask:111'))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === 'Владельца удалить нельзя.')
+    c.close()
+    process.env.USER_SESSIONS = 'off'
+  })
+})
+
+describe('user labels', () => {
+  test('full name, @username if any, and the id; kept from messages', async () => {
+    d.rememberUser('901', { first: 'Ann', last: 'Lee', username: 'ann' })
+    expect(d.userLabel('901')).toBe('Ann Lee (@ann, 901)')
+    d.rememberUser('902', { first: 'Bo' })
+    expect(d.userLabel('902')).toBe('Bo (902)')
+    d.rememberUser('903', { username: 'cee' })
+    expect(d.userLabel('903')).toBe('@cee (903)')
+    expect(d.userLabel('904')).toBe('904')
+    // A long name in a session button must not be cut inside an emoji (Telegram rejects such text).
+    const { sessionsList } = await import('../src/daemon/menu.ts')
+    d.rememberUser('111', { first: 'Лиза', last: 'Келина-Длиннофамильная', username: 'lizka_kuz' })
+    process.env.USER_SESSIONS = 'on'
+    const u = new FakeClient()
+    await u.connect({ cwd: `${process.env.USERS_DIR}/111`, projectRoot: `${process.env.USERS_DIR}/111`, claudePid: 9911 })
+    const list = await sessionsList(d)
+    for (const row of (list.kb as unknown as { inline_keyboard: { text: string }[][] }).inline_keyboard) {
+      for (const b of row) expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(b.text)).toBe(false)
+    }
+    u.close()
+    process.env.USER_SESSIONS = 'off'
+    tg.push(textMessage({ from: 111, text: 'кто я' }))
+    await Bun.sleep(200)
+    expect(d.userLabel('111')).toBe('Den (@den, 111)')
+  })
+})
+
+describe('voice', () => {
+  const hasFfmpeg = Bun.spawnSync(['ffmpeg', '-version']).exitCode === 0
+  const group = '-100500'
+  test.skipIf(!hasFfmpeg)('a voice message is transcribed before the session sees it; replies are voiced in mirror mode; reply_voice', async () => {
+    const { mkdtempSync, readFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const dir = mkdtempSync(`${tmpdir()}/voice-`)
+    // A real Opus voice note and a real WAV for the fake TTS to return.
+    Bun.spawnSync(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'libopus', `${dir}/in.ogg`])
+    Bun.spawnSync(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=2', '-ac', '1', '-ar', '24000', `${dir}/out.wav`])
+    tg.files.set('voice1', readFileSync(`${dir}/in.ogg`))
+    let sttForm: FormData | null = null
+    let ttsBody: Record<string, unknown> | null = null
+    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: 'привет из голоса', language: 'ru', duration: 1 }) } })
+    const tts = Bun.serve({ port: 0, fetch: async req => { ttsBody = await req.json() as Record<string, unknown>; return new Response(readFileSync(`${dir}/out.wav`)) } })
+    Object.assign(process.env, {
+      STT_PROVIDER: 'openai-compatible', STT_URL: `http://127.0.0.1:${stt.port}/v1/audio/transcriptions`,
+      TTS_PROVIDER: 'http', TTS_URL: `http://127.0.0.1:${tts.port}/v1/audio/speech`,
+    })
+    try {
+      const thread = d.sessions.get(sessionId)!.topic!.threadId
+      tg.push({ message: { message_id: 91001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice1', file_unique_id: 'v1', duration: 1, mime_type: 'audio/ogg' } } })
+      const m = await client.inbound(x => x.content.includes('привет из голоса'))
+      expect(m.content).toBe('🎤 привет из голоса')
+      expect(m.meta).toMatchObject({ voice_transcribed: 'true', voice_language: 'ru', voice_duration: '1', attachment_kind: 'voice', attachment_file_id: 'voice1' })
+      const file = sttForm!.get('file') as File
+      expect(new TextDecoder().decode((await file.arrayBuffer()).slice(0, 4))).toBe('RIFF') // converted to WAV by ffmpeg
+      expect(d.store.getMessage(group, 91001)?.text).toBe('🎤 привет из голоса')
+
+      // mirror (the default): the answer to a spoken message is voiced, with the text as caption.
+      const r = await client.call('reply', { text: 'Ответ **голосом**, подробности в `коде`' })
+      expect(r.ok).toBe(true)
+      const v = await tg.waitFor('sendVoice', c => String(c.body.chat_id) === group)
+      expect(v.body.caption).toBe('Ответ **голосом**, подробности в `коде`')
+      expect(Number(v.body.duration)).toBe(2)
+      expect(ttsBody!.input).toBe('Ответ голосом, подробности в коде')
+      // Same text again comes from the cache: no second synthesis.
+      ttsBody = null
+      await client.call('reply_voice', { text: 'Ответ **голосом**, подробности в `коде`' })
+      await tg.waitFor('sendVoice', () => tg.callsOf('sendVoice').length >= 2)
+      expect(ttsBody).toBeNull()
+
+      // A text message: back to text answers.
+      tg.push(textMessage({ chat: Number(group), thread, text: 'а теперь текстом' }))
+      await client.inbound(x => x.content === 'а теперь текстом')
+      const voices = tg.callsOf('sendVoice').length
+      await client.call('reply', { text: 'текстовый ответ' })
+      await tg.waitFor('sendMessage', c => c.body.text === 'текстовый ответ')
+      expect(tg.callsOf('sendVoice').length).toBe(voices)
+
+      // STT down: the message still arrives, as before, with stt_error.
+      stt.stop(true)
+      tg.files.set('voice2', readFileSync(`${dir}/in.ogg`))
+      tg.push({ message: { message_id: 91002, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice2', file_unique_id: 'v2', duration: 1, mime_type: 'audio/ogg' } } })
+      const failed = await client.inbound(x => x.meta.attachment_file_id === 'voice2')
+      expect(failed.content).toBe('(voice message)')
+      expect(failed.meta.stt_error).toBeTruthy()
+    } finally {
+      stt.stop(true)
+      tts.stop(true)
+      for (const k of ['STT_PROVIDER', 'STT_URL', 'TTS_PROVIDER', 'TTS_URL']) delete process.env[k]
+    }
+  }, 20_000)
+})
+
+describe('server stats', () => {
+  test('/server: CPU, memory, disks, sessions; 🔄 refreshes; owner only', async () => {
+    tg.push(textMessage({ text: '/server' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const text = String(r.body.text)
+    for (const part of ['⚙️ CPU: <b>', '🧠 Память: <b>', '💾 Диск /: <b>', '🤖 Claude Code:', '🔥 <b>Больше всего CPU</b>', '🐘 <b>Больше всего памяти</b>']) expect(text).toContain(part)
+    expect(JSON.stringify(r.body.reply_markup)).toContain('srv:refresh')
+    tg.push(callbackQuery('srv:refresh'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const before = tg.callsOf('sendMessage').length
+    tg.push(textMessage({ from: 333, text: '/server' }))
+    await Bun.sleep(1500)
+    expect(tg.callsOf('sendMessage').slice(before).some(c => String(c.body.text).startsWith('🖥'))).toBe(false)
+  }, 15_000)
+})
+
+describe('menu', () => {
+  test('/menu leads to every section and back; chat settings are toggled with buttons', async () => {
+    const { prefsFor } = await import('../src/access.ts')
+    tg.push(textMessage({ text: '/menu' }))
+    const m = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Меню</b>'))
+    const kb = JSON.stringify(m.body.reply_markup)
+    for (const cb of ['sm:list', 'tm:list', 'hub:stats', 'hub:people', 'hub:rem', 'hub:set', 'hub:help']) expect(kb).toContain(cb)
+
+    const open = async (data: string, startsWith: string) => {
+      tg.push(callbackQuery(data))
+      return tg.waitFor('editMessageText', c => String(c.body.text).startsWith(startsWith), 6000)
+    }
+    expect(JSON.stringify((await open('hub:stats', '📊 <b>Статистика</b>')).body.reply_markup)).toContain('srv:refresh')
+    expect(JSON.stringify((await open('hub:people', '👥 <b>Люди</b>')).body.reply_markup)).toContain('inv:start')
+    await open('hub:rem', '⏰ <b>Напоминания</b>')
+    await open('hub:help', '❓ <b>Помощь</b>')
+    const list = await open('sm:list', '📋 <b>Сессии</b>')
+    expect(JSON.stringify(list.body.reply_markup)).toContain('hub:main')
+    await open('hub:main', '🎛 <b>Меню</b>')
+
+    const set = await open('hub:set', '⚙️ <b>Настройки в этой личке</b>')
+    expect(JSON.stringify(set.body.reply_markup)).toContain('hub:vo:always')
+    tg.push(callbackQuery('hub:v:2'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Подробность прогресса: 📢2'))
+    expect(prefsFor('111').verbose).toBe(2)
+    tg.push(callbackQuery('hub:vo:off'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Ответы: текстом'))
+    expect(prefsFor('111').voice).toBe('off')
+    tg.push(callbackQuery('hub:v:1'))
+    tg.push(callbackQuery('hub:vo:mirror'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Ответы: голосом на голосовое'))
+
+    tg.push(callbackQuery('hub:stats', { from: 444 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(tg.callsOf('setMyCommands').at(-1)?.body.commands).toBeTruthy()
+  }, 20_000)
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning
@@ -627,9 +1172,10 @@ describe('session types', () => {
 
   test('a DM without a user session launches it in USERS_DIR/<id>; the message arrives on connect', async () => {
     tg.push(textMessage({ text: 'привет, это я' }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    const launchMsg = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    expect(JSON.stringify(launchMsg.body.reply_markup)).toContain('tx:w7')
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
-    expect(calls.at(-1)!.o?.name).toBe('claude-den')
+    expect(calls.at(-1)!.o?.name).toBe('claude-111')
     u = new FakeClient()
     await u.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 1111 })
     const resume = await u.inbound(x => x.meta.event === 'session_resume')

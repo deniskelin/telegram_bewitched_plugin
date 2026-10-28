@@ -16,7 +16,7 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { launchCommand, launchForTopic, manualCmd, sessionName } from './launch.ts'
+import { launchCommand, launchForTopic, manualCmd, screenKb, sessionName } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 
@@ -34,7 +34,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
   if (d.activeSessions().some(o => o.projectKey === s.projectKey)) return // restarted meanwhile
   const role = d.roleOf(s)
   const user = d.userIdOf(s)
-  const name = user ? `👤 ${d.store.lastSenderName(user) ?? user}` : role === 'main' ? '👑 главная' : `📂 ${s.projectName}`
+  const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? '👑 главная' : `📂 ${s.projectName}`
   const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey) }
   const id = randomBytes(4).toString('hex')
   d.store.set(`wd:${id}`, JSON.stringify(restart))
@@ -89,8 +89,8 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     d.store.set(`wd:${m[2]}`, null)
     await answer('🚀 Запускаю')
     await ctx.editMessageText(
-      `🚀 Запускаю <b>${escapeHtml(r.name)}</b> в tmux: окно ${escapeHtml(win)}.\nПодтвердите:<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов.\n<code>${escapeHtml(launchCommand(o))}</code>`,
-      { parse_mode: 'HTML' },
+      `🚀 Запускаю <b>${escapeHtml(r.name)}</b> в tmux: окно ${escapeHtml(win)}.\nПодтвердите:<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов (или кнопкой «👁 Экран»).\n<code>${escapeHtml(launchCommand(o))}</code>`,
+      { parse_mode: 'HTML', reply_markup: screenKb(win) },
     ).catch(() => {})
   } catch (err) {
     await answer(`Не удалось: ${String(err instanceof Error ? err.message : err)}`.slice(0, 190))

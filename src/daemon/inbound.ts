@@ -9,22 +9,33 @@ import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
+import { dmCommandGate, gate, isOwner, loadAccess, prefsFor } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
-import { safeMeta } from '../format.ts'
+import { clip, safeMeta } from '../format.ts'
+import { toWav16k } from '../voice/audio.ts'
+import { sttEnabled, transcribe, type SttResult } from '../voice/stt.ts'
+import { downloadToInbox } from './media.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
-import { usageReport } from './usage.ts'
+import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
+import { handleScreenCallback } from './screen.ts'
+import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
+import { handleReportCallback, registerReportCommands } from './reports.ts'
+import { handleInviteCallback, registerInviteCommands } from './invite.ts'
+import { handleUserCallback, registerUserCommands } from './users.ts'
+import { handleTopicMenu } from './topicmenu.ts'
+import { handleServerCallback, registerServerCommands } from './server.ts'
+import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 
-type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string }
+type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string; duration?: number }
 
 function originLabel(o: NonNullable<Message['forward_origin']>): string {
   switch (o.type) {
@@ -95,9 +106,63 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
 }
 
+/**
+ * Text that did not come from a Telegram message (a reminder): same routing
+ * as a message — the serving session, else queue and start it if we can.
+ */
+export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: string, meta: Record<string, string>): Promise<void> {
+  const target = resolveTarget(d, chat, fromId)
+  switch (target.kind) {
+    case 'session':
+      if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
+      return d.deliver(target.session, text, meta, chat)
+    case 'launch':
+      d.store.addPending(target.projectKey, text, meta)
+      return launchForTopic(d, chat.chatId, target.threadId, target.projectKey)
+    case 'user_offline':
+      d.store.addPending(userPendingKey(target.userId), text, meta)
+      return launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId: chat.chatId, threadId: chat.threadId })
+    case 'offline':
+    case 'waiting':
+      d.store.addPending(target.projectKey, text, meta)
+      return
+    case 'main_offline':
+      d.store.addPending(MAIN_PENDING_KEY, text, meta)
+      return
+    case 'archived':
+      if (target.projectKey) d.store.addPending(target.projectKey, text, meta)
+      return
+    case 'unbound':
+      return
+  }
+}
+
 function userTarget(d: Daemon, userId: string): Target {
   const s = d.userSession(userId)
   return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId }
+}
+
+// --- speech to text ---
+
+function isSpeech(kind: string): boolean {
+  return kind === 'voice' || kind === 'audio' || kind === 'video_note' || (kind === 'video' && settings.sttVideo)
+}
+
+/** Download, convert to 16 kHz WAV, transcribe; the temporary WAV is removed. */
+async function speechToText(d: Daemon, a: AttachmentMeta): Promise<SttResult | { error: string }> {
+  if (a.duration != null && a.duration > settings.sttMaxSec) return { error: `длиннее STT_MAX_SEC (${settings.sttMaxSec} с)` }
+  let wav: string | null = null
+  try {
+    const src = await downloadToInbox(d, a.file_id)
+    wav = `${src}.16k.wav`
+    await toWav16k(src, wav, settings.sttMaxSec)
+    return await transcribe(wav)
+  } catch (err) {
+    d.log(`stt failed: ${err}`)
+    return { error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    if (wav) rmSync(wav, { force: true })
+  }
 }
 
 // --- forward batching: several forwards within 3 s become one event ---
@@ -108,10 +173,11 @@ const batches = new Map<string, Batch>()
 async function handleInbound(
   d: Daemon,
   ctx: Context,
-  text: string,
+  original: string,
   downloadImage: (() => Promise<string | undefined>) | undefined,
   attachment?: AttachmentMeta,
 ): Promise<void> {
+  let text = original
   const result = gate(ctx, d.botUsername)
   if (result.action === 'drop') return
   if (result.action === 'pair') {
@@ -136,6 +202,8 @@ async function handleInbound(
     forward: msg.forward_origin ? JSON.stringify(msg.forward_origin) : null,
   })
   if (threadId != null) d.store.touchTopic(chatId, threadId)
+  d.lastSpeech.set(`${chatId}:${threadId ?? 0}`, !!attachment && isSpeech(attachment.kind))
+  d.rememberUser(String(from.id), { first: from.first_name, last: from.last_name, username: from.username })
 
   // Permission reply typed as text ("yes abcde").
   const permMatch = PERMISSION_REPLY_RE.exec(text)
@@ -165,6 +233,27 @@ async function handleInbound(
   }
 
   const imagePath = downloadImage ? await downloadImage() : undefined
+  // Speech → text before Claude sees it (after the access check, like photos).
+  let sttMeta: Record<string, string> = {}
+  if (attachment && isSpeech(attachment.kind) && sttEnabled()) {
+    const caption = msg.caption?.trim() ?? ''
+    if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: '✍' }]).catch(() => {})
+    const r = await speechToText(d, attachment)
+    if ('error' in r) sttMeta = { stt_error: safeMeta(r.error) ?? 'error' }
+    else {
+      text = caption ? `${caption}\n\n🎤 ${r.text}` : `🎤 ${r.text}`
+      d.store.updateMessageText(chatId, msg.message_id, text)
+      sttMeta = {
+        voice_transcribed: 'true', stt_provider: r.provider,
+        ...(attachment.duration != null ? { voice_duration: String(attachment.duration) } : {}),
+        ...(r.language ? { voice_language: r.language } : {}),
+      }
+      if (prefsFor(chatId, threadId).transcript) {
+        void ctx.reply(`🎤 ${r.text || '(тишина)'}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+      }
+    }
+    if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
+  }
   const questionId = closeByTextReply(d, chatId, msg.reply_to_message?.message_id)
   const meta: Record<string, string> = {
     chat_id: chatId,
@@ -177,6 +266,7 @@ async function handleInbound(
     ...enrichMeta(d, msg),
     ...(questionId ? { question_id: questionId } : {}),
     ...(imagePath ? { image_path: imagePath } : {}),
+    ...sttMeta,
     ...(attachment ? {
       attachment_kind: attachment.kind,
       attachment_file_id: attachment.file_id,
@@ -198,7 +288,7 @@ async function handleInbound(
   }
   if (target.kind === 'user_offline') {
     d.store.addPending(userPendingKey(target.userId), text, meta)
-    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name, { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
+    void launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
     return
   }
   if (target.kind === 'launch') {
@@ -259,14 +349,15 @@ export function resolvePermission(d: Daemon, request_id: string, behavior: 'allo
 
 export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: string; tool_name: string; description: string; input_preview: string }): void {
   d.permissions.set(p.request_id, { sessionId: s.id, tool_name: p.tool_name, description: p.description, input_preview: p.input_preview })
+  if (s.alwaysAllow.has(p.tool_name)) {
+    d.log(`session ${s.id}: ${p.tool_name} allowed (♾)`)
+    resolvePermission(d, p.request_id, 'allow')
+    return
+  }
   s.status = 'waiting'
   d.onSessionsChanged()
   const text = `🔐 ${s.projectName}: ${p.tool_name}`
-  const kb = new InlineKeyboard([[
-    button('Подробнее', `perm:more:${p.request_id}`),
-    button('✅ Разрешить', `perm:allow:${p.request_id}`, 'success'),
-    button('❌ Запретить', `perm:deny:${p.request_id}`, 'danger'),
-  ]])
+  const kb = permissionKb(p.request_id, p.tool_name, true)
   const mode = settings.permissionsTo
   const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
@@ -277,8 +368,14 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
+function permissionKb(requestId: string, tool: string, more: boolean): InlineKeyboard {
+  const first = [button('✅ Разрешить', `perm:allow:${requestId}`, 'success'), button('❌ Запретить', `perm:deny:${requestId}`, 'danger')]
+  if (more) first.unshift(button('Подробнее', `perm:more:${requestId}`))
+  return new InlineKeyboard([first, [button(clip(`♾ Всегда ${tool} в этой сессии`, 40), `perm:always:${requestId}`)]])
+}
+
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
-  const m = /^perm:(allow|deny|more):([a-km-z]{5})$/.exec(data)
+  const m = /^perm:(allow|deny|more|always):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
   if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
   const [, behavior, request_id] = m
@@ -292,12 +389,16 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
       pretty = p.input_preview
     }
     const expanded = `🔐 ${p.tool_name}\n\n${p.description}\n\n${pretty}`.slice(0, 4000)
-    const kb = new InlineKeyboard([[button('✅ Разрешить', `perm:allow:${request_id}`, 'success'), button('❌ Запретить', `perm:deny:${request_id}`, 'danger')]])
-    await ctx.editMessageText(expanded, { reply_markup: kb }).catch(() => {})
+    await ctx.editMessageText(expanded, { reply_markup: permissionKb(request_id, p.tool_name, false) }).catch(() => {})
     return void ctx.answerCallbackQuery().catch(() => {})
   }
-  const ok = resolvePermission(d, request_id, behavior as 'allow' | 'deny')
-  const label = !ok ? '⌛ Запрос уже неактуален' : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
+  const p = d.permissions.get(request_id)
+  const s = p ? d.sessions.get(p.sessionId) : undefined
+  if (behavior === 'always' && p && s) s.alwaysAllow.add(p.tool_name)
+  const ok = resolvePermission(d, request_id, behavior === 'deny' ? 'deny' : 'allow')
+  const label = !ok ? '⌛ Запрос уже неактуален'
+    : behavior === 'always' ? `♾ Разрешено; ${p!.tool_name} в этой сессии больше не спрашиваю`
+    : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
   await ctx.answerCallbackQuery({ text: label }).catch(() => {})
   const msg = ctx.callbackQuery?.message
   if (msg && 'text' in msg && msg.text) await ctx.editMessageText(`${msg.text}\n\n${label}`).catch(() => {})
@@ -335,6 +436,13 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
 // --------------------------------------------------------------------------
 
 export function registerInbound(d: Daemon, bot: Bot, token: string): void {
+  d.routeText = (chat, fromId, text, meta) => routeText(d, chat, fromId, text, meta)
+  registerReminderCommands(d, bot)
+  registerReportCommands(d, bot)
+  registerInviteCommands(d, bot)
+  registerUserCommands(d, bot)
+  registerServerCommands(d, bot)
+  registerHubCommands(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -358,24 +466,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.command('help', async ctx => {
     if (ctx.chat.type === 'private' && !dmCommandGate(ctx)) return
     if (ctx.chat.type !== 'private' && !isOwner(ctx.from!.id)) return
-    await ctx.reply([
-      'Пульт (личка или General группы):',
-      '/sessions — запущенные сессии',
-      '/topics — все топики',
-      '/send <топик> <текст> — написать в сессию другого топика',
-      '/broadcast <текст> — во все сессии',
-      '/rename <топик> | <имя>, /archive <топик>, /delete <топик>',
-      '/main [id|reset] — главная сессия: личка, General и топики без своей сессии',
-      '/new_session <имя|путь> — новый проект и сессия в tmux',
-      'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
-      '',
-      'В любом чате/топике:',
-      '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
-      '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
-      '/remember — сохранить память чата, /forget — стереть историю',
-      '',
-      'Только в личке: /usage — лимиты подписки и расход, /connect_group, /group, /disconnect_group, /status',
-    ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
+    const { text, kb } = helpScreen()
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
   bot.command('status', async ctx => {
@@ -402,7 +494,12 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   // The subscription is the owner's, and the breakdown shows everyone's sessions.
   bot.command('usage', async ctx => {
     if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
-    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
+  })
+
+  bot.command('digest', async ctx => {
+    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    await ctx.reply(await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
   })
 
   bot.on('callback_query:data', async ctx => {
@@ -412,7 +509,16 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
+    if (await handleScreenCallback(d, ctx, data)) return
+    if (await handleResetCallback(d, ctx, data)) return
+    if (await handleReminderCallback(d, ctx, data)) return
+    if (await handleReportCallback(d, ctx, data)) return
+    if (await handleInviteCallback(d, ctx, data)) return
+    if (await handleUserCallback(d, ctx, data)) return
+    if (await handleServerCallback(d, ctx, data)) return
+    if (await handleHubCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
+    if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })
@@ -461,25 +567,25 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.on('message:voice', ctx => {
     const v = ctx.message.voice
     return handleInbound(d, ctx, ctx.message.caption ?? '(voice message)', undefined,
-      { kind: 'voice', file_id: v.file_id, size: v.file_size, mime: v.mime_type })
+      { kind: 'voice', file_id: v.file_id, size: v.file_size, mime: v.mime_type, duration: v.duration })
   })
 
   bot.on('message:audio', ctx => {
     const a = ctx.message.audio
     const name = safeMeta(a.file_name, 120)
     return handleInbound(d, ctx, ctx.message.caption ?? `(audio: ${safeMeta(a.title, 120) ?? name ?? 'audio'})`, undefined,
-      { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: a.mime_type, name })
+      { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: a.mime_type, name, duration: a.duration })
   })
 
   bot.on('message:video', ctx => {
     const v = ctx.message.video
     return handleInbound(d, ctx, ctx.message.caption ?? '(video)', undefined,
-      { kind: 'video', file_id: v.file_id, size: v.file_size, mime: v.mime_type, name: safeMeta(v.file_name, 120) })
+      { kind: 'video', file_id: v.file_id, size: v.file_size, mime: v.mime_type, name: safeMeta(v.file_name, 120), duration: v.duration })
   })
 
   bot.on('message:video_note', ctx => {
     const vn = ctx.message.video_note
-    return handleInbound(d, ctx, '(video note)', undefined, { kind: 'video_note', file_id: vn.file_id, size: vn.file_size })
+    return handleInbound(d, ctx, '(video note)', undefined, { kind: 'video_note', file_id: vn.file_id, size: vn.file_size, duration: vn.duration })
   })
 
   bot.on('message:sticker', ctx => {

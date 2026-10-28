@@ -1,6 +1,6 @@
 {
   "name": "telegram-bewitched",
-  "version": "1.1.1",
+  "version": "1.2.0",
   "license": "Apache-2.0",
   "type": "module",
   "bin": "./server.ts",
@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.0.0",
+    "@resvg/resvg-js": "2.6.2",
     "grammy": "^1.21.0"
   },
   "devDependencies": {

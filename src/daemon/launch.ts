@@ -59,13 +59,14 @@ export function launchCommand(o: LaunchOptions = {}): string {
 }
 
 /**
- * Name for the Claude session (-n) and its tmux window: claude-<username> for
+ * Name for the Claude session (-n) and its tmux window: claude-<telegram id> for
  * a user's session, claude-topic-<topic> for a project. Undefined for the
  * main session: it keeps the folder name.
  */
 export function sessionName(d: Daemon, dir: string): string | undefined {
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
-  if (user) return `claude-${slugify(d.store.lastSenderName(user) ?? '') || user}`
+  // The Telegram id: always there and never changes, unlike a username.
+  if (user) return `claude-${user}`
   if (dir === d.mainKey()) return undefined
   const chat = d.topicsChatId
   const topic = chat ? d.store.topicForProject(chat, dir) : null
@@ -101,8 +102,30 @@ export async function tmuxLocation(pane: string): Promise<TmuxLocation | null> {
   }
 }
 
-async function say(d: Daemon, chatId: string, threadId: number | undefined, html: string): Promise<void> {
-  await d.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', ...(threadId != null ? { message_thread_id: threadId } : {}) }).catch(err => d.log(`launch notice failed: ${err}`))
+async function say(d: Daemon, chatId: string, threadId: number | undefined, html: string, kb?: InlineKeyboard): Promise<void> {
+  await d.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', ...(threadId != null ? { message_thread_id: threadId } : {}), ...(kb ? { reply_markup: kb } : {}) })
+    .catch(err => d.log(`launch notice failed: ${err}`))
+}
+
+/** tmux capture of a pane or window; null when it is gone. Replaced in tests via Daemon. */
+export function tmuxCapture(target: string): Promise<string | null> {
+  return run(['capture-pane', '-p', '-t', target]).catch(() => null)
+}
+
+/** Type text literally into a pane, then Enter. */
+export async function tmuxType(target: string, text: string): Promise<void> {
+  await run(['send-keys', '-t', target, '-l', text])
+  await run(['send-keys', '-t', target, 'Enter'])
+}
+
+/** Close a tmux window (by pane id or session:window); the processes in it end. */
+export async function tmuxKillWindow(target: string): Promise<void> {
+  await run(['kill-window', '-t', target])
+}
+
+/** Press keys in a pane or window (tmux key names, e.g. Enter, Escape, 1). */
+export async function tmuxKeys(target: string, keys: string[]): Promise<void> {
+  for (const k of keys) await run(['send-keys', '-t', target, k])
 }
 
 /**
@@ -153,7 +176,12 @@ function hasTranscripts(dir: string): boolean {
 }
 
 function confirmHint(win: string): string {
-  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов.`
+  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «👁 Экран» — прямо из Telegram.`
+}
+
+/** "👁 Экран" for a freshly launched window: its screen with keys to accept the channels prompt. */
+export function screenKb(win: string): InlineKeyboard {
+  return new InlineKeyboard([[button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
 }
 
 export function manualCmd(dir: string, o: LaunchOptions = {}): string {
@@ -182,9 +210,9 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
   const self = o === userId
   await say(d, where.chatId, where.threadId, self
     ? `🚀 Запускаю вашу сессию в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`
-    : '🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.')
+    : '🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.', self ? screenKb(r.window) : undefined)
   if (o && !self) {
-    await say(d, o, undefined, `🚀 ${escapeHtml(name)} (${userId}) написал(а) боту — запускаю сессию пользователя в <code>${escapeHtml(dir)}</code>. Подтвердите:${confirmHint(r.window)}`)
+    await say(d, o, undefined, `🚀 ${escapeHtml(name)} (${userId}) написал(а) боту — запускаю сессию пользователя в <code>${escapeHtml(dir)}</code>. Подтвердите:${confirmHint(r.window)}`, screenKb(r.window))
   }
 }
 
@@ -201,7 +229,7 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
     return
   }
   if (r.ok) {
-    await say(d, chatId, threadId, `🚀 Запускаю сессию проекта в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`)
+    await say(d, chatId, threadId, `🚀 Запускаю сессию проекта в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`, screenKb(r.window))
     return
   }
   const dir = projectKey.replace(/#.*$/, '')
@@ -260,8 +288,8 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
     '',
     'Подтвердите запуск каналов в терминале:',
     `<pre>tmux attach -t ${escapeHtml(sess)}</pre>`,
-    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
-  ].join('\n'))
+    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «👁 Экран» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
+  ].join('\n'), screenKb(win))
 }
 
 /** Owner created a topic by hand → offer/start a project named after it. */

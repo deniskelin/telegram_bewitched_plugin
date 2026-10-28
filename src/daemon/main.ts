@@ -4,7 +4,7 @@
  * (detached), or by hand: `bewitched daemon start`.
  */
 
-import { closeSync, openSync, readFileSync, rmSync, writeSync } from 'fs'
+import { linkSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { LOCK_FILE, SOCK_FILE, ensureStateDir, loadEnv, migrateLegacy, settings } from '../config.ts'
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { startQuestionExpiry } from './buttons.ts'
@@ -13,27 +13,54 @@ import { startHttp } from './http.ts'
 import { handlePermissionRequest, registerInbound } from './inbound.ts'
 import { handleCall } from './tools.ts'
 import { registerLaunchCommands, startIdleCloser } from './launch.ts'
+import { startDigest, startLimitWatch } from './usage.ts'
+import { startReminders } from './reminders.ts'
+import { startReports } from './reports.ts'
+import { startAllowlistWatch } from './invite.ts'
+import { voiceServices } from '../voice/service.ts'
+import { setLocalSttStarter } from '../voice/stt.ts'
+import { setSileroStarter } from '../voice/tts.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
   process.stderr.write(`${new Date().toISOString()} ${m}\n`)
 }
 
-/** One daemon per state dir. A stale pid file (dead or recycled pid) is taken over. */
+/**
+ * One daemon per state dir. The pid file appears atomically, already holding
+ * the pid (written to a temp file, then hard-linked into place: link fails if
+ * the file exists), so a racing starter never sees it empty. A stale file
+ * (dead or recycled pid) is taken over; a fresh one never is.
+ */
 function acquireLock(): boolean {
-  for (let i = 0; i < 2; i++) {
-    try {
-      const fd = openSync(LOCK_FILE, 'wx', 0o600)
-      writeSync(fd, String(process.pid))
-      closeSync(fd)
-      return true
-    } catch {
-      const pid = parseInt(readFileSync(LOCK_FILE, 'utf8'), 10)
-      if (pid > 1 && pid !== process.pid && isAlive(pid) && cmdlineOf(pid).join(' ').includes('daemon/main.ts')) return false
-      rmSync(LOCK_FILE, { force: true })
+  const tmp = `${LOCK_FILE}.${process.pid}`
+  writeFileSync(tmp, String(process.pid), { mode: 0o600 })
+  try {
+    for (let i = 0; i < 3; i++) {
+      try {
+        linkSync(tmp, LOCK_FILE)
+        return true
+      } catch {}
+      let raw = ''
+      let age = 0
+      try {
+        raw = readFileSync(LOCK_FILE, 'utf8')
+        age = Date.now() - statSync(LOCK_FILE).mtimeMs
+      } catch {
+        continue // removed meanwhile: try again
+      }
+      const pid = parseInt(raw, 10)
+      const alive = pid > 1 && isAlive(pid) && cmdlineOf(pid).join(' ').includes('daemon/main.ts')
+      if (alive || (Number.isNaN(pid) && age < 10_000)) return false
+      // Still the same stale file? (Another starter may have replaced it.)
+      try {
+        if (readFileSync(LOCK_FILE, 'utf8') === raw) rmSync(LOCK_FILE, { force: true })
+      } catch {}
     }
+    return false
+  } finally {
+    rmSync(tmp, { force: true })
   }
-  return false
 }
 
 ensureStateDir()
@@ -69,6 +96,8 @@ function shutdown(code = 0): void {
     if (parseInt(readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) rmSync(LOCK_FILE, { force: true })
   } catch {}
   rmSync(SOCK_FILE, { force: true })
+  voice.stt.stop()
+  voice.silero.stop()
   setTimeout(() => process.exit(code), 2000)
   void Promise.resolve(d.bot.stop()).finally(() => process.exit(code))
 }
@@ -81,6 +110,16 @@ startHttp(d)
 startQuestionExpiry(d)
 d.startIdleWatch(() => shutdown())
 startIdleCloser(d)
+startLimitWatch(d)
+startDigest(d)
+startReminders(d)
+startReports(d)
+startAllowlistWatch(d)
+const voice = voiceServices(log)
+setLocalSttStarter(() => voice.stt.ensure())
+setSileroStarter(() => voice.silero.ensure())
+// Warm the recognizer up: the first voice message shouldn't wait for the model.
+if (settings.sttLocal && settings.sttProvider !== 'off' && voice.stt.installed()) void voice.stt.ensure().catch(err => log(`stt: ${err}`))
 setInterval(() => d.store.pruneHistory(settings.historyMaxDays), 6 * 3600_000).unref()
 log(`daemon pid=${process.pid} listening on ${SOCK_FILE}, http 127.0.0.1:${settings.httpPort}`)
 
@@ -88,14 +127,12 @@ void d.startPolling(bot => {
   registerTopicCommands(d, bot)
   registerLaunchCommands(d, bot)
   registerInbound(d, bot, TOKEN)
+  // A short menu: everything else is a button in /menu (old commands still work).
   void bot.api.setMyCommands([
-    { command: 'sessions', description: 'Запущенные сессии' },
-    { command: 'topics', description: 'Топики проектов' },
-    { command: 'connect_group', description: 'Подключить группу с топиками' },
-    { command: 'new_session', description: 'Новый проект и сессия в tmux' },
+    { command: 'menu', description: 'Меню: сессии, статистика, люди, настройки' },
+    { command: 'sessions', description: 'Сессии' },
     { command: 'usage', description: 'Лимиты подписки и расход' },
-    { command: 'status', description: 'Состояние бота и демона' },
-    { command: 'help', description: 'Команды' },
+    { command: 'help', description: 'Помощь' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})
 }).catch(err => {
   log(`startup failed: ${err}`)

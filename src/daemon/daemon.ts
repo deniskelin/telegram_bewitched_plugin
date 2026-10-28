@@ -16,7 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
-import { tmuxLaunch, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { tmuxCapture, tmuxKeys, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -50,9 +50,15 @@ export type Session = {
   /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
   claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
   lastTool: { text: string; at: number } | null
+  /** Tools the owner allowed for the rest of this session ("♾ Всегда"); asked again after a reconnect. */
+  alwaysAllow: Set<string>
+  /** The "context is filling up" notice went out (reset when the context shrinks). */
+  contextWarned: boolean
   /** Command line of the Claude process, read at connect (it is gone once the process exits). */
   argv: string[]
 }
+
+export type UserInfo = { first?: string; last?: string; username?: string }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
 
@@ -144,6 +150,33 @@ export class Daemon {
     return m ? m[1] : null
   }
 
+  /** Telegram profile of a user as last seen (messages, invite, getChat). */
+  userInfo(userId: string): UserInfo | null {
+    try {
+      return JSON.parse(this.store.get(`user_info:${userId}`) ?? 'null')
+    } catch {
+      return null
+    }
+  }
+
+  rememberUser(userId: string, info: UserInfo): void {
+    const clean: UserInfo = {
+      ...(info.first ? { first: info.first } : {}),
+      ...(info.last ? { last: info.last } : {}),
+      ...(info.username ? { username: info.username } : {}),
+    }
+    const json = JSON.stringify(clean)
+    if (json !== '{}' && this.store.get(`user_info:${userId}`) !== json) this.store.set(`user_info:${userId}`, json)
+  }
+
+  /** "Денис Келин (@deniskelin, 140211098)": full name, username if any, and the id. */
+  userLabel(userId: string): string {
+    const i = this.userInfo(userId)
+    const name = [i?.first, i?.last].filter(Boolean).join(' ') || this.store.get(`user_name:${userId}`) || this.store.lastSenderName(userId)
+    if (name && name !== i?.username) return `${name} (${[i?.username ? `@${i.username}` : null, userId].filter(Boolean).join(', ')})`
+    return i?.username ? `@${i.username} (${userId})` : userId
+  }
+
   userSession(userId: string): Session | null {
     const list = this.activeSessions().filter(s => this.userIdOf(s) === userId)
     list.sort((a, b) => b.connectedAt - a.connectedAt)
@@ -200,10 +233,21 @@ export class Daemon {
   onSessionGone: (s: Session) => void = () => {}
   handleCall: (s: Session, name: string, args: Record<string, unknown>) => Promise<string> = async () => 'not ready'
   handlePermissionRequest: (s: Session, p: Omit<PendingPermission, 'sessionId'> & { request_id: string }) => void = () => {}
+  /** "chat:thread" → the last message there was spoken (voice, video note): /voice mirror answers by voice. */
+  readonly lastSpeech = new Map<string, boolean>()
+
+  /** Hand text to whichever session serves the chat, as a message from fromId (queue/launch if needed). Set by inbound. */
+  routeText: (chat: ChatRef, fromId: string, text: string, meta: Record<string, string>) => Promise<void> = async () => {}
   /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
   launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = tmuxLaunch
   /** Where a tmux pane lives. Replaced in tests. */
   tmuxLocation: (pane: string) => Promise<TmuxLocation | null> = tmuxLocation
+  /** Screen of a pane/window and key presses into it. Replaced in tests. */
+  tmuxCapture: (target: string) => Promise<string | null> = tmuxCapture
+  tmuxKeys: (target: string, keys: string[]) => Promise<void> = tmuxKeys
+  /** Type a line (e.g. "/compact") into a pane and press Enter. Replaced in tests. */
+  tmuxType: (target: string, text: string) => Promise<void> = tmuxType
+  tmuxKillWindow: (target: string) => Promise<void> = tmuxKillWindow
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
@@ -229,6 +273,8 @@ export class Daemon {
       notes: [],
       claude: { sessionId: null, transcript: null, permissionMode: null },
       lastTool: null,
+      contextWarned: false,
+      alwaysAllow: new Set(),
       argv: h.claudePid ? cmdlineOf(h.claudePid) : [],
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.

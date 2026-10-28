@@ -5,6 +5,7 @@
  *   bewitched daemon start|stop|restart|status|logs|install-cron
  *   bewitched notify [--topic <name>] [--silent] <text…>
  *   bewitched status
+ *   bewitched voice install [stt|tts]   # local faster-whisper / Silero in STATE_DIR/voice
  */
 
 import { execFileSync } from 'child_process'
@@ -41,7 +42,8 @@ function usage(): never {
   bewitched daemon start|stop|restart|status|logs|install-cron
   bewitched notify [--topic <name>] [--silent] <text…>
   bewitched status
-  bewitched group allow-paired   # all allowlisted users may post in the topics group`)
+  bewitched group allow-paired   # all allowlisted users may post in the topics group
+  bewitched voice install [stt|tts]   # local speech recognition (faster-whisper) and voice (Silero)`)
   process.exit(1)
 }
 
@@ -118,6 +120,12 @@ switch (cmd) {
     a.groups[chat] = { ...(a.groups[chat] ?? { requireMention: false }), requireMention: false, allowFrom: [], allowPaired: true }
     saveAccess(a)
     console.log(`topics group ${chat}: all paired users (${a.allowFrom.join(', ')}) may post and control sessions`)
+    break
+  }
+  case 'voice': {
+    if (sub !== 'install') usage()
+    const { installVoice } = await import('../src/voice/install.ts')
+    await installVoice(rest[0] === 'stt' || rest[0] === 'tts' ? rest[0] : 'all')
     break
   }
   default:

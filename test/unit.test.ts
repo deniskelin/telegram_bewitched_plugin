@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { chunk, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
+import { chunk, clip, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
 import { isPassiveLaunch } from '../src/proc.ts'
 import { Store } from '../src/db.ts'
 import { parseOptions } from '../src/daemon/buttons.ts'
@@ -23,6 +23,16 @@ describe('format', () => {
     expect(maskSecrets('TOKEN 123456789:AAHfiqksKZ8aaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBe('TOKEN •••')
     expect(maskSecrets('export API_KEY=abc123')).toBe('export API_KEY=•••')
     expect(maskSecrets('ghp_abcdefghijklmnopqrstuvwxyz0123')).toBe('•••')
+  })
+
+  test('clip cuts on code points, never inside an emoji', () => {
+    const s = '👤 Лиза Келина (@lizka_kuz, 478996623) 🟢'
+    const c = clip(s, 20)
+    expect(Array.from(c).length).toBe(20)
+    expect(s.slice(0, 40)).not.toBe(s) // what used to happen: a cut inside 🟢
+    expect(Buffer.from(c, 'utf8').toString('utf8')).toBe(c)
+    expect(clip('👤'.repeat(30), 21)).toBe('👤'.repeat(20) + '…')
+    expect(clip('short', 40)).toBe('short')
   })
 
   test('summarizeTool', () => {
@@ -230,5 +240,96 @@ describe('usage', async () => {
     expect(costOf({ ...e, model: 'claude-fable-5-1' })).toBeCloseTo(10 + 50 + 12.5 + 20 + 0.25)
     expect(costOf({ ...e, model: 'claude-haiku-5-5', input: 1000, write5m: 0, write1h: 0, read: 0 })).toBeCloseTo(0.0001 + 0.5)
     expect(costOf({ ...e, model: 'some-new-model' })).toBeNull()
+  })
+})
+
+describe('screen', async () => {
+  const { tmuxTarget, screenText } = await import('../src/daemon/screen.ts')
+  test('targets: only pane and window codes', () => {
+    expect(tmuxTarget('p12')).toBe('%12')
+    expect(tmuxTarget('w3')).toBe('claude:3')
+    expect(tmuxTarget('w3;kill')).toBeNull()
+    expect(tmuxTarget('x1')).toBeNull()
+  })
+  test('screen text: trailing blanks dropped, secrets masked, last 40 lines', () => {
+    expect(screenText('a  \nb\n\n\n   \n')).toBe('a\nb')
+    expect(screenText('token=sk-ant-abcdefghijklmnopqrstuvwxyz0123')).not.toContain('abcdefghijklmnop')
+    expect(screenText(Array.from({ length: 60 }, (_, i) => String(i)).join('\n')).split('\n')[0]).toBe('20')
+  })
+})
+
+describe('reminders', async () => {
+  const { parseWhen, fmtWhen } = await import('../src/daemon/reminders.ts')
+  const now = new Date(2026, 9, 28, 20, 0, 0).getTime()
+  test('relative, clock, tomorrow, daily', () => {
+    expect(parseWhen('30m проверь CI', now)).toEqual({ at: now + 30 * 60_000, daily: false, text: 'проверь CI' })
+    expect(parseWhen('1h30m x', now)!.at).toBe(now + 90 * 60_000)
+    expect(parseWhen('2д x', now)!.at).toBe(now + 2 * 86_400_000)
+    expect(parseWhen('через 2 часа выпить чаю', now)).toEqual({ at: now + 2 * 3_600_000, daily: false, text: 'выпить чаю' })
+    expect(parseWhen('21:15 позвонить', now)!.at).toBe(new Date(2026, 9, 28, 21, 15).getTime())
+    expect(parseWhen('19:00 x', now)!.at).toBe(new Date(2026, 9, 29, 19, 0).getTime())
+    expect(parseWhen('завтра 9:00 стендап', now)).toEqual({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: false, text: 'стендап' })
+    expect(parseWhen('каждый день 9:00 сводка почты', now)).toEqual({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: true, text: 'сводка почты' })
+    expect(parseWhen('потом как-нибудь', now)).toBeNull()
+    expect(parseWhen('25:00 x', now)).toBeNull()
+    expect(fmtWhen({ at: new Date(2026, 9, 28, 21, 15).getTime(), daily: false }, now)).toBe('сегодня в 21:15')
+    expect(fmtWhen({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: true }, now)).toBe('каждый день в 09:00')
+  })
+})
+
+describe('period reports', async () => {
+  const { lastPeriod, buckets } = await import('../src/daemon/reports.ts')
+  const { columnChartSvg, svgToPng } = await import('../src/daemon/chart.ts')
+  const at = new Date(2026, 9, 28, 0, 5) // Wed 28 Oct 2026, just after midnight
+  test('last complete day, week (Mon–Sun) and month', () => {
+    const day = lastPeriod('day', at)
+    expect([day.start, day.end]).toEqual([new Date(2026, 9, 27), new Date(2026, 9, 28)])
+    const week = lastPeriod('week', at)
+    expect([week.start, week.end]).toEqual([new Date(2026, 9, 19), new Date(2026, 9, 26)])
+    expect(lastPeriod('week', new Date(2026, 9, 26, 0, 1)).start).toEqual(new Date(2026, 9, 19))
+    const month = lastPeriod('month', at)
+    expect([month.start, month.end]).toEqual([new Date(2026, 8, 1), new Date(2026, 9, 1)])
+    expect(lastPeriod('month', new Date(2026, 0, 3)).start).toEqual(new Date(2025, 11, 1))
+  })
+  test('buckets: 24 hours, 7 days, weeks of the month', () => {
+    expect(buckets(lastPeriod('day', at)).length).toBe(24)
+    expect(buckets(lastPeriod('week', at)).map(b => b.label)).toEqual(['Пн 19', 'Вт 20', 'Ср 21', 'Чт 22', 'Пт 23', 'Сб 24', 'Вс 25'])
+    expect(buckets(lastPeriod('month', new Date(2026, 10, 2))).map(b => b.label)).toEqual(['1–7', '8–14', '15–21', '22–28', '29–31'])
+    expect(buckets(lastPeriod('month', new Date(2026, 2, 2))).map(b => b.label)).toEqual(['1–7', '8–14', '15–21', '22–28'])
+  })
+  test('chart: peak labelled, PNG rendered', async () => {
+    const svg = columnChartSvg({ title: 'T', subtitle: 'S', columns: [{ label: 'a', value: 1 }, { label: 'b', value: 3.5 }, { label: 'c', value: 0 }] })
+    expect(svg).toContain('>$3.50</text>')
+    expect(svg.match(/<path /g)?.length).toBe(2)
+    const png = await svgToPng(svg)
+    expect(png?.subarray(1, 4).toString()).toBe('PNG')
+    expect(columnChartSvg({ title: 'T', subtitle: 'S', columns: [{ label: 'a', value: 0 }] })).toContain('Нет активности')
+  })
+})
+
+describe('voice text', async () => {
+  const { speakable } = await import('../src/voice/tts.ts')
+  test('markdown, code and links are not read aloud', () => {
+    expect(speakable('# Итог\n**Готово**: см. [PR](https://x.y/1) и `npm test`.\n```\ncode\n```\n- пункт')).toBe('Итог\nГотово: см. PR и npm test.\n (код в сообщении) \nпункт')
+    expect(speakable('смотри https://example.com/a?b=1 тут')).toBe('смотри ссылка тут')
+  })
+})
+
+describe('speech normalization', async () => {
+  const { normalizeForSpeech: n, numberWords } = await import('../src/voice/normalize.ts')
+  test('numbers in words', () => {
+    expect(numberWords(77)).toBe('семьдесят семь')
+    expect(numberWords(2021)).toBe('две тысячи двадцать один')
+    expect(numberWords(1600)).toBe('тысяча шестьсот')
+    expect(numberWords(1_000_001)).toBe('миллион один')
+    expect(n('тесты 77 из 77, в 23:16')).toBe('тесты семьдесят семь из семьдесят семь, в двадцать три шестнадцать')
+    expect(n('41%, 3.5, #36, 1.1.1, 09:05')).toBe('сорок один процент, три целых пять, номер тридцать шесть, один точка один точка один, девять ноль пять')
+  })
+  test('Latin read in Cyrillic', () => {
+    expect(n('Claude Code и Telegram бот')).toBe('клод код и телеграм бот')
+    expect(n('PR, CPU, GitHub, OpenAI, tmux')).toBe('пи-ар, си-пи-ю, гитхаб, оупен эй-ай, ти-макс')
+    expect(n('large-v3-turbo')).toBe('лардж-ви три-турбо')
+    expect(n('Привет')).toBe('Привет')
+    expect(/[A-Za-z0-9]/.test(n('Random English words like Kubernetes and Postgres 15'))).toBe(false)
   })
 })

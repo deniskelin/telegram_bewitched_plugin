@@ -11,13 +11,17 @@ import { join } from 'path'
 import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
-import { fmtDuration, safeMeta } from '../format.ts'
+import { clip, fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
-import { sessionsList } from './menu.ts'
-import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { permissionsScreen, sessionsList } from './menu.ts'
+import { topicsList } from './topicmenu.ts'
+import { limitsLine } from './usage.ts'
+import { sttEnabled } from '../voice/stt.ts'
+import { ttsEnabled } from '../voice/tts.ts'
+import { sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -239,6 +243,8 @@ export function renderDashboard(d: Daemon): string {
     const user = d.userIdOf(s)
     lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
   }
+  const limits = limitsLine()
+  if (limits) lines.push('', limits)
   lines.push('', `Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, '/sessions · /topics · /help')
   return lines.join('\n')
 }
@@ -372,7 +378,7 @@ function splitNameArg(arg: string): [string, string] | null {
 function topicsListKeyboard(d: Daemon, rows: TopicRow[]): InlineKeyboard {
   const kb: ReturnType<typeof button>[][] = []
   for (const t of rows.slice(0, 20)) {
-    const row = [button(`${t.status === 'archived' ? '🗄' : '📁'} ${t.name.replace(ARCHIVE_PREFIX, '')}`.slice(0, 40), `tp:info:${t.thread_id}`)]
+    const row = [button(clip(`${t.status === 'archived' ? '🗄' : '📁'} ${t.name.replace(ARCHIVE_PREFIX, '')}`, 40), `tp:info:${t.thread_id}`)]
     row.push(t.status === 'archived' ? button('↩️', `tp:unar:${t.thread_id}`) : button('🗄', `tp:ar:${t.thread_id}`))
     row.push(button('🗑', `tp:del:${t.thread_id}`, 'danger'))
     kb.push(row)
@@ -381,7 +387,7 @@ function topicsListKeyboard(d: Daemon, rows: TopicRow[]): InlineKeyboard {
 }
 
 /** Sessions currently served by a topic. */
-function sessionsOfTopic(d: Daemon, chatId: string, threadId: number): Session[] {
+export function sessionsOfTopic(d: Daemon, chatId: string, threadId: number): Session[] {
   const t = d.store.topic(chatId, threadId)
   return d.activeSessions().filter(s => (s.topic?.chatId === chatId && s.topic.threadId === threadId) || (t?.project_key != null && s.projectKey === t.project_key))
 }
@@ -444,29 +450,24 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   const requireControl = (ctx: Context): boolean => isControlChat(d, ctx)
   const topicsChat = (): string | null => d.topicsChatId
 
-  /** Several HTML messages; the keyboard goes under the last one. */
-  const replyReport = async (ctx: Context, parts: string[], kb?: InlineKeyboard) => {
-    for (const [i, text] of parts.entries()) {
-      await ctx.reply(text, {
-        parse_mode: 'HTML',
-        link_preview_options: { is_disabled: true },
-        ...(i === parts.length - 1 && kb ? { reply_markup: kb } : {}),
-      })
-    }
-  }
-
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
     const { text, kb } = await sessionsList(d)
     await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
   })
 
+  bot.command('permissions', async ctx => {
+    if (!requireControl(ctx)) return
+    const { text, kb } = permissionsScreen(d)
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb })
+  })
+
   bot.command('topics', async ctx => {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
     if (!chat) return void ctx.reply('Группа для топиков не подключена. В личке с ботом: /connect_group')
-    const rows = d.store.topics(chat)
-    await replyReport(ctx, await topicsReport(d, chat), rows.length ? topicsListKeyboard(d, rows) : undefined)
+    const { text, kb } = topicsList(d, chat)
+    await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb, message_thread_id: threadOf(ctx) })
   })
 
   bot.command('send', async ctx => {
@@ -569,6 +570,27 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
     await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
+  })
+
+  bot.command('voice', async ctx => {
+    if (!ctx.from || !isOwner(ctx.from.id)) return
+    const v = (ctx.match ?? '').trim()
+    const info = { off: 'только текст', mirror: 'голосом на голосовое', always: 'всегда голосом' } as const
+    const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install'}`
+    if (!v) return void ctx.reply(`Здесь: 🔊 ${info[prefsFor(String(ctx.chat!.id), threadOf(ctx)).voice]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (!(v in info)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    setPref(chatKey(ctx), { voice: v as keyof typeof info })
+    await ctx.reply(`🔊 Ответы: ${info[v as keyof typeof info]}`, { message_thread_id: threadOf(ctx) })
+  })
+
+  bot.command('transcript', async ctx => {
+    if (!ctx.from || !isOwner(ctx.from.id)) return
+    const v = (ctx.match ?? '').trim()
+    const help = `/transcript on|off — показывать расшифровку голосовых в чате${sttEnabled() ? '' : '\n⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'}`
+    if (!v) return void ctx.reply(`Здесь: 🎤 расшифровка ${prefsFor(String(ctx.chat!.id), threadOf(ctx)).transcript ? 'показывается' : 'не показывается'}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (v !== 'on' && v !== 'off') return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    setPref(chatKey(ctx), { transcript: v === 'on' })
+    await ctx.reply(`🎤 Расшифровка в чате: ${v === 'on' ? 'показывается' : 'не показывается'}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {
