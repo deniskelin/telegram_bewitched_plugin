@@ -16,7 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
-import { tmuxCapture, tmuxKeys, tmuxLaunch, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { tmuxCapture, tmuxKeys, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -50,6 +50,8 @@ export type Session = {
   /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
   claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
   lastTool: { text: string; at: number } | null
+  /** The "context is filling up" notice went out (reset when the context shrinks). */
+  contextWarned: boolean
   /** Command line of the Claude process, read at connect (it is gone once the process exits). */
   argv: string[]
 }
@@ -207,6 +209,8 @@ export class Daemon {
   /** Screen of a pane/window and key presses into it. Replaced in tests. */
   tmuxCapture: (target: string) => Promise<string | null> = tmuxCapture
   tmuxKeys: (target: string, keys: string[]) => Promise<void> = tmuxKeys
+  /** Type a line (e.g. "/compact") into a pane and press Enter. Replaced in tests. */
+  tmuxType: (target: string, text: string) => Promise<void> = tmuxType
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
@@ -232,6 +236,7 @@ export class Daemon {
       notes: [],
       claude: { sessionId: null, transcript: null, permissionMode: null },
       lastTool: null,
+      contextWarned: false,
       argv: h.claudePid ? cmdlineOf(h.claudePid) : [],
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.

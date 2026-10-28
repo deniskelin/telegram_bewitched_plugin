@@ -109,6 +109,8 @@ export const settings = {
   get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'main', 'queue'] as const) },
   /** Context window used for the fill percentage in session cards. */
   get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
+  /** Offer /compact once the context is this full (percent, 0 = never). */
+  get contextWarnPct() { return num('CONTEXT_WARN_PCT', 80) },
   /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
   /** Pause after a key press in 👁 Экран before capturing the screen again. */
   get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
