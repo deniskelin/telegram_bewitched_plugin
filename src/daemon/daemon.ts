@@ -204,6 +204,8 @@ export class Daemon {
   onSessionGone: (s: Session) => void = () => {}
   handleCall: (s: Session, name: string, args: Record<string, unknown>) => Promise<string> = async () => 'not ready'
   handlePermissionRequest: (s: Session, p: Omit<PendingPermission, 'sessionId'> & { request_id: string }) => void = () => {}
+  /** Hand text to whichever session serves the chat, as a message from fromId (queue/launch if needed). Set by inbound. */
+  routeText: (chat: ChatRef, fromId: string, text: string, meta: Record<string, string>) => Promise<void> = async () => {}
   /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
   launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = tmuxLaunch
   /** Where a tmux pane lives. Replaced in tests. */

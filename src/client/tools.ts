@@ -144,6 +144,22 @@ export const TOOLS = [
     },
   },
   {
+    name: 'remind',
+    description: 'Set a reminder or deferred task for this chat. When due, the text is posted in the chat and comes back to you (or whichever session serves the chat) as a <channel> message with event="reminder" — write it as an instruction to yourself, e.g. "проверь CI в PR #12 и сообщи результат". Give in_minutes, or at ("HH:MM" local time, next occurrence), optionally daily.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chat_id: chatId,
+        message_thread_id: threadId,
+        text: { type: 'string' },
+        in_minutes: { type: 'number' },
+        at: { type: 'string', description: '"HH:MM" local time.' },
+        daily: { type: 'boolean', description: 'Repeat every day at that time (needs at).' },
+      },
+      required: ['text'],
+    },
+  },
+  {
     name: 'save_memory',
     description: 'Overwrite the persistent memory note of this chat/topic. It is shown to future sessions when they connect. Keep it a concise summary: goals, decisions, agreements, open tasks.',
     inputSchema: {
