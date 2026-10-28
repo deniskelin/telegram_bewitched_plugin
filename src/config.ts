@@ -26,6 +26,9 @@ export const SOCK_FILE = join(STATE_DIR, 'daemon.sock')
 export const LOCK_FILE = join(STATE_DIR, 'daemon.pid')
 export const HTTP_TOKEN_FILE = join(STATE_DIR, 'http.token')
 export const DAEMON_LOG = join(LOG_DIR, 'daemon.log')
+/** Local voice services: venvs, models, logs (bewitched voice install). */
+export const VOICE_HOME = process.env.VOICE_HOME || join(STATE_DIR, 'voice')
+export const TTS_CACHE_DIR = join(STATE_DIR, 'tts-cache')
 
 /** Plugin root — this file is <root>/src/config.ts. */
 export const PLUGIN_ROOT = join(import.meta.dir, '..')
@@ -124,6 +127,39 @@ export const settings = {
   get digestAt() { const v = process.env.DIGEST_AT ?? '21:00'; return /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null },
   get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
   get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
+  // --- voice: speech to text (incoming) ---
+  /** "openai-compatible" (whisper.cpp, faster-whisper, OpenAI, Groq) or "off". */
+  get sttProvider() { return str('STT_PROVIDER', 'off', ['off', 'openai-compatible'] as const) },
+  /** Endpoints tried in order (comma-separated): the first is the main one, the rest are the fallback chain. */
+  get sttUrls() { return (process.env.STT_URL ?? 'http://127.0.0.1:8178/v1/audio/transcriptions').split(',').map(s => s.trim()).filter(Boolean) },
+  /** API keys aligned with STT_URL (comma-separated; one key applies to all). */
+  get sttKeys() { return (process.env.STT_API_KEY ?? '').split(',').map(s => s.trim()) },
+  get sttModel() { return process.env.STT_MODEL || 'whisper-1' },
+  get sttLanguage() { return process.env.STT_LANGUAGE || '' },
+  get sttMaxSec() { return num('STT_MAX_SEC', 600) },
+  get sttVideo() { return process.env.STT_VIDEO === 'true' },
+  /** The daemon runs voice/stt_server.py (faster-whisper) itself on the STT_URL port. */
+  get sttLocal() { return process.env.STT_LOCAL === 'true' },
+  get sttLocalModel() { return process.env.STT_LOCAL_MODEL || 'large-v3-turbo' },
+
+  // --- voice: text to speech (outgoing) ---
+  /** silero (local service), piper (binary), http (any OpenAI-compatible /v1/audio/speech), off. */
+  get ttsProvider() { return str('TTS_PROVIDER', 'off', ['off', 'silero', 'piper', 'http'] as const) },
+  get ttsFallback() { return str('TTS_FALLBACK', 'off', ['off', 'silero', 'piper', 'http'] as const) },
+  get ttsVoice() { return process.env.TTS_VOICE || 'xenia' },
+  get ttsUrl() { return process.env.TTS_URL || '' },
+  get ttsApiKey() { return process.env.TTS_API_KEY || '' },
+  get ttsModel() { return process.env.TTS_MODEL || 'tts-1' },
+  get ttsPort() { return num('TTS_PORT', 8179) },
+  get ttsSampleRate() { return num('TTS_SAMPLE_RATE', 48000) },
+  get ttsIdleMin() { return num('TTS_IDLE_MIN', 30) },
+  get piperBin() { return process.env.PIPER_BIN || 'piper' },
+  get piperModel() { return process.env.PIPER_MODEL || '' },
+  get voiceMaxChars() { return num('VOICE_MAX_CHARS', 1500) },
+  get voiceWithText() { return str('VOICE_WITH_TEXT', 'caption', ['caption', 'message', 'none'] as const) },
+  get ttsCacheMb() { return num('TTS_CACHE_MB', 200) },
+  get ffmpegBin() { return process.env.FFMPEG_BIN || 'ffmpeg' },
+
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },

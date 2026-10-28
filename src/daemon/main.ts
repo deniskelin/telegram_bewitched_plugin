@@ -17,6 +17,9 @@ import { startDigest, startLimitWatch } from './usage.ts'
 import { startReminders } from './reminders.ts'
 import { startReports } from './reports.ts'
 import { startAllowlistWatch } from './invite.ts'
+import { voiceServices } from '../voice/service.ts'
+import { setLocalSttStarter } from '../voice/stt.ts'
+import { setSileroStarter } from '../voice/tts.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -93,6 +96,8 @@ function shutdown(code = 0): void {
     if (parseInt(readFileSync(LOCK_FILE, 'utf8'), 10) === process.pid) rmSync(LOCK_FILE, { force: true })
   } catch {}
   rmSync(SOCK_FILE, { force: true })
+  voice.stt.stop()
+  voice.silero.stop()
   setTimeout(() => process.exit(code), 2000)
   void Promise.resolve(d.bot.stop()).finally(() => process.exit(code))
 }
@@ -110,6 +115,11 @@ startDigest(d)
 startReminders(d)
 startReports(d)
 startAllowlistWatch(d)
+const voice = voiceServices(log)
+setLocalSttStarter(() => voice.stt.ensure())
+setSileroStarter(() => voice.silero.ensure())
+// Warm the recognizer up: the first voice message shouldn't wait for the model.
+if (settings.sttLocal && settings.sttProvider !== 'off' && voice.stt.installed()) void voice.stt.ensure().catch(err => log(`stt: ${err}`))
 setInterval(() => d.store.pruneHistory(settings.historyMaxDays), 6 * 3600_000).unref()
 log(`daemon pid=${process.pid} listening on ${SOCK_FILE}, http 127.0.0.1:${settings.httpPort}`)
 

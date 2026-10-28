@@ -36,6 +36,22 @@ export const TOOLS = [
           description: "'text' (default, plain), 'markdownv2' (caller escapes per MarkdownV2), 'rich' (Telegram rich message from ordinary Markdown: **bold**, lists, tables, code; falls back to text if unsupported).",
         },
         buttons: optionsSchema,
+        voice: { type: 'boolean', description: 'Also send the text as a voice message (TTS). The chat\'s /voice mode may voice replies on its own; this forces it.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'reply_voice',
+    description: 'Send a voice message (text to speech). Markdown, code and links are not read aloud — keep it conversational. Use when the user asks for a voice answer; replies may also be voiced automatically by the chat\'s /voice mode.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        chat_id: chatId,
+        message_thread_id: threadId,
+        text: { type: 'string', description: 'What to say.' },
+        caption: { type: 'string', description: 'Optional text under the voice message.' },
+        reply_to: { type: 'string' },
       },
       required: ['text'],
     },

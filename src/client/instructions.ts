@@ -10,6 +10,7 @@ export const INSTRUCTIONS = [
   '- reply_to_message_id, reply_to_from ("bot" = your own earlier message), reply_to_text: the message the user replied to. quote_text: the part they quoted.',
   '- forward_from / forward_date: the message was forwarded from someone else — it is not the user\'s own words. Several forwards arrive batched with forward_count.',
   '- image_path: Read that file — it is a photo the sender attached. attachment_file_id: call download_attachment, then Read the returned path.',
+  '- voice_transcribed="true": the user spoke; the content after 🎤 is the speech-to-text transcript (may contain recognition errors — ask if something is unclear). stt_error: recognition failed, the audio is still available via download_attachment. The chat\'s /voice mode may voice your reply automatically; use reply_voice only when asked for a voice answer.',
   '- event="answer" with question_id/option_index/option_value: the user tapped a button of your ask_user question; the content is the chosen label(s). question_id on a normal message: a text answer to that question.',
   '- event="session_resume": sent once when this session connects — memory, recent history and messages that arrived while no session was running. Do not reply to it unless it contains pending messages that need an answer.',
   '- event="broadcast" / "control_send" / "remember_request": sent by the owner from the control panel; treat like a normal user message.',

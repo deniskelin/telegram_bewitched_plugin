@@ -9,9 +9,12 @@ import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
+import { dmCommandGate, gate, isOwner, loadAccess, prefsFor } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
+import { toWav16k } from '../voice/audio.ts'
+import { sttEnabled, transcribe, type SttResult } from '../voice/stt.ts'
+import { downloadToInbox } from './media.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
@@ -30,7 +33,7 @@ import { handleTopicMenu } from './topicmenu.ts'
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
 
-type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string }
+type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string; duration?: number }
 
 function originLabel(o: NonNullable<Message['forward_origin']>): string {
   switch (o.type) {
@@ -137,6 +140,29 @@ function userTarget(d: Daemon, userId: string): Target {
   return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId }
 }
 
+// --- speech to text ---
+
+function isSpeech(kind: string): boolean {
+  return kind === 'voice' || kind === 'audio' || kind === 'video_note' || (kind === 'video' && settings.sttVideo)
+}
+
+/** Download, convert to 16 kHz WAV, transcribe; the temporary WAV is removed. */
+async function speechToText(d: Daemon, a: AttachmentMeta): Promise<SttResult | { error: string }> {
+  if (a.duration != null && a.duration > settings.sttMaxSec) return { error: `длиннее STT_MAX_SEC (${settings.sttMaxSec} с)` }
+  let wav: string | null = null
+  try {
+    const src = await downloadToInbox(d, a.file_id)
+    wav = `${src}.16k.wav`
+    await toWav16k(src, wav, settings.sttMaxSec)
+    return await transcribe(wav)
+  } catch (err) {
+    d.log(`stt failed: ${err}`)
+    return { error: err instanceof Error ? err.message : String(err) }
+  } finally {
+    if (wav) rmSync(wav, { force: true })
+  }
+}
+
 // --- forward batching: several forwards within 3 s become one event ---
 
 type Batch = { items: { text: string; meta: Record<string, string> }[]; timer: ReturnType<typeof setTimeout>; ctx: Context; chat: ChatRef }
@@ -145,10 +171,11 @@ const batches = new Map<string, Batch>()
 async function handleInbound(
   d: Daemon,
   ctx: Context,
-  text: string,
+  original: string,
   downloadImage: (() => Promise<string | undefined>) | undefined,
   attachment?: AttachmentMeta,
 ): Promise<void> {
+  let text = original
   const result = gate(ctx, d.botUsername)
   if (result.action === 'drop') return
   if (result.action === 'pair') {
@@ -173,6 +200,7 @@ async function handleInbound(
     forward: msg.forward_origin ? JSON.stringify(msg.forward_origin) : null,
   })
   if (threadId != null) d.store.touchTopic(chatId, threadId)
+  d.lastSpeech.set(`${chatId}:${threadId ?? 0}`, !!attachment && isSpeech(attachment.kind))
   d.rememberUser(String(from.id), { first: from.first_name, last: from.last_name, username: from.username })
 
   // Permission reply typed as text ("yes abcde").
@@ -203,6 +231,27 @@ async function handleInbound(
   }
 
   const imagePath = downloadImage ? await downloadImage() : undefined
+  // Speech → text before Claude sees it (after the access check, like photos).
+  let sttMeta: Record<string, string> = {}
+  if (attachment && isSpeech(attachment.kind) && sttEnabled()) {
+    const caption = msg.caption?.trim() ?? ''
+    if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: '✍' }]).catch(() => {})
+    const r = await speechToText(d, attachment)
+    if ('error' in r) sttMeta = { stt_error: safeMeta(r.error) ?? 'error' }
+    else {
+      text = caption ? `${caption}\n\n🎤 ${r.text}` : `🎤 ${r.text}`
+      d.store.updateMessageText(chatId, msg.message_id, text)
+      sttMeta = {
+        voice_transcribed: 'true', stt_provider: r.provider,
+        ...(attachment.duration != null ? { voice_duration: String(attachment.duration) } : {}),
+        ...(r.language ? { voice_language: r.language } : {}),
+      }
+      if (prefsFor(chatId, threadId).transcript) {
+        void ctx.reply(`🎤 ${r.text || '(тишина)'}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+      }
+    }
+    if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
+  }
   const questionId = closeByTextReply(d, chatId, msg.reply_to_message?.message_id)
   const meta: Record<string, string> = {
     chat_id: chatId,
@@ -215,6 +264,7 @@ async function handleInbound(
     ...enrichMeta(d, msg),
     ...(questionId ? { question_id: questionId } : {}),
     ...(imagePath ? { image_path: imagePath } : {}),
+    ...sttMeta,
     ...(attachment ? {
       attachment_kind: attachment.kind,
       attachment_file_id: attachment.file_id,
@@ -428,6 +478,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       '/remind <когда> <текст> — напоминание (30m, 2h, 18:30, завтра 9:00, каждый день 9:00), /reminders — список',
       '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
       '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
+      '/voice off|mirror|always — отвечать голосом, /transcript on|off — показывать расшифровку голосовых',
       '/remember — сохранить память чата, /forget — стереть историю',
       '',
       'Только в личке: /invite — пригласить пользователя, /users — пользователи и удаление доступа, /usage — лимиты подписки и расход, /digest — итоги дня, /reports — отчёты за день/неделю/месяц с графиком, /connect_group, /group, /disconnect_group, /status',
@@ -528,25 +579,25 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.on('message:voice', ctx => {
     const v = ctx.message.voice
     return handleInbound(d, ctx, ctx.message.caption ?? '(voice message)', undefined,
-      { kind: 'voice', file_id: v.file_id, size: v.file_size, mime: v.mime_type })
+      { kind: 'voice', file_id: v.file_id, size: v.file_size, mime: v.mime_type, duration: v.duration })
   })
 
   bot.on('message:audio', ctx => {
     const a = ctx.message.audio
     const name = safeMeta(a.file_name, 120)
     return handleInbound(d, ctx, ctx.message.caption ?? `(audio: ${safeMeta(a.title, 120) ?? name ?? 'audio'})`, undefined,
-      { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: a.mime_type, name })
+      { kind: 'audio', file_id: a.file_id, size: a.file_size, mime: a.mime_type, name, duration: a.duration })
   })
 
   bot.on('message:video', ctx => {
     const v = ctx.message.video
     return handleInbound(d, ctx, ctx.message.caption ?? '(video)', undefined,
-      { kind: 'video', file_id: v.file_id, size: v.file_size, mime: v.mime_type, name: safeMeta(v.file_name, 120) })
+      { kind: 'video', file_id: v.file_id, size: v.file_size, mime: v.mime_type, name: safeMeta(v.file_name, 120), duration: v.duration })
   })
 
   bot.on('message:video_note', ctx => {
     const vn = ctx.message.video_note
-    return handleInbound(d, ctx, '(video note)', undefined, { kind: 'video_note', file_id: vn.file_id, size: vn.file_size })
+    return handleInbound(d, ctx, '(video note)', undefined, { kind: 'video_note', file_id: vn.file_id, size: vn.file_size, duration: vn.duration })
   })
 
   bot.on('message:sticker', ctx => {
