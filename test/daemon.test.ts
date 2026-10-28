@@ -870,6 +870,38 @@ describe('invite', () => {
   })
 })
 
+describe('allowlist watcher', () => {
+  test('a user added outside the bot (access skill) gets a folder, a session and an invitation for the owner, once', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { newUsers, onUserAdded } = await import('../src/daemon/invite.ts')
+    const launches: string[] = []
+    const ok = d.launchSession
+    d.launchSession = async (dir, o) => { launches.push(`${dir} ${o?.name}`); return '4' }
+    process.env.USER_SESSIONS = 'on'
+    try {
+      newUsers(d) // baseline
+      const a = loadAccess()
+      a.allowFrom.push('777')
+      saveAccess(a)
+      expect(newUsers(d)).toEqual(['777'])
+      expect(newUsers(d)).toEqual([])
+      await onUserAdded(d, '777')
+      expect(launches).toEqual([`${process.env.USERS_DIR}/777 claude-777`])
+      const note = tg.callsOf('sendMessage').find(c => String(c.body.text).startsWith('👥 <b>777</b> в списке доступа'))!
+      expect(String(note.body.chat_id)).toBe('111')
+      expect(JSON.stringify(note.body.reply_markup)).toContain('tx:w4')
+      expect(String(note.body.text)).toContain('<code>/telegram-bewitched:access remove 777</code>')
+      expect(tg.callsOf('sendMessage').some(c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))).toBe(true)
+    } finally {
+      d.launchSession = ok
+      process.env.USER_SESSIONS = 'off'
+      const a = loadAccess()
+      a.allowFrom = a.allowFrom.filter(x => x !== '777')
+      saveAccess(a)
+    }
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning
