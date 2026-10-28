@@ -13,6 +13,7 @@ export const INSTRUCTIONS = [
   '- event="answer" with question_id/option_index/option_value: the user tapped a button of your ask_user question; the content is the chosen label(s). question_id on a normal message: a text answer to that question.',
   '- event="session_resume": sent once when this session connects — memory, recent history and messages that arrived while no session was running. Do not reply to it unless it contains pending messages that need an answer.',
   '- event="broadcast" / "control_send" / "remember_request": sent by the owner from the control panel; treat like a normal user message.',
+  '- event="reminder": a reminder the user (/remind) or a session (the remind tool) set earlier is due — do what it says, then reply in that chat. When the user asks to do something later ("через 2 часа проверь CI", "каждое утро …"), set it with the remind tool, phrased as an instruction to yourself.',
   '',
   'Use reply_to (a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply. format="rich" renders ordinary Markdown (bold, lists, tables, code) — prefer it for structured answers.',
   '',

@@ -645,6 +645,44 @@ describe('topics', () => {
     expect(await client.wait(m => m.t === 'perm' && m.request_id === 'defgh')).toMatchObject({ behavior: 'deny' })
   })
 
+  test('⏰ /remind: posted in the chat and delivered to its session when due; daily moves on; 🗑 removes; remind tool', async () => {
+    const { fireDue, listReminders } = await import('../src/daemon/reminders.ts')
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind 2h проверь CI' }))
+    const ok = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ Напомню') && String(c.body.text).includes('проверь CI'))
+    expect(ok.body.message_thread_id).toBe(thread)
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind каждый день 9:00 сводка' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ Напомню каждый день в 09:00'))
+    tg.push(textMessage({ chat: Number(group), thread, text: '/remind когда-нибудь' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Формат: /remind'))
+
+    const ci = listReminders(d).find(r => r.text === 'проверь CI')!
+    await fireDue(d, ci.at + 1000)
+    await tg.waitFor('sendMessage', c => c.body.text === '⏰ проверь CI' && c.body.message_thread_id === thread)
+    const m = await client.inbound(x => x.meta.event === 'reminder')
+    expect(m.content).toContain('проверь CI')
+    expect(m.meta.thread_id).toBe(String(thread))
+    expect(listReminders(d).some(r => r.id === ci.id)).toBe(false)
+
+    const daily = listReminders(d).find(r => r.daily)!
+    await fireDue(d, daily.at + 1000)
+    await client.inbound(x => x.meta.event === 'reminder' && x.content.includes('сводка'))
+    expect(listReminders(d).find(r => r.id === daily.id)!.at).toBe(daily.at + 86_400_000)
+
+    tg.push(textMessage({ chat: Number(group), thread, text: '/reminders' }))
+    const list = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰ <b>Напоминания</b> (1)'))
+    expect(JSON.stringify(list.body.reply_markup)).toContain(`rm:del:${daily.id}`)
+    tg.push(callbackQuery(`rm:del:${daily.id}`, { chat: Number(group) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '🗑 Напоминание удалено')
+    expect(listReminders(d).length).toBe(0)
+
+    const r = await client.call('remind', { text: 'проверь деплой', in_minutes: 5 })
+    expect(r.ok).toBe(true)
+    expect(listReminders(d)[0]).toMatchObject({ text: 'проверь деплой', chatId: group, threadId: thread })
+    const bad = await client.call('remind', { text: 'x' })
+    expect(bad.ok).toBe(false)
+  })
+
   test('stop button without tmux only notes the stop for the next message', async () => {
     tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
     await tg.waitFor('answerCallbackQuery', c => String(c.body.text).includes('tmux'))

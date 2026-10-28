@@ -13,6 +13,7 @@ import { chunk } from '../format.ts'
 import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
+import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
 
@@ -320,6 +321,21 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       const m = d.store.getMessage(c.chatId, Number(args.message_id))
       if (!m) return 'not found in history'
       return JSON.stringify({ ...m, forward: m.forward ? JSON.parse(m.forward) : null }, null, 2)
+    }
+
+    case 'remind': {
+      const c = resolveChat(d, s, args)
+      assertAllowedChat(c.chatId)
+      const text = String(args.text ?? '').trim()
+      if (!text) throw new Error('text is required')
+      const mins = Number(args.in_minutes)
+      const at = str(args.at)
+      let when: { at: number; daily: boolean } | null = null
+      if (Number.isFinite(mins) && mins > 0) when = { at: Date.now() + mins * 60_000, daily: false }
+      else if (at) when = parseWhen(`${args.daily === true ? 'каждый день ' : ''}${at} x`)
+      if (!when) throw new Error('give in_minutes > 0 or at "HH:MM"')
+      const r = addReminder(d, { chatId: c.chatId, threadId: c.threadId, text, at: when.at, daily: when.daily, userId: d.userIdOf(s) ?? owner() ?? c.chatId })
+      return `reminder ${r.id} set: ${fmtWhen(r)} (${new Date(r.at).toISOString()})`
     }
 
     case 'save_memory': {

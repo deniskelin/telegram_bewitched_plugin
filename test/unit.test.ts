@@ -247,3 +247,22 @@ describe('screen', async () => {
     expect(screenText(Array.from({ length: 60 }, (_, i) => String(i)).join('\n')).split('\n')[0]).toBe('20')
   })
 })
+
+describe('reminders', async () => {
+  const { parseWhen, fmtWhen } = await import('../src/daemon/reminders.ts')
+  const now = new Date(2026, 9, 28, 20, 0, 0).getTime()
+  test('relative, clock, tomorrow, daily', () => {
+    expect(parseWhen('30m проверь CI', now)).toEqual({ at: now + 30 * 60_000, daily: false, text: 'проверь CI' })
+    expect(parseWhen('1h30m x', now)!.at).toBe(now + 90 * 60_000)
+    expect(parseWhen('2д x', now)!.at).toBe(now + 2 * 86_400_000)
+    expect(parseWhen('через 2 часа выпить чаю', now)).toEqual({ at: now + 2 * 3_600_000, daily: false, text: 'выпить чаю' })
+    expect(parseWhen('21:15 позвонить', now)!.at).toBe(new Date(2026, 9, 28, 21, 15).getTime())
+    expect(parseWhen('19:00 x', now)!.at).toBe(new Date(2026, 9, 29, 19, 0).getTime())
+    expect(parseWhen('завтра 9:00 стендап', now)).toEqual({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: false, text: 'стендап' })
+    expect(parseWhen('каждый день 9:00 сводка почты', now)).toEqual({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: true, text: 'сводка почты' })
+    expect(parseWhen('потом как-нибудь', now)).toBeNull()
+    expect(parseWhen('25:00 x', now)).toBeNull()
+    expect(fmtWhen({ at: new Date(2026, 9, 28, 21, 15).getTime(), daily: false }, now)).toBe('сегодня в 21:15')
+    expect(fmtWhen({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: true }, now)).toBe('каждый день в 09:00')
+  })
+})

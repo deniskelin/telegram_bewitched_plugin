@@ -21,6 +21,7 @@ import { handleWatchdogCallback } from './watchdog.ts'
 import { digestReport, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
+import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
 import { handleTopicMenu } from './topicmenu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
@@ -95,6 +96,37 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   // DMs and General: the author's own session; without user sessions, the main one.
   if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
+}
+
+/**
+ * Text that did not come from a Telegram message (a reminder): same routing
+ * as a message — the serving session, else queue and start it if we can.
+ */
+export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: string, meta: Record<string, string>): Promise<void> {
+  const target = resolveTarget(d, chat, fromId)
+  switch (target.kind) {
+    case 'session':
+      if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
+      return d.deliver(target.session, text, meta, chat)
+    case 'launch':
+      d.store.addPending(target.projectKey, text, meta)
+      return launchForTopic(d, chat.chatId, target.threadId, target.projectKey)
+    case 'user_offline':
+      d.store.addPending(userPendingKey(target.userId), text, meta)
+      return launchUserSession(d, target.userId, d.store.lastSenderName(target.userId) ?? target.userId, { chatId: chat.chatId, threadId: chat.threadId })
+    case 'offline':
+    case 'waiting':
+      d.store.addPending(target.projectKey, text, meta)
+      return
+    case 'main_offline':
+      d.store.addPending(MAIN_PENDING_KEY, text, meta)
+      return
+    case 'archived':
+      if (target.projectKey) d.store.addPending(target.projectKey, text, meta)
+      return
+    case 'unbound':
+      return
+  }
 }
 
 function userTarget(d: Daemon, userId: string): Target {
@@ -348,6 +380,8 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
 // --------------------------------------------------------------------------
 
 export function registerInbound(d: Daemon, bot: Bot, token: string): void {
+  d.routeText = (chat, fromId, text, meta) => routeText(d, chat, fromId, text, meta)
+  registerReminderCommands(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -384,6 +418,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
       '',
       'В любом чате/топике:',
+      '/remind <когда> <текст> — напоминание (30m, 2h, 18:30, завтра 9:00, каждый день 9:00), /reminders — список',
       '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
       '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
       '/remember — сохранить память чата, /forget — стереть историю',
@@ -432,6 +467,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
+    if (await handleReminderCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
