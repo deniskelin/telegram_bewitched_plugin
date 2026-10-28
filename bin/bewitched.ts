@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { DAEMON_LOG, PLUGIN_ROOT, httpToken, settings } from '../src/config.ts'
 import { daemonPid, ensureDaemon } from '../src/spawn.ts'
+import { isAlive } from '../src/proc.ts'
 
 const [cmd, sub, ...rest] = process.argv.slice(2)
 
@@ -30,15 +31,17 @@ async function stop(): Promise<void> {
   const pid = daemonPid()
   if (!pid) return void console.log('daemon is not running')
   process.kill(pid, 'SIGTERM')
-  for (let i = 0; i < 30 && daemonPid(); i++) await new Promise(r => setTimeout(r, 100))
-  console.log(daemonPid() ? `daemon ${pid} did not stop` : `stopped daemon ${pid}`)
+  // Wait for the process itself, not just the pid file — it still holds the HTTP port until exit.
+  for (let i = 0; i < 50 && isAlive(pid); i++) await new Promise(r => setTimeout(r, 100))
+  console.log(isAlive(pid) ? `daemon ${pid} did not stop` : `stopped daemon ${pid}`)
 }
 
 function usage(): never {
   console.log(`usage:
   bewitched daemon start|stop|restart|status|logs|install-cron
   bewitched notify [--topic <name>] [--silent] <text…>
-  bewitched status`)
+  bewitched status
+  bewitched group allow-paired   # all allowlisted users may post in the topics group`)
   process.exit(1)
 }
 
@@ -100,6 +103,23 @@ switch (cmd) {
   case 'status':
     console.log(JSON.stringify(await api('/status'), null, 2))
     break
+  case 'group': {
+    // Access changes are terminal-only on purpose: never downstream of a chat message.
+    if (sub !== 'allow-paired') usage()
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { Store } = await import('../src/db.ts')
+    const { DB_FILE } = await import('../src/config.ts')
+    const chat = new Store(DB_FILE).get('topics_chat_id')
+    if (!chat) {
+      console.log('no topics group connected')
+      break
+    }
+    const a = loadAccess()
+    a.groups[chat] = { ...(a.groups[chat] ?? { requireMention: false }), requireMention: false, allowFrom: [], allowPaired: true }
+    saveAccess(a)
+    console.log(`topics group ${chat}: all paired users (${a.allowFrom.join(', ')}) may post and control sessions`)
+    break
+  }
   default:
     usage()
 }

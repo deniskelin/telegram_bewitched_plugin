@@ -11,6 +11,7 @@ const { Daemon } = await import('../src/daemon/daemon.ts')
 const { registerInbound, handlePermissionRequest } = await import('../src/daemon/inbound.ts')
 const { registerTopicCommands, onSessionRegistered, onSessionGone, scheduleDashboard, connectGroup } = await import('../src/daemon/topics.ts')
 const { handleCall } = await import('../src/daemon/tools.ts')
+const { registerLaunchCommands } = await import('../src/daemon/launch.ts')
 const { startHttp } = await import('../src/daemon/http.ts')
 const { LineDecoder, encode } = await import('../src/ipc.ts')
 const { SOCK_FILE, httpToken, settings } = await import('../src/config.ts')
@@ -69,6 +70,8 @@ d.onSessionGone = s => onSessionGone(d, s)
 d.onSessionsChanged = () => scheduleDashboard(d)
 d.handleCall = (s, n, a) => handleCall(d, s, n, a)
 d.handlePermissionRequest = (s, p) => handlePermissionRequest(d, s, p)
+const launched: string[] = []
+d.launchSession = async dir => { launched.push(dir); return '3' }
 
 const client = new FakeClient()
 let sessionId = ''
@@ -78,6 +81,7 @@ beforeAll(async () => {
   startHttp(d)
   void d.startPolling(bot => {
     registerTopicCommands(d, bot)
+    registerLaunchCommands(d, bot)
     registerInbound(d, bot, '123:TEST')
   })
   await tg.waitFor('getMe')
@@ -251,5 +255,133 @@ describe('topics', () => {
     tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
     await tg.waitFor('answerCallbackQuery', c => String(c.body.text).includes('tmux'))
     expect(d.sessions.get(sessionId)!.notes.length).toBe(1)
+  })
+})
+
+describe('projects from topics', () => {
+  test('a topic created by the owner becomes a project dir and launches a session', async () => {
+    const group = '-100500'
+    tg.push({
+      message: {
+        message_id: 7777, date: Math.floor(Date.now() / 1000), message_thread_id: 77, is_topic_message: true,
+        from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_created: { name: 'Мой Проект!', icon_color: 7322096 },
+      },
+    })
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('запускаю Claude в tmux'))
+    expect(notice.body.message_thread_id).toBe(77)
+    const dir = `${process.env.PROJECTS_DIR}/Мой-Проект`
+    expect(launched).toContain(dir)
+    expect(d.store.topic(group, 77)?.project_key).toBe(dir)
+
+    // The session that starts in that dir binds to the existing topic instead of creating one.
+    const before = tg.callsOf('createForumTopic').length
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 77 })
+    await Bun.sleep(100)
+    expect(tg.callsOf('createForumTopic').length).toBe(before)
+    expect([...d.sessions.values()].find(x => x.projectKey === dir)?.topic?.threadId).toBe(77)
+    s.close()
+  })
+
+  test('topics from other members are ignored', async () => {
+    const n = launched.length
+    tg.push({
+      message: {
+        message_id: 7778, date: 0, message_thread_id: 78, is_topic_message: true,
+        from: { id: 222, is_bot: false, first_name: 'X' },
+        chat: { id: -100500, type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_created: { name: 'чужой', icon_color: 7322096 },
+      },
+    })
+    await Bun.sleep(300)
+    expect(launched.length).toBe(n)
+  })
+})
+
+describe('archive and restore', () => {
+  const group = '-100500'
+
+  test('archive from /sessions closes the topic, marks it 🗄 and queues later messages', async () => {
+    const dir = '/tmp/arch'
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 88 })
+    await tg.waitFor('createForumTopic', c => c.body.name === 'arch')
+    const sess = [...d.sessions.values()].find(x => x.projectKey === dir)!
+    const thread = sess.topic!.threadId
+
+    tg.push(callbackQuery(`ses:ar:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Архивировать «arch»'))
+    tg.push(callbackQuery(`ses:arok:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
+    expect(d.store.topic(group, thread)?.status).toBe('archived')
+    expect(d.store.topic(group, thread)?.name).toBe('🗄 arch')
+    // Not in tmux → reported as not closable.
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('не в tmux'))
+    s.close()
+    await Bun.sleep(100)
+
+    tg.push(textMessage({ chat: Number(group), text: 'ещё вопрос', thread }))
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🗄 Топик в архиве'))
+    expect(JSON.stringify(notice.body.reply_markup)).toContain(`tp:unar:${thread}`)
+  })
+
+  test('reopening the topic in Telegram restores it and launches a session; the session then gets queued messages', async () => {
+    const dir = '/tmp/arch'
+    const thread = d.store.topicForProject(group, dir)!.thread_id
+    const n = launched.length
+    tg.push({
+      message: {
+        message_id: 9901, date: Math.floor(Date.now() / 1000), message_thread_id: thread, is_topic_message: true,
+        from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_reopened: {},
+      },
+    })
+    await tg.waitFor('editForumTopic', c => c.body.message_thread_id === thread && c.body.name === 'arch')
+    expect(d.store.topic(group, thread)?.status).toBe('active')
+    expect(launched.length).toBe(n + 1)
+    expect(tg.callsOf('reopenForumTopic').length).toBe(0) // already open in Telegram
+
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 89 })
+    const resume = await s.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('ещё вопрос')
+    s.close()
+  })
+})
+
+describe('paired users', () => {
+  test('every allowlisted user may post in the topics group; others are ignored', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const a = loadAccess()
+    a.allowFrom.push('333')
+    saveAccess(a)
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    tg.push(textMessage({ from: 333, chat: -100500, text: 'я второй', thread }))
+    const m = await client.inbound(x => x.content.endsWith('я второй'))
+    expect(m.meta.user_id).toBe('333')
+    tg.push(textMessage({ from: 444, chat: -100500, text: 'я чужой', thread }))
+    await Bun.sleep(300)
+    expect(client.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === 'я чужой')).toBe(false)
+  })
+})
+
+describe('reconnects', () => {
+  test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
+    const pid = process.pid // alive, so it survives pruning
+    const a = new FakeClient()
+    await a.connect({ cwd: '/tmp/re', projectRoot: '/tmp/re', claudePid: pid })
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🟢 Сессия подключена') && c.body.message_thread_id != null && d.store.topicForProject('-100500', '/tmp/re')?.thread_id === c.body.message_thread_id)
+    a.close()
+    await Bun.sleep(100)
+    const before = tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🟢')).length
+    const b = new FakeClient()
+    await b.connect({ cwd: '/tmp/re', projectRoot: '/tmp/re', claudePid: pid })
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🟢')).length).toBe(before)
+    expect(b.msgs.some(m => m.t === 'inbound')).toBe(false)
+    b.close()
   })
 })

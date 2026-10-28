@@ -21,6 +21,8 @@ export type PendingEntry = {
 export type GroupPolicy = {
   requireMention: boolean
   allowFrom: string[]
+  /** Anyone in the global allowFrom may post here (the topics group): every paired user has full control. */
+  allowPaired?: boolean
 }
 
 export type Prefs = {
@@ -199,7 +201,9 @@ export function gate(ctx: Context, botUsername: string): GateResult {
     const policy = access.groups[String(ctx.chat!.id)]
     if (!policy) return { action: 'drop' }
     const groupAllowFrom = policy.allowFrom ?? []
-    if (groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
+    if (policy.allowPaired) {
+      if (!access.allowFrom.includes(senderId) && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
+    } else if (groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
     if ((policy.requireMention ?? true) && !isMentioned(ctx, botUsername, access.mentionPatterns)) return { action: 'drop' }
     return { action: 'deliver', access }
   }

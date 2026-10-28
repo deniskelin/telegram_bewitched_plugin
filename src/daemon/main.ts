@@ -12,6 +12,7 @@ import { Daemon } from './daemon.ts'
 import { startHttp } from './http.ts'
 import { handlePermissionRequest, registerInbound } from './inbound.ts'
 import { handleCall } from './tools.ts'
+import { registerLaunchCommands } from './launch.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -74,6 +75,7 @@ function shutdown(code = 0): void {
 process.on('SIGTERM', () => shutdown())
 process.on('SIGINT', () => shutdown())
 
+d.pruneGreeted()
 d.listen()
 startHttp(d)
 startQuestionExpiry(d)
@@ -83,11 +85,13 @@ log(`daemon pid=${process.pid} listening on ${SOCK_FILE}, http 127.0.0.1:${setti
 
 void d.startPolling(bot => {
   registerTopicCommands(d, bot)
+  registerLaunchCommands(d, bot)
   registerInbound(d, bot, TOKEN)
   void bot.api.setMyCommands([
     { command: 'sessions', description: 'Запущенные сессии' },
     { command: 'topics', description: 'Топики проектов' },
     { command: 'connect_group', description: 'Подключить группу с топиками' },
+    { command: 'new_session', description: 'Новый проект и сессия в tmux' },
     { command: 'status', description: 'Состояние бота и демона' },
     { command: 'help', description: 'Команды' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})

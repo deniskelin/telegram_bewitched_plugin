@@ -16,6 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
+import { tmuxLaunch } from './launch.ts'
 
 export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 
@@ -37,6 +38,7 @@ export type Session = {
   turn: { start: number; replied: boolean } | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
+  reconnect: boolean
 }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
@@ -75,15 +77,18 @@ export class Daemon {
     return this.store.get('topics_chat_id')
   }
 
-  /** True when only the owner can post in the topics group — safe to show permission buttons there. */
+  /** True when only paired users can post in the topics group — safe to show permission buttons there. */
   topicsGroupIsStrict(): boolean {
     const chat = this.topicsChatId
     if (!chat) return false
     const a = loadAccess()
     const g = a.groups[chat]
-    const o = owner(a)
-    return g != null && o != null && g.allowFrom.length === 1 && g.allowFrom[0] === o
+    if (!g) return false
+    if (g.allowPaired) return true
+    return g.allowFrom.length > 0 && g.allowFrom.every(id => a.allowFrom.includes(id))
   }
+
+
 
   // --- sessions ---
 
@@ -150,6 +155,8 @@ export class Daemon {
   onSessionGone: (s: Session) => void = () => {}
   handleCall: (s: Session, name: string, args: Record<string, unknown>) => Promise<string> = async () => 'not ready'
   handlePermissionRequest: (s: Session, p: Omit<PendingPermission, 'sessionId'> & { request_id: string }) => void = () => {}
+  /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
+  launchSession: (dir: string) => Promise<string> = tmuxLaunch
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
@@ -173,6 +180,9 @@ export class Daemon {
       lastChat: null,
       turn: null,
       notes: [],
+      // The daemon may have restarted (and lost its memory) while this Claude
+      // process kept running: remember greeted processes in the store.
+      reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),
     }
     this.sessions.set(id, s)
     this.log(`session ${id} connected: ${projectKey}${h.passive ? ' (passive)' : ''} pid=${h.claudePid}`)
@@ -190,6 +200,14 @@ export class Daemon {
   }
 
   // --- IPC server ---
+
+  /** Forget greeted Claude processes that are gone (pids get recycled). */
+  pruneGreeted(): void {
+    for (const k of this.store.keys('greeted:')) {
+      const pid = Number(k.slice('greeted:'.length))
+      if (!isAlive(pid) || !cmdlineOf(pid).length) this.store.set(k, null)
+    }
+  }
 
   listen(sockFile = SOCK_FILE): void {
     rmSync(sockFile, { force: true })
@@ -236,6 +254,7 @@ export class Daemon {
         } catch (err) {
           this.log(`session ${session.id} setup failed: ${err}`)
         }
+        if (session.claudePid != null) this.store.set(`greeted:${session.claudePid}`, String(Date.now()))
         this.send(session, { t: 'welcome', session: session.id, topic: session.topic })
         this.onSessionsChanged()
         return
@@ -287,7 +306,10 @@ export class Daemon {
     let warned = false
     for (let attempt = 1; ; attempt++) {
       if (this.legacyConflict()) {
-        if (!warned) this.log('official telegram plugin is polling the same token — waiting for it to stop')
+        if (!warned) {
+          this.log('official telegram plugin is polling the same token — waiting for it to stop')
+          this.warnOwner('⚠️ Официальный плагин telegram опрашивает этого же бота, поэтому telegram-bewitched ждёт. Отключите его: `claude plugin disable telegram@claude-plugins-official` (и `telegram@synced`, если он синхронизирован с claude.ai).')
+        }
         warned = true
         await new Promise(r => setTimeout(r, 30_000))
         attempt = 0
@@ -308,11 +330,23 @@ export class Daemon {
         this.polling = false
         if (err instanceof Error && err.message === 'Aborted delay') return
         const is409 = err instanceof GrammyError && err.error_code === 409
+        if (is409 && attempt === 3) {
+          this.warnOwner('⚠️ Другой процесс опрашивает этого бота (409 Conflict), сообщения до сессий не доходят. Частая причина — включённый официальный плагин telegram (в том числе `telegram@synced` с claude.ai). Проверьте: `claude plugin list`.')
+        }
         const delay = Math.min(1000 * attempt, 15_000)
         this.log(`${is409 ? '409 Conflict — another poller holds the token' : `polling error: ${err}`}; retry in ${delay / 1000}s`)
         await new Promise(r => setTimeout(r, delay))
       }
     }
+  }
+
+  /** DM the owner (sending works even while another process holds getUpdates). At most once per 10 min. */
+  private lastWarn = 0
+  warnOwner(text: string): void {
+    const o = owner()
+    if (!o || Date.now() - this.lastWarn < 600_000) return
+    this.lastWarn = Date.now()
+    void this.bot.api.sendMessage(o, text).catch(() => {})
   }
 
   isPolling(): boolean {

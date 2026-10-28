@@ -152,6 +152,10 @@ export class Store {
     else this.db.query('INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT (key) DO UPDATE SET value = excluded.value').run(key, value)
   }
 
+  keys(prefix: string): string[] {
+    return this.db.query<{ key: string }, [string]>("SELECT key FROM kv WHERE key LIKE ? || '%'").all(prefix).map(r => r.key)
+  }
+
   // --- messages ---
 
   addMessage(m: Omit<MessageRow, 'id'>): void {

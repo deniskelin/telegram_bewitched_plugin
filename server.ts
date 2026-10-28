@@ -68,6 +68,7 @@ let nextCallId = 1
 const pendingCalls = new Map<number, { resolve: (r: { ok: boolean; text: string }) => void; timer: ReturnType<typeof setTimeout> }>()
 const decoder = new LineDecoder()
 let shuttingDown = false
+let connectedOnce = false
 
 function sendToDaemon(msg: ClientMsg): boolean {
   if (!sock) return false
@@ -129,7 +130,8 @@ async function connect(): Promise<void> {
           },
         },
       })
-      sendToDaemon(hello)
+      sendToDaemon({ ...hello, reconnect: connectedOnce })
+      connectedOnce = true
       return
     } catch (err) {
       const delay = Math.min(1000 * 2 ** Math.min(attempt, 4), 15_000)

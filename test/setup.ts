@@ -17,6 +17,7 @@ process.env.BEWITCHED_HTTP_PORT = String(20000 + Math.floor(Math.random() * 2000
 process.env.GROUP_EDIT_INTERVAL_MS = '50'
 process.env.STREAM_MIN_INTERVAL_MS = '50'
 process.env.NOTIFY_LONG_SEC = '0'
+process.env.PROJECTS_DIR = join(root, 'projects')
 writeFileSync(join(stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['111'], groups: {}, pending: {} }))
 
 export const fakeTelegram = new FakeTelegram()

@@ -91,3 +91,18 @@ describe('ipc', () => {
     expect(d.push(msg.slice(5) + encode({ t: 'pong' }))).toEqual([{ t: 'ping' }, { t: 'pong' }])
   })
 })
+
+describe('launch', async () => {
+  const { slugify, projectPath } = await import('../src/daemon/launch.ts')
+  test('slugify keeps letters of any script, drops path tricks', () => {
+    expect(slugify('Мой Проект!')).toBe('Мой-Проект')
+    expect(slugify('../../etc/passwd')).toBe('etcpasswd')
+    expect(slugify('...')).toBe('')
+    expect(slugify('my_app.v2')).toBe('my_app.v2')
+  })
+  test('projectPath puts names under PROJECTS_DIR', () => {
+    expect(projectPath('demo')).toBe(`${process.env.PROJECTS_DIR}/demo`)
+    expect(projectPath('/opt/x/../y')).toBe('/opt/y')
+    expect(projectPath('  ')).toBeNull()
+  })
+})
