@@ -30,7 +30,7 @@ async function askForContact(d: Daemon, ctx: Context): Promise<void> {
   await ctx.reply('Кого пригласить? Нажмите «👤 Выбрать контакт» под полем ввода и выберите человека.', { reply_markup: kb })
 }
 
-type Shared = { id: string; name: string; username: string | null }
+type Shared = { id: string; name: string; username: string | null; first?: string; last?: string }
 
 function sharedName(u: { first_name?: string; last_name?: string; username?: string; user_id: number }): string {
   return [u.first_name, u.last_name].filter(Boolean).join(' ') || (u.username ? `@${u.username}` : String(u.user_id))
@@ -68,7 +68,8 @@ async function doInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> {
   // Known before the file changes: the allowlist watcher must not prepare them a second time.
   markKnown(d, [u.id])
   saveAccess(a)
-  d.store.set(`user_name:${u.id}`, u.username ?? u.name)
+  d.store.set(`user_name:${u.id}`, u.name)
+  d.rememberUser(u.id, { first: u.first, last: u.last, username: u.username ?? undefined })
   d.log(`invited user ${u.id} (${u.name})`)
   await ctx.editMessageText(`✅ ${escapeHtml(u.name)} добавлен в список доступа. Готовлю сессию…`, { parse_mode: 'HTML' }).catch(() => {})
   await onUserAdded(d, u.id)
@@ -82,7 +83,11 @@ async function doInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> {
 export async function onUserAdded(d: Daemon, id: string): Promise<void> {
   const to = owner()
   if (!to || id === to) return
-  const name = d.userName(id) ?? id
+  if (!d.userInfo(id)) {
+    const c = await d.bot.api.getChat(Number(id)).catch(() => null)
+    if (c?.type === 'private') d.rememberUser(id, { first: c.first_name, last: c.last_name, username: c.username })
+  }
+  const name = d.userLabel(id)
   const done: string[] = [`👥 <b>${escapeHtml(name)}</b>${name !== id ? ` (id <code>${id}</code>)` : ''} в списке доступа.`]
   let window: string | null = null
   if (settings.userSessions) {
@@ -152,7 +157,17 @@ export function newUsers(d: Daemon): string[] {
   return fresh
 }
 
+/** Names for allowlisted users we know only by id (added before names were kept): ask Telegram. */
+export async function backfillUserInfo(d: Daemon): Promise<void> {
+  for (const id of loadAccess().allowFrom) {
+    if (d.userInfo(id)) continue
+    const c = await d.bot.api.getChat(Number(id)).catch(() => null)
+    if (c?.type === 'private') d.rememberUser(id, { first: c.first_name, last: c.last_name, username: c.username })
+  }
+}
+
 export function startAllowlistWatch(d: Daemon): void {
+  setTimeout(() => void backfillUserInfo(d).catch(err => d.log(`user names: ${err}`)), 2000).unref?.()
   const tick = () => {
     for (const id of newUsers(d)) void onUserAdded(d, id).catch(err => d.log(`user ${id} setup failed: ${err}`))
   }
@@ -173,7 +188,7 @@ export function registerInviteCommands(d: Daemon, bot: Bot): void {
     d.store.set(`invite_req:${shared.request_id}`, null)
     const u = shared.users[0]
     if (!u) return
-    await confirmInvite(d, ctx, { id: String(u.user_id), name: sharedName(u), username: u.username ?? null })
+    await confirmInvite(d, ctx, { id: String(u.user_id), name: sharedName(u), username: u.username ?? null, first: u.first_name, last: u.last_name })
   })
 
   // "Отмена" on the reply keyboard.

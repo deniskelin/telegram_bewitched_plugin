@@ -960,6 +960,21 @@ describe('remove user', () => {
   })
 })
 
+describe('user labels', () => {
+  test('full name, @username if any, and the id; kept from messages', async () => {
+    d.rememberUser('901', { first: 'Ann', last: 'Lee', username: 'ann' })
+    expect(d.userLabel('901')).toBe('Ann Lee (@ann, 901)')
+    d.rememberUser('902', { first: 'Bo' })
+    expect(d.userLabel('902')).toBe('Bo (902)')
+    d.rememberUser('903', { username: 'cee' })
+    expect(d.userLabel('903')).toBe('@cee (903)')
+    expect(d.userLabel('904')).toBe('904')
+    tg.push(textMessage({ from: 111, text: 'кто я' }))
+    await Bun.sleep(200)
+    expect(d.userLabel('111')).toBe('Den (@den, 111)')
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning
