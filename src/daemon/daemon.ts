@@ -77,15 +77,18 @@ export class Daemon {
     return this.store.get('topics_chat_id')
   }
 
-  /** True when only the owner can post in the topics group — safe to show permission buttons there. */
+  /** True when only paired users can post in the topics group — safe to show permission buttons there. */
   topicsGroupIsStrict(): boolean {
     const chat = this.topicsChatId
     if (!chat) return false
     const a = loadAccess()
     const g = a.groups[chat]
-    const o = owner(a)
-    return g != null && o != null && g.allowFrom.length === 1 && g.allowFrom[0] === o
+    if (!g) return false
+    if (g.allowPaired) return true
+    return g.allowFrom.length > 0 && g.allowFrom.every(id => a.allowFrom.includes(id))
   }
+
+
 
   // --- sessions ---
 

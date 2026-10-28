@@ -40,7 +40,8 @@ function usage(): never {
   console.log(`usage:
   bewitched daemon start|stop|restart|status|logs|install-cron
   bewitched notify [--topic <name>] [--silent] <text…>
-  bewitched status`)
+  bewitched status
+  bewitched group allow-paired   # all allowlisted users may post in the topics group`)
   process.exit(1)
 }
 
@@ -102,6 +103,23 @@ switch (cmd) {
   case 'status':
     console.log(JSON.stringify(await api('/status'), null, 2))
     break
+  case 'group': {
+    // Access changes are terminal-only on purpose: never downstream of a chat message.
+    if (sub !== 'allow-paired') usage()
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { Store } = await import('../src/db.ts')
+    const { DB_FILE } = await import('../src/config.ts')
+    const chat = new Store(DB_FILE).get('topics_chat_id')
+    if (!chat) {
+      console.log('no topics group connected')
+      break
+    }
+    const a = loadAccess()
+    a.groups[chat] = { ...(a.groups[chat] ?? { requireMention: false }), requireMention: false, allowFrom: [], allowPaired: true }
+    saveAccess(a)
+    console.log(`topics group ${chat}: all paired users (${a.allowFrom.join(', ')}) may post and control sessions`)
+    break
+  }
   default:
     usage()
 }

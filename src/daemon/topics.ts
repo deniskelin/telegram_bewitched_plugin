@@ -280,7 +280,7 @@ async function sendConnectCard(d: Daemon, code: string, c: ConnectState): Promis
     })
     return
   }
-  await d.bot.api.sendMessage(c.owner, `Подключить группу «${title}» для топиков Claude Code?\n\nКаждый проект получит свой топик, в General появится пульт. Писать в сессии сможете только вы.${warn}`, {
+  await d.bot.api.sendMessage(c.owner, `Подключить группу «${title}» для топиков Claude Code?\n\nКаждый проект получит свой топик, в General появится пульт. Писать в сессии и управлять ими смогут все сопряжённые с ботом пользователи (allowlist), остальные участники группы — нет.${warn}`, {
     reply_markup: new InlineKeyboard([[button('✅ Подключить', `cg:ok:${code}`, 'success'), button('❌ Отмена', `cg:no:${code}`)]]),
   })
 }
@@ -290,7 +290,7 @@ export async function connectGroup(d: Daemon, chatId: string): Promise<void> {
   const o = owner(a)
   if (!o) throw new Error('no owner paired')
   const prev = d.topicsChatId
-  a.groups[chatId] = { requireMention: false, allowFrom: [o] }
+  a.groups[chatId] = { requireMention: false, allowFrom: [], allowPaired: true }
   saveAccess(a)
   d.store.set('topics_chat_id', chatId)
   if (prev !== chatId) d.store.set('dashboard_msg_id', null)

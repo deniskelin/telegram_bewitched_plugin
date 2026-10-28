@@ -351,3 +351,19 @@ describe('archive and restore', () => {
     s.close()
   })
 })
+
+describe('paired users', () => {
+  test('every allowlisted user may post in the topics group; others are ignored', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const a = loadAccess()
+    a.allowFrom.push('333')
+    saveAccess(a)
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    tg.push(textMessage({ from: 333, chat: -100500, text: 'я второй', thread }))
+    const m = await client.inbound(x => x.content.endsWith('я второй'))
+    expect(m.meta.user_id).toBe('333')
+    tg.push(textMessage({ from: 444, chat: -100500, text: 'я чужой', thread }))
+    await Bun.sleep(300)
+    expect(client.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === 'я чужой')).toBe(false)
+  })
+})
