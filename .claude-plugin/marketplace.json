@@ -1,0 +1,17 @@
+{
+  "name": "bewitched",
+  "owner": {
+    "name": "deniskelin"
+  },
+  "metadata": {
+    "description": "telegram-bewitched channel plugin for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "telegram-bewitched",
+      "source": "./",
+      "description": "Telegram channel with a shared polling daemon, per-project forum topics, live progress, answer buttons and persistent history.",
+      "version": "0.1.0"
+    }
+  ]
+}

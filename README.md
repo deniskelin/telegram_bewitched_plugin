@@ -1,98 +1,86 @@
-# Telegram
+# telegram-bewitched
 
-Connect a Telegram bot to your Claude Code with an MCP server.
+Telegram-канал для Claude Code — форк [официального плагина](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) с общим демоном, топиками проектов в форум-супергруппе, живым прогрессом, кнопками ответов и историей, которая переживает перезапуски.
 
-The MCP server logs into Telegram as a bot and provides tools to Claude to reply, react, or edit messages. When you message the bot, the server forwards the message to your Claude Code session.
+ТЗ: [docs/TZ.md](docs/TZ.md). Реализованы этапы 0–5.
 
-## Prerequisites
+## Что умеет
 
-- [Bun](https://bun.sh) — the MCP server runs on Bun. Install with `curl -fsSL https://bun.sh/install | bash`.
+| | |
+|---|---|
+| **Общий демон** | Один процесс опрашивает Telegram за все сессии. Несколько сессий Claude Code и `claude -p` работают с одним ботом без 409 Conflict. |
+| **Топики** | Подключаете форум-супергруппу из лички (`/connect_group`), каждый проект получает свой топик. В General — закреплённый пульт и команды управления. |
+| **Живой прогресс** | Пока Claude работает: в личке — нативный черновик с блоком «размышления», в топике — обновляемое сообщение «⏳ Работаю…» с действиями и кнопкой **⏹ Стоп** (прерывает ход через tmux). |
+| **Кнопки ответов** | Инструмент `ask_user` и `reply(buttons)`: варианты нажатием, ответ возвращается в сессию. |
+| **Уведомления** | `notify` без входящего сообщения, авто-«✅ Готово» после долгого хода, `bewitched notify` и HTTP `/notify` для скриптов и CI. |
+| **История и память** | SQLite с полнотекстовым поиском, контекст ответа/цитаты/пересылки в каждом сообщении, `get_history`, `search_messages`, память чата `save_memory`, сводка при подключении сессии, доставка сообщений, пришедших пока сессия была выключена. |
 
-## Quick Setup
-> Default pairing flow for a single-user DM bot. See [ACCESS.md](./ACCESS.md) for groups and multi-user setups.
+## Требования
 
-**1. Create a bot with BotFather.**
+- [Bun](https://bun.sh) ≥ 1.2.
+- Claude Code с поддержкой channels и хука `MessageDisplay`.
+- tmux — для кнопки «⏹ Стоп» (без tmux она только сообщает модели об остановке).
 
-Open a chat with [@BotFather](https://t.me/BotFather) on Telegram and send `/newbot`. BotFather asks for two things:
-
-- **Name** — the display name shown in chat headers (anything, can contain spaces)
-- **Username** — a unique handle ending in `bot` (e.g. `my_assistant_bot`). This becomes your bot's link: `t.me/my_assistant_bot`.
-
-BotFather replies with a token that looks like `123456789:AAHfiqksKZ8...` — that's the whole token, copy it including the leading number and colon.
-
-**2. Install the plugin.**
-
-These are Claude Code commands — run `claude` to start a session first.
-
-Install the plugin:
-```
-/plugin install telegram@claude-plugins-official
-```
-
-**3. Give the server the token.**
+## Установка
 
 ```
-/telegram:configure 123456789:AAHfiqksKZ8...
+/plugin marketplace add deniskelin/telegram_bewitched_plugin
+/plugin install telegram-bewitched@bewitched
 ```
 
-Writes `TELEGRAM_BOT_TOKEN=...` to `~/.claude/channels/telegram/.env`. You can also write that file by hand, or set the variable in your shell environment — shell takes precedence.
+Токен бота: `/telegram-bewitched:configure <токен>`. Если раньше стоял официальный плагин, `.env` и `access.json` скопируются из `~/.claude/channels/telegram/` автоматически при первом запуске.
 
-> To run multiple bots on one machine (different tokens, separate allowlists), point `TELEGRAM_STATE_DIR` at a different directory per instance.
+**Официальный плагин и форк не должны опрашивать один токен одновременно.** Отключите официальный (`/plugin disable telegram@claude-plugins-official`) или запускайте Claude без его `--channels`. Если демон видит работающий официальный плагин с тем же токеном, он ждёт, а не дерётся за опрос.
 
-**4. Relaunch with the channel flag.**
+## Запуск
 
-The server won't connect without this — exit your session and start a new one:
-
-```sh
-claude --channels plugin:telegram@claude-plugins-official
-```
-
-**5. Pair.**
-
-With Claude Code running from the previous step, DM your bot on Telegram — it replies with a 6-character pairing code. If the bot doesn't respond, make sure your session is running with `--channels`. In your Claude Code session:
+Во время research preview сторонние каналы запускаются флагом разработки (появится подтверждение, его нужно принять):
 
 ```
-/telegram:access pair <code>
+tmux new -s claude
+claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched
 ```
 
-Your next DM reaches the assistant.
+Первая сессия сама запускает демон. Он продолжает работать после закрытия сессий, чтобы пульт и `/notify` отвечали всегда.
 
-> Unlike Discord, there's no server invite step — Telegram bots accept DMs immediately. Pairing handles the user-ID lookup so you never touch numeric IDs.
+```
+bun bin/bewitched.ts daemon status|stop|restart|logs
+bun bin/bewitched.ts daemon install-cron     # @reboot в crontab
+bun bin/bewitched.ts notify --topic myproj "сборка упала"
+```
 
-**6. Lock it down.**
+## Топики в супергруппе
 
-Pairing is for capturing IDs. Once you're in, switch to `allowlist` so strangers don't get pairing-code replies. Ask Claude to do it, or `/telegram:access policy allowlist` directly.
+1. В личке с ботом: `/connect_group`.
+2. Кнопка «➕ Добавить бота в группу» → выберите группу с включёнными «Темами» → подтвердите права администратора (управление темами, закрепление, удаление).
+3. Подтвердите подключение в личке.
 
-## Access control
+Писать в сессии из группы может только владелец бота. Нативные черновики Telegram работают только в личке, поэтому в топиках прогресс показывается обновляемым сообщением.
 
-See **[ACCESS.md](./ACCESS.md)** for DM policies, groups, mention detection, delivery config, skill commands, and the `access.json` schema.
+Команды пульта (личка или General): `/sessions`, `/topics`, `/send <топик> <текст>`, `/broadcast <текст>`, `/rename <топик> | <имя>`, `/archive <топик>`, `/delete <топик>`, `/use <id>`. В любом чате: `/verbose 0|1|2`, `/notify_done off|long|always`, `/remember`, `/forget`. В личке: `/group`, `/disconnect_group`, `/status`.
 
-Quick reference: IDs are **numeric user IDs** (get yours from [@userinfobot](https://t.me/userinfobot)). Default policy is `pairing`. `ackReaction` only accepts Telegram's fixed emoji whitelist.
+## Настройки (`~/.claude/channels/telegram-bewitched/.env`)
 
-## Tools exposed to the assistant
+| Переменная | По умолчанию | |
+|---|---|---|
+| `TOPIC_MODE` | `project` | `project` — топик на проект, `session` — на сессию, `off` |
+| `PERMISSIONS_TO` | `topic` | Куда слать запросы разрешений: `topic`, `dm`, `both` |
+| `STOP_MODE` | `interrupt` | `interrupt` (Escape в tmux), `notify`, `off` |
+| `PROGRESS_FINAL` | `delete` | Что делать с сообщением прогресса после ответа: `delete`, `keep` |
+| `NOTIFY_LONG_SEC` | `60` | Порог «долгого хода» для авто-уведомления |
+| `DAEMON_IDLE_EXIT_MIN` | `0` | Остановить демон после N минут без сессий (0 — никогда) |
+| `BEWITCHED_HTTP_PORT` | `8797` | Локальный HTTP (хуки, `/notify`), только 127.0.0.1, токен в `http.token` |
+| `HISTORY_MAX_DAYS` | `90` | Срок хранения истории |
+| `PASSIVE_TOOLS` | `false` | Разрешить инструменты в сессиях без канала (`claude -p`) |
 
-| Tool | Purpose |
-| --- | --- |
-| `reply` | Send to a chat. Takes `chat_id` + `text`, optionally `reply_to` (message ID) for native threading and `files` (absolute paths) for attachments. Images (`.jpg`/`.png`/`.gif`/`.webp`) send as photos with inline preview; other types send as documents. Max 50MB each. Auto-chunks text; files send as separate messages after the text. Returns the sent message ID(s). |
-| `react` | Add an emoji reaction to a message by ID. **Only Telegram's fixed whitelist** is accepted (👍 👎 ❤ 🔥 👀 etc). |
-| `edit_message` | Edit a message the bot previously sent. Useful for "working…" → result progress updates. Only works on the bot's own messages. |
+Доступ (pairing, allowlist, группы) — как у официального плагина, см. [ACCESS.md](ACCESS.md) и `/telegram-bewitched:access`.
 
-Inbound messages trigger a typing indicator automatically — Telegram shows
-"botname is typing…" while the assistant works on a response.
+## Разработка
 
-## Photos
+```
+bun install
+bun test          # юнит + интеграционные тесты с фейковым Bot API
+bunx tsc --noEmit
+```
 
-Inbound photos are downloaded to `~/.claude/channels/telegram/inbox/` and the
-local path is included in the `<channel>` notification so the assistant can
-`Read` it. Telegram compresses photos — if you need the original file, send it
-as a document instead (long-press → Send as File).
-
-## No history or search
-
-Telegram's Bot API exposes **neither** message history nor search. The bot
-only sees messages as they arrive — no `fetch_messages` tool exists. If the
-assistant needs earlier context, it will ask you to paste or summarize.
-
-This also means there's no `download_attachment` tool for historical messages
-— photos are downloaded eagerly on arrival since there's no way to fetch them
-later.
+Структура: `server.ts` — тонкий MCP-клиент сессии; `src/daemon/` — демон (опрос, маршрутизация, топики, стриминг, кнопки, инструменты, HTTP); `hooks/` — хуки Claude Code → демон; `bin/bewitched.ts` — CLI. Синхронизация с upstream — [UPSTREAM.md](UPSTREAM.md).
