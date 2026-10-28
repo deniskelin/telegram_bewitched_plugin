@@ -10,7 +10,7 @@ import { readFileSync } from 'fs'
 import { HTTP_TOKEN_FILE, settings } from '../src/config.ts'
 import { findClaudePid } from '../src/proc.ts'
 
-const KEEP = ['hook_event_name', 'session_id', 'tool_name', 'tool_input', 'delta', 'final', 'last_assistant_message', 'cwd']
+const KEEP = ['hook_event_name', 'session_id', 'transcript_path', 'permission_mode', 'tool_name', 'tool_input', 'delta', 'final', 'last_assistant_message', 'cwd']
 
 async function main(): Promise<void> {
   let token: string

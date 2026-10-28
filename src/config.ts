@@ -9,7 +9,7 @@ import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { randomBytes } from 'crypto'
 
-const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+export const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 
 export const STATE_DIR = process.env.TELEGRAM_BEWITCHED_STATE_DIR
   ?? join(CONFIG_DIR, 'channels', 'telegram-bewitched')
@@ -96,6 +96,8 @@ export const settings = {
   get topicProjects() { return str('TOPIC_PROJECTS', 'auto', ['auto', 'ask', 'off'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
   /** Folder of the main session: DMs, General and topics without a session of their own. */
+  /** Context window used for the fill percentage in session cards. */
+  get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },

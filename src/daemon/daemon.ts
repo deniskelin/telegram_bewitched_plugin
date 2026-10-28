@@ -16,7 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
-import { tmuxLaunch } from './launch.ts'
+import { tmuxLaunch, tmuxLocation, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -42,6 +42,9 @@ export type Session = {
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
   reconnect: boolean
+  /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
+  claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
+  lastTool: { text: string; at: number } | null
 }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
@@ -167,6 +170,8 @@ export class Daemon {
   handlePermissionRequest: (s: Session, p: Omit<PendingPermission, 'sessionId'> & { request_id: string }) => void = () => {}
   /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
   launchSession: (dir: string) => Promise<string> = tmuxLaunch
+  /** Where a tmux pane lives. Replaced in tests. */
+  tmuxLocation: (pane: string) => Promise<TmuxLocation | null> = tmuxLocation
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
@@ -190,6 +195,8 @@ export class Daemon {
       lastChat: null,
       turn: null,
       notes: [],
+      claude: { sessionId: null, transcript: null, permissionMode: null },
+      lastTool: null,
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.
       reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),

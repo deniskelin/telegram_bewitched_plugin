@@ -16,6 +16,7 @@ import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, onManualTopic, startProject } from './launch.ts'
+import { sessionsReport, sortedSessions, statusLabel, topicsReport } from './report.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -207,19 +208,14 @@ export function onSessionGone(d: Daemon, s: Session): void {
 let dashTimer: ReturnType<typeof setTimeout> | null = null
 let dashLast = 0
 
-function statusLabel(s: Session): string {
-  if (s.status === 'waiting') return '🟡 ждёт разрешения'
-  if (s.status === 'working') return '🔵 работает'
-  return '🟢 свободна'
-}
-
 export function renderDashboard(d: Daemon): string {
-  const list = d.activeSessions().sort((a, b) => a.projectName.localeCompare(b.projectName))
+  const list = sortedSessions(d)
+  const main = d.mainSession()
   const lines = ['🎛 Пульт Claude Code', '']
   if (!list.length) lines.push('Нет запущенных сессий.')
   for (const s of list) {
     const ago = fmtDuration(Date.now() - s.lastActivity)
-    lines.push(`${statusLabel(s)} · ${s.projectName}${s.branch ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
+    lines.push(`${statusLabel(s)} · ${s === main ? '👑 главная' : s.projectName}${s.branch ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
   }
   lines.push('', `Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, '/sessions · /topics · /help')
   return lines.join('\n')
@@ -426,24 +422,32 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   const requireControl = (ctx: Context): boolean => isControlChat(d, ctx)
   const topicsChat = (): string | null => d.topicsChatId
 
+  /** Several HTML messages; the keyboard goes under the last one. */
+  const replyReport = async (ctx: Context, parts: string[], kb?: InlineKeyboard) => {
+    for (const [i, text] of parts.entries()) {
+      await ctx.reply(text, {
+        parse_mode: 'HTML',
+        link_preview_options: { is_disabled: true },
+        ...(i === parts.length - 1 && kb ? { reply_markup: kb } : {}),
+      })
+    }
+  }
+
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
-    const list = d.activeSessions()
-    if (!list.length) return void ctx.reply('Нет запущенных сессий.')
-    const lines: string[] = []
+    const list = sortedSessions(d)
     const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
     const main = d.mainSession()
     for (const s of list) {
-      lines.push(`${statusLabel(s)} #${s.id} · ${s.projectName}${s.branch ? ` (${s.branch})` : ''}${s === main ? ' · 👑 главная' : ''}\n   ${s.cwd}`)
       const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = []
       const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
       if (link) row.push(InlineKeyboard.url(`📂 ${s.projectName}`.slice(0, 40), link))
       if (s.topic) row.push(button('🗄 Архив', `ses:ar:${s.id}`))
-      if (s !== main) row.push(button('👑 Главная', `ses:dm:${s.id}`))
-      if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
+      if (s !== main) row.push(button(`👑 #${s.id} главной`, `ses:dm:${s.id}`))
+      if (s.tmuxPane && s.status === 'working') row.push(button(`⏹ #${s.id}`, `stop:${s.id}`, 'danger'))
       if (row.length) kb.push(row)
     }
-    await ctx.reply(lines.join('\n\n'), { reply_markup: new InlineKeyboard(kb as never) })
+    await replyReport(ctx, await sessionsReport(d), kb.length ? new InlineKeyboard(kb as never) : undefined)
   })
 
   bot.command('topics', async ctx => {
@@ -451,8 +455,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const chat = topicsChat()
     if (!chat) return void ctx.reply('Группа для топиков не подключена. В личке с ботом: /connect_group')
     const rows = d.store.topics(chat)
-    if (!rows.length) return void ctx.reply('Топиков пока нет.')
-    await ctx.reply(`Топики (${rows.length}):`, { reply_markup: topicsListKeyboard(d, rows) })
+    await replyReport(ctx, await topicsReport(d, chat), rows.length ? topicsListKeyboard(d, rows) : undefined)
   })
 
   bot.command('send', async ctx => {
