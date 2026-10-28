@@ -261,14 +261,15 @@ export function resolvePermission(d: Daemon, request_id: string, behavior: 'allo
 
 export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: string; tool_name: string; description: string; input_preview: string }): void {
   d.permissions.set(p.request_id, { sessionId: s.id, tool_name: p.tool_name, description: p.description, input_preview: p.input_preview })
+  if (s.alwaysAllow.has(p.tool_name)) {
+    d.log(`session ${s.id}: ${p.tool_name} allowed (♾)`)
+    resolvePermission(d, p.request_id, 'allow')
+    return
+  }
   s.status = 'waiting'
   d.onSessionsChanged()
   const text = `🔐 ${s.projectName}: ${p.tool_name}`
-  const kb = new InlineKeyboard([[
-    button('Подробнее', `perm:more:${p.request_id}`),
-    button('✅ Разрешить', `perm:allow:${p.request_id}`, 'success'),
-    button('❌ Запретить', `perm:deny:${p.request_id}`, 'danger'),
-  ]])
+  const kb = permissionKb(p.request_id, p.tool_name, true)
   const mode = settings.permissionsTo
   const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
@@ -279,8 +280,14 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
+function permissionKb(requestId: string, tool: string, more: boolean): InlineKeyboard {
+  const first = [button('✅ Разрешить', `perm:allow:${requestId}`, 'success'), button('❌ Запретить', `perm:deny:${requestId}`, 'danger')]
+  if (more) first.unshift(button('Подробнее', `perm:more:${requestId}`))
+  return new InlineKeyboard([first, [button(`♾ Всегда ${tool} в этой сессии`.slice(0, 40), `perm:always:${requestId}`)]])
+}
+
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
-  const m = /^perm:(allow|deny|more):([a-km-z]{5})$/.exec(data)
+  const m = /^perm:(allow|deny|more|always):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
   if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
   const [, behavior, request_id] = m
@@ -294,12 +301,16 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
       pretty = p.input_preview
     }
     const expanded = `🔐 ${p.tool_name}\n\n${p.description}\n\n${pretty}`.slice(0, 4000)
-    const kb = new InlineKeyboard([[button('✅ Разрешить', `perm:allow:${request_id}`, 'success'), button('❌ Запретить', `perm:deny:${request_id}`, 'danger')]])
-    await ctx.editMessageText(expanded, { reply_markup: kb }).catch(() => {})
+    await ctx.editMessageText(expanded, { reply_markup: permissionKb(request_id, p.tool_name, false) }).catch(() => {})
     return void ctx.answerCallbackQuery().catch(() => {})
   }
-  const ok = resolvePermission(d, request_id, behavior as 'allow' | 'deny')
-  const label = !ok ? '⌛ Запрос уже неактуален' : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
+  const p = d.permissions.get(request_id)
+  const s = p ? d.sessions.get(p.sessionId) : undefined
+  if (behavior === 'always' && p && s) s.alwaysAllow.add(p.tool_name)
+  const ok = resolvePermission(d, request_id, behavior === 'deny' ? 'deny' : 'allow')
+  const label = !ok ? '⌛ Запрос уже неактуален'
+    : behavior === 'always' ? `♾ Разрешено; ${p!.tool_name} в этой сессии больше не спрашиваю`
+    : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
   await ctx.answerCallbackQuery({ text: label }).catch(() => {})
   const msg = ctx.callbackQuery?.message
   if (msg && 'text' in msg && msg.text) await ctx.editMessageText(`${msg.text}\n\n${label}`).catch(() => {})
@@ -363,6 +374,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     await ctx.reply([
       'Пульт (личка или General группы):',
       '/sessions — запущенные сессии',
+      '/permissions — ждущие запросы разрешений',
       '/topics — все топики',
       '/send <топик> <текст> — написать в сессию другого топика',
       '/broadcast <текст> — во все сессии',

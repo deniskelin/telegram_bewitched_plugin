@@ -134,6 +134,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     const fill = tr.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((tr.tokens / win) * 100)}%)` : ''
     main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
   }
+  if (s.alwaysAllow.size) main.push(`♾ без вопросов: ${[...s.alwaysAllow].map(escapeHtml).join(', ')}`)
   const cost = sessionCostLine(s)
   if (cost) main.push(cost)
   if (s.lastTool) {

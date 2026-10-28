@@ -609,11 +609,40 @@ describe('topics', () => {
 
   test('permission request goes to the strict topic and the verdict returns to the session', async () => {
     client.sock.write(encode({ t: 'perm_req', request_id: 'abcde', tool_name: 'Bash', description: 'run', input_preview: '{"command":"ls"}' }))
-    const msg = await tg.waitFor('sendMessage', c => String(c.body.text).includes('🔐'))
+    const msg = await tg.waitFor('sendMessage', c => c.body.text === '🔐 proj: Bash')
     expect(msg.body.chat_id).toBe(group)
     tg.push(callbackQuery('perm:allow:abcde', { chat: Number(group) }))
     const v = await client.wait(m => m.t === 'perm')
     expect(v).toEqual({ t: 'perm', request_id: 'abcde', behavior: 'allow' })
+  })
+
+  test('♾ always: later requests for the tool are allowed silently; /permissions lists waiting ones; reset in the card', async () => {
+    const asks = () => tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('🔐 proj: ')).length
+    client.sock.write(encode({ t: 'perm_req', request_id: 'bcdef', tool_name: 'Edit', description: 'edit a.ts', input_preview: '{}' }))
+    const msg = await tg.waitFor('sendMessage', c => c.body.text === '🔐 proj: Edit')
+    expect(JSON.stringify(msg.body.reply_markup)).toContain('perm:always:bcdef')
+
+    tg.push(textMessage({ text: '/permissions' }))
+    const list = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🔐 <b>Ждут разрешения</b> (1)'))
+    expect(String(list.body.text)).toContain('<b>Edit</b> — edit a.ts')
+    expect(JSON.stringify(list.body.reply_markup)).toContain('perm:allow:bcdef')
+
+    tg.push(callbackQuery('perm:always:bcdef', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'bcdef')).toMatchObject({ behavior: 'allow' })
+    const before = asks()
+    client.sock.write(encode({ t: 'perm_req', request_id: 'cdefg', tool_name: 'Edit', description: 'edit b.ts', input_preview: '{}' }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'cdefg')).toMatchObject({ behavior: 'allow' })
+    expect(asks()).toBe(before)
+
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes('♾ без вопросов: Edit'))
+    expect(JSON.stringify(card.body.reply_markup)).toContain(`sm:aar:${sessionId}`)
+    tg.push(callbackQuery(`sm:aar:${sessionId}`))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '🔐 Разрешения снова спрашиваются')
+    client.sock.write(encode({ t: 'perm_req', request_id: 'defgh', tool_name: 'Edit', description: 'edit c.ts', input_preview: '{}' }))
+    await tg.waitFor('sendMessage', () => asks() > before)
+    tg.push(callbackQuery('perm:deny:defgh', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'defgh')).toMatchObject({ behavior: 'deny' })
   })
 
   test('stop button without tmux only notes the stop for the next message', async () => {

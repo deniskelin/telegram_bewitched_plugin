@@ -29,6 +29,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
     return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.topic ? ` · 💬 ${escapeHtml(s.topic.name)}` : ''}`
   })
   const blocks = [`📋 <b>Сессии</b> (${list.length})`, lines.length ? `${lines.join('\n')}\n\nВыберите сессию:` : 'Нет запущенных сессий.']
+  if (d.permissions.size) blocks.push(`🔐 Ждут разрешения: ${d.permissions.size} — /permissions`)
   const passive = await passiveBlock(d)
   if (passive) blocks.push(passive)
   blocks.push(footer(d))
@@ -41,7 +42,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
     if (i % 2 === 0) rows.push([b])
     else rows.at(-1)!.push(b)
   }
-  rows.push([button('🔄 Обновить', 'sm:list')])
+  rows.push([...(d.permissions.size ? [button(`🔐 Разрешения (${d.permissions.size})`, 'sm:perms')] : []), button('🔄 Обновить', 'sm:list')])
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
@@ -59,6 +60,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) look.push(button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`))
   if (s.branch) look.push(button('🌿 Git', `sm:git:${s.id}`))
   if (look.length) rows.push(look)
+  if (s.alwaysAllow.size) rows.push([button('♾ Снова спрашивать разрешения', `sm:aar:${s.id}`)])
   if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button('🧠 Модель', `sm:mdl:${s.id}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
   if (link) rows.push([InlineKeyboard.url(`💬 Открыть топик «${s.topic!.name}»`.slice(0, 40), link)])
@@ -129,6 +131,11 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     await answer('Нет доступа.')
     return true
   }
+  if (action === 'perms') {
+    await answer()
+    await show(ctx, permissionsScreen(d))
+    return true
+  }
   if (action === 'list') {
     await show(ctx, await sessionsList(d))
     await answer()
@@ -174,6 +181,9 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
       return true
     }
     toast = r.toast
+  } else if (action === 'aar') {
+    s.alwaysAllow.clear()
+    toast = '🔐 Разрешения снова спрашиваются'
   } else if (action === 'stop') {
     toast = stopSession(d, s) === 'interrupted' ? '⏹ Остановлено' : 'Сейчас нечего останавливать.'
   } else if (action === 'main') {
@@ -227,4 +237,21 @@ export async function checkContext(d: Daemon, s: Session): Promise<void> {
     ...(target.threadId != null ? { message_thread_id: target.threadId } : {}),
     reply_markup: new InlineKeyboard([[button('🧹 /compact', `sm:cmpn:${s.id}`, 'primary')]]),
   }).catch(err => d.log(`context notice failed: ${err}`))
+}
+
+/** Every permission request still waiting, across sessions, with buttons to answer each. */
+export function permissionsScreen(d: Daemon): Screen {
+  const items = [...d.permissions.entries()]
+  const rows: Btn[][] = []
+  const lines = [`🔐 <b>Ждут разрешения</b> (${items.length})`]
+  for (const [rid, p] of items.slice(0, 15)) {
+    const s = d.sessions.get(p.sessionId)
+    const who = s ? sessionLabel(d, s) : `#${p.sessionId}`
+    const desc = p.description.length > 80 ? p.description.slice(0, 79) + '…' : p.description
+    lines.push(`• ${escapeHtml(who)} · <b>${escapeHtml(p.tool_name)}</b>${desc ? ` — ${escapeHtml(desc)}` : ''}`)
+    rows.push([button(`✅ ${p.tool_name} · ${who}`.slice(0, 40), `perm:allow:${rid}`, 'success'), button('❌', `perm:deny:${rid}`, 'danger')])
+  }
+  if (!items.length) lines.push('Ничего не ждёт.')
+  rows.push([button('« К сессиям', 'sm:list'), button('🔄', 'sm:perms')])
+  return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }
