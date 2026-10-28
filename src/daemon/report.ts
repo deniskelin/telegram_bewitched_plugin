@@ -62,7 +62,7 @@ export function sortedSessions(d: Daemon): Session[] {
 /** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
 export function sessionLabel(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
-  if (user) return `👤 ${d.store.lastSenderName(user) ?? user}`
+  if (user) return `👤 ${d.userName(user) ?? user}`
   return s === d.mainSession() ? '👑 Главная' : `📂 ${s.projectName}`
 }
 

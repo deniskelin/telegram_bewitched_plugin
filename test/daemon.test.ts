@@ -825,6 +825,51 @@ describe('paired users', () => {
   })
 })
 
+describe('invite', () => {
+  test('the owner picks a contact, confirms; the user is allowlisted, their session starts, an invitation is ready', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const launches: string[] = []
+    const ok = d.launchSession
+    d.launchSession = async (dir, o) => { launches.push(`${dir} ${o?.name}`); return '9' }
+    process.env.USER_SESSIONS = 'on'
+    try {
+      tg.push(textMessage({ text: '/invite' }))
+      const ask = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Кого пригласить?'))
+      const req = (ask.body.reply_markup as { keyboard: { request_users?: { request_id: number } }[][] }).keyboard[0][0].request_users!
+      expect(req).toMatchObject({ user_is_bot: false, max_quantity: 1, request_username: true })
+
+      tg.push({ message: { message_id: 90001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' }, chat: { id: 111, type: 'private', first_name: 'Den' },
+        users_shared: { request_id: req.request_id, users: [{ user_id: 555, first_name: 'Ann', username: 'ann' }] } } })
+      const confirm = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('👥 Пригласить <b>Ann</b>?'))
+      expect(String(confirm.body.text)).toContain('полный доступ')
+      expect(loadAccess().allowFrom).not.toContain('555')
+
+      tg.push(callbackQuery('inv:ok:555'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Ann добавлен'))
+      expect(loadAccess().allowFrom).toContain('555')
+      expect(launches).toEqual([`${process.env.USERS_DIR}/555 claude-ann`])
+      const inv = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))
+      expect(String(inv.body.text)).toContain('https://t.me/testbot?start=hello')
+      expect(String(inv.body.text)).toContain('https://t.me/+fakeInvite')
+      expect(tg.callsOf('createChatInviteLink').at(-1)!.body.member_limit).toBe(1)
+
+      // Only the first allowlisted user invites; a stale confirmation does nothing.
+      const before = tg.callsOf('sendMessage').length
+      tg.push(textMessage({ from: 555, text: '/invite' }))
+      tg.push(callbackQuery('inv:ok:555'))
+      await tg.waitFor('answerCallbackQuery', () => true)
+      await Bun.sleep(200)
+      expect(tg.callsOf('sendMessage').filter((c, i) => i >= before && String(c.body.text).startsWith('Кого пригласить')).length).toBe(0)
+    } finally {
+      d.launchSession = ok
+      process.env.USER_SESSIONS = 'off'
+      const a = loadAccess()
+      a.allowFrom = a.allowFrom.filter(x => x !== '555')
+      saveAccess(a)
+    }
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

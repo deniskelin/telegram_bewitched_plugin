@@ -306,7 +306,7 @@ export function ownerOf(d: Daemon, cwd: string): string {
   if (!cwd) return '❔ неизвестно'
   const rel = relative(settings.usersDir, cwd)
   const user = /^(\d+)(\/|$)/.exec(rel)?.[1]
-  if (user) return `👤 ${d.store.lastSenderName(user) ?? user}`
+  if (user) return `👤 ${d.userName(user) ?? user}`
   if (cwd === d.mainKey()) return `👑 ${basename(cwd) || cwd}`
   return `📂 ${basename(cwd) || cwd}`
 }

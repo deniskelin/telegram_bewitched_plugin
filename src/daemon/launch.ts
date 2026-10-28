@@ -65,7 +65,7 @@ export function launchCommand(o: LaunchOptions = {}): string {
  */
 export function sessionName(d: Daemon, dir: string): string | undefined {
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
-  if (user) return `claude-${slugify(d.store.lastSenderName(user) ?? '') || user}`
+  if (user) return `claude-${slugify(d.userName(user) ?? '') || user}`
   if (dir === d.mainKey()) return undefined
   const chat = d.topicsChatId
   const topic = chat ? d.store.topicForProject(chat, dir) : null

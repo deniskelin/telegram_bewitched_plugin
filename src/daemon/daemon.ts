@@ -148,6 +148,11 @@ export class Daemon {
     return m ? m[1] : null
   }
 
+  /** How to call a user: their last Telegram name, else the one saved when they were invited. */
+  userName(userId: string): string | null {
+    return this.store.lastSenderName(userId) ?? this.store.get(`user_name:${userId}`)
+  }
+
   userSession(userId: string): Session | null {
     const list = this.activeSessions().filter(s => this.userIdOf(s) === userId)
     list.sort((a, b) => b.connectedAt - a.connectedAt)
