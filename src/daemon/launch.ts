@@ -118,6 +118,11 @@ export async function tmuxType(target: string, text: string): Promise<void> {
   await run(['send-keys', '-t', target, 'Enter'])
 }
 
+/** Close a tmux window (by pane id or session:window); the processes in it end. */
+export async function tmuxKillWindow(target: string): Promise<void> {
+  await run(['kill-window', '-t', target])
+}
+
 /** Press keys in a pane or window (tmux key names, e.g. Enter, Escape, 1). */
 export async function tmuxKeys(target: string, keys: string[]): Promise<void> {
   for (const k of keys) await run(['send-keys', '-t', target, k])

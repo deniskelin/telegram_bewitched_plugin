@@ -24,6 +24,7 @@ import { handleScreenCallback } from './screen.ts'
 import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
 import { handleReportCallback, registerReportCommands } from './reports.ts'
 import { handleInviteCallback, registerInviteCommands } from './invite.ts'
+import { handleUserCallback, registerUserCommands } from './users.ts'
 import { handleTopicMenu } from './topicmenu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
@@ -386,6 +387,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   registerReminderCommands(d, bot)
   registerReportCommands(d, bot)
   registerInviteCommands(d, bot)
+  registerUserCommands(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -427,7 +429,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
       '/remember — сохранить память чата, /forget — стереть историю',
       '',
-      'Только в личке: /invite — пригласить пользователя, /usage — лимиты подписки и расход, /digest — итоги дня, /reports — отчёты за день/неделю/месяц с графиком, /connect_group, /group, /disconnect_group, /status',
+      'Только в личке: /invite — пригласить пользователя, /users — пользователи и удаление доступа, /usage — лимиты подписки и расход, /digest — итоги дня, /reports — отчёты за день/неделю/месяц с графиком, /connect_group, /group, /disconnect_group, /status',
     ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
@@ -474,6 +476,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleReminderCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
+    if (await handleUserCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return

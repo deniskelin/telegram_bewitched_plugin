@@ -124,6 +124,7 @@ void d.startPolling(bot => {
     { command: 'new_session', description: 'Новый проект и сессия в tmux' },
     { command: 'reminders', description: 'Напоминания' },
     { command: 'invite', description: 'Пригласить пользователя' },
+    { command: 'users', description: 'Пользователи и удаление доступа' },
     { command: 'usage', description: 'Лимиты подписки и расход' },
     { command: 'digest', description: 'Итоги дня' },
     { command: 'reports', description: 'Отчёты о потреблении с графиком' },

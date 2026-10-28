@@ -5,7 +5,7 @@
  */
 
 import { InlineKeyboard, InputFile, type Context } from 'grammy'
-import { isOwner, NOTIFY_DONE_INFO, prefsFor, setPref, verboseBadge } from '../access.ts'
+import { isOwner, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
@@ -56,6 +56,8 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s !== d.mainSession() && !d.userIdOf(s)) actions.push(button('👑 Сделать главной', `sm:main:${s.id}`))
   if (s.topic) actions.push(button('🗄 В архив', `sm:ar:${s.id}`))
   if (actions.length) rows.push(actions)
+  const user = d.userIdOf(s)
+  if (user && user !== owner()) rows.push([button('🚫 Удалить пользователя', `ur:ask:${user}`, 'danger')])
   const look: Btn[] = []
   if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) look.push(button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`))
   if (s.branch) look.push(button('🌿 Git', `sm:git:${s.id}`))
