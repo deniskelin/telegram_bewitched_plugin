@@ -12,6 +12,7 @@ import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
 import { DAEMON_LOG, PLUGIN_ROOT, httpToken, settings } from '../src/config.ts'
 import { daemonPid, ensureDaemon } from '../src/spawn.ts'
+import { isAlive } from '../src/proc.ts'
 
 const [cmd, sub, ...rest] = process.argv.slice(2)
 
@@ -30,8 +31,9 @@ async function stop(): Promise<void> {
   const pid = daemonPid()
   if (!pid) return void console.log('daemon is not running')
   process.kill(pid, 'SIGTERM')
-  for (let i = 0; i < 30 && daemonPid(); i++) await new Promise(r => setTimeout(r, 100))
-  console.log(daemonPid() ? `daemon ${pid} did not stop` : `stopped daemon ${pid}`)
+  // Wait for the process itself, not just the pid file — it still holds the HTTP port until exit.
+  for (let i = 0; i < 50 && isAlive(pid); i++) await new Promise(r => setTimeout(r, 100))
+  console.log(isAlive(pid) ? `daemon ${pid} did not stop` : `stopped daemon ${pid}`)
 }
 
 function usage(): never {

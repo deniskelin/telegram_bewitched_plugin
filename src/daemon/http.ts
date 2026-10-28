@@ -82,6 +82,20 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string): vo
 export function startHttp(d: Daemon): void {
   const token = httpToken()
   const json = (status: number, body: unknown) => new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  // On restart the previous daemon may still hold the port for a moment.
+  for (let attempt = 1; ; attempt++) {
+    try {
+      serve(d, token, json)
+      return
+    } catch (err) {
+      if (attempt >= 30) throw err
+      d.log(`http port ${settings.httpPort} busy, retrying (${attempt})`)
+      Bun.sleepSync(500)
+    }
+  }
+}
+
+function serve(d: Daemon, token: string, json: (status: number, body: unknown) => Response): void {
   Bun.serve({
     hostname: '127.0.0.1',
     port: settings.httpPort,
