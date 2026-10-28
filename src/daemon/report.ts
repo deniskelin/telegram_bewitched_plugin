@@ -3,13 +3,14 @@
  * topic, tmux target to attach from a terminal, stop availability, timing.
  */
 
+import { basename } from 'path'
 import { settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
-import { transcriptInfo } from './transcript.ts'
+import { guessTranscript, transcriptInfo } from './transcript.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 const MAX_MESSAGE = 4000
@@ -57,56 +58,73 @@ export function sortedSessions(d: Daemon): Session[] {
   return d.activeSessions().sort((a, b) => Number(b === main) - Number(a === main) || a.projectName.localeCompare(b.projectName))
 }
 
+/**
+ * The transcript: from hooks once the session did anything, before that from
+ * its own --resume <id> / --continue (right after a daemon restart).
+ */
+function transcriptOf(s: Session, argv: string[]): string | null {
+  return s.claude.transcript ?? guessTranscript(argv, s.cwd)
+}
+
+/**
+ * One card per session, in three layers: a header (name, status, branch and
+ * topic), the essentials in a quote (how to attach, mode/stop/RC, model and
+ * context, current action) and the rest in a collapsed quote.
+ */
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
-  const tr = s.claude.transcript ? await transcriptInfo(s.claude.transcript) : null
-  const lines = [
-    `${isMain ? '👑 <b>Главная</b>' : `📂 <b>${escapeHtml(s.projectName)}</b>`} · ${statusLabel(s)}`,
-    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${isMain ? 'главная' : 'проектная'}`,
-    `📁 <code>${escapeHtml(s.cwd)}</code>`,
-  ]
-  if (s.branch) lines.push(`🌿 <code>${escapeHtml(s.branch)}</code>`)
-  if (tr?.title) lines.push(`🏷 имя: <b>${escapeHtml(tr.title)}</b>`)
+  const argv = s.claudePid ? cmdlineOf(s.claudePid) : []
+  const transcript = transcriptOf(s, argv)
+  const tr = transcript ? await transcriptInfo(transcript) : null
+  const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
+
+  const status = s.turn ? `${statusLabel(s)} ${fmtDuration(now - s.turn.start)}` : statusLabel(s)
+  const head = [`${isMain ? '👑 <b>Главная</b>' : `📂 <b>${escapeHtml(s.projectName)}</b>`}${tr?.title ? ` «${escapeHtml(tr.title)}»` : ''} · ${status}`]
+  const where: string[] = []
+  if (s.branch) where.push(`🌿 ${escapeHtml(s.branch)}`)
   if (s.topic) {
     const link = topicLink(s.topic.chatId, s.topic.threadId)
     const name = escapeHtml(s.topic.name)
-    lines.push(`💬 топик: ${link ? `<a href="${link}">${name}</a>` : name}`)
-  } else if (isMain) lines.push('💬 личка и General')
+    where.push(`💬 ${link ? `<a href="${link}">${name}</a>` : name}`)
+  } else if (isMain) where.push('💬 личка и General')
+  if (where.length) head.push(where.join(' · '))
 
-  const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
-  if (loc) {
-    lines.push(
-      `🖥 tmux: <b>${escapeHtml(loc.session)}</b> · окно ${escapeHtml(loc.window)} «${escapeHtml(loc.windowName)}» · панель ${escapeHtml(loc.pane)}`,
-      `    <code>tmux attach -t ${escapeHtml(shellArg(`${loc.session}:${loc.window}`))}</code>`,
-    )
-  } else lines.push(s.tmuxPane ? `🖥 tmux: панель ${escapeHtml(s.tmuxPane)} не найдена` : '🖥 не в tmux')
+  const main: string[] = []
+  if (loc) main.push(`🖥 <code>tmux attach -t ${escapeHtml(shellArg(`${loc.session}:${loc.window}`))}</code>`)
+  else main.push(s.tmuxPane ? `🖥 панель ${escapeHtml(s.tmuxPane)} не найдена` : '🖥 не в tmux')
 
-  const rc = remoteControl(s.claudePid ? cmdlineOf(s.claudePid) : [], s.cwd, loc?.tail ?? null, tr?.remoteUrl)
-  const rcVia = { transcript: '', flag: ' (флаг запуска)', settings: ' (автоподключение в настройках)', pane: ' (/rc active в терминале)' }
-  if (rc.url) lines.push(`📱 Remote Control: вкл · <a href="${escapeHtml(rc.url)}">${escapeHtml(rc.url.replace(/^https:\/\//, ''))}</a>`)
-  else lines.push(rc.on ? `📱 Remote Control: вкл${rcVia[rc.via!]}` : '📱 Remote Control: выкл')
-
+  const flags: string[] = []
   const perm = permissionMode(loc?.tail ?? null, s.claude.permissionMode)
-  if (perm) lines.push(`🛡 Разрешения: ${escapeHtml(perm)}`)
+  if (perm) flags.push(`🛡 ${escapeHtml(perm)}`)
+  flags.push(settings.stopMode !== 'off' && s.tmuxPane && settings.stopMode === 'interrupt' ? '⏹ стоп' : '⏹ без стопа')
+  const rc = remoteControl(argv, s.cwd, loc?.tail ?? null, tr ? tr.remoteUrl : undefined)
+  if (rc.url) flags.push(`📱 <a href="${escapeHtml(rc.url)}">RC вкл</a>`)
+  else if (rc.on) flags.push('📱 RC вкл')
+  else flags.push(tr ? '📱 RC выкл' : '📱 RC ?')
+  main.push(flags.join(' · '))
 
-  if (settings.stopMode === 'off') lines.push('⏹ Стоп: выключен (STOP_MODE=off)')
-  else if (s.tmuxPane && settings.stopMode === 'interrupt') lines.push('⏹ Стоп: доступен')
-  else lines.push('⏹ Стоп: только пометка для модели')
-
-  const ctx = tr?.model && tr.tokens != null ? { model: tr.model, tokens: tr.tokens } : null
-  if (ctx) {
+  if (tr?.model && tr.tokens != null) {
     // Over the configured window means the real one is bigger: show the size only.
     const win = settings.contextWindow
-    const fill = ctx.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((ctx.tokens / win) * 100)}%)` : ''
-    lines.push(`🧠 <code>${escapeHtml(ctx.model)}</code> · контекст ${fmtTokens(ctx.tokens)}${fill}`)
+    const fill = tr.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((tr.tokens / win) * 100)}%)` : ''
+    main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
   }
-  const tool = s.lastTool ? escapeHtml(s.lastTool.text.slice(0, 120)) : ''
-  if (s.turn) lines.push(`⏳ ход идёт ${fmtDuration(now - s.turn.start)}${s.lastTool && s.lastTool.at >= s.turn.start ? ` · сейчас: ${tool}` : ''}`)
-  else if (s.lastTool) lines.push(`🔧 последнее действие: ${tool}, ${fmtDuration(now - s.lastTool.at)} назад`)
-  if (s.claude.sessionId) lines.push(`🧾 <code>claude --resume ${escapeHtml(s.claude.sessionId)}</code>`)
-  lines.push(`⏱ запущена ${fmtDuration(now - s.connectedAt)} назад · активность ${fmtDuration(now - s.lastActivity)} назад`)
-  return lines.join('\n')
+  if (s.lastTool) {
+    const tool = escapeHtml(s.lastTool.text.slice(0, 80))
+    main.push(s.turn && s.lastTool.at >= s.turn.start ? `🔧 ${tool}` : `🔧 ${tool} · ${fmtDuration(now - s.lastTool.at)} назад`)
+  }
+
+  const more = [
+    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${isMain ? 'главная' : 'проектная'}`,
+    `📁 <code>${escapeHtml(s.cwd)}</code>`,
+  ]
+  if (loc) more.push(`🖥 сессия ${escapeHtml(loc.session)} · окно ${escapeHtml(loc.window)} «${escapeHtml(loc.windowName)}» · панель ${escapeHtml(loc.pane)}`)
+  const sessionId = s.claude.sessionId ?? (transcript ? basename(transcript, '.jsonl') : null)
+  if (sessionId) more.push(`🧾 <code>claude --resume ${escapeHtml(sessionId)}</code>`)
+  more.push(`⏱ запущена ${fmtDuration(now - s.connectedAt)} назад · активность ${fmtDuration(now - s.lastActivity)} назад`)
+
+  return `${head.join('\n')}\n<blockquote>${main.join('\n')}</blockquote>\n<blockquote expandable>${more.join('\n')}</blockquote>`
 }
 
 /**

@@ -438,14 +438,15 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const list = sortedSessions(d)
     const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
     const main = d.mainSession()
+    // One row per session: its name first, then the actions in a fixed order.
     for (const s of list) {
-      const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = []
+      const name = (s === main ? '👑 Главная' : `📂 ${s.projectName}`).slice(0, 32)
       const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-      if (link) row.push(InlineKeyboard.url(`📂 ${s.projectName}`.slice(0, 40), link))
-      if (s.topic) row.push(button('🗄 Архив', `ses:ar:${s.id}`))
-      if (s !== main) row.push(button(`👑 #${s.id} главной`, `ses:dm:${s.id}`))
-      if (s.tmuxPane && s.status === 'working') row.push(button(`⏹ #${s.id}`, `stop:${s.id}`, 'danger'))
-      if (row.length) kb.push(row)
+      const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = [link ? InlineKeyboard.url(name, link) : button(name, `ses:info:${s.id}`)]
+      if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
+      if (s !== main) row.push(button('👑', `ses:dm:${s.id}`))
+      if (s.topic) row.push(button('🗄', `ses:ar:${s.id}`))
+      kb.push(row)
     }
     await replyReport(ctx, await sessionsReport(d), kb.length ? new InlineKeyboard(kb as never) : undefined)
   })
@@ -690,7 +691,10 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
   const edit = (text: string) => ctx.editMessageText(text).catch(() => {})
 
   try {
-    if (ns === 'ses' && action === 'dm') {
+    if (ns === 'ses' && action === 'info') {
+      const s = d.sessions.get(arg)
+      await answer(s ? `#${s.id} · ${s.cwd}` : 'Сессия уже отключена.')
+    } else if (ns === 'ses' && action === 'dm') {
       const s = d.sessions.get(arg)
       if (!s) { await answer('Сессия уже отключена.'); return true }
       d.store.set('main_dir', s.projectKey)
