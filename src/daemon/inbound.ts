@@ -19,6 +19,7 @@ import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
 import { usageReport } from './usage.ts'
+import { handleSessionMenu } from './menu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -411,6 +412,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
+    if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

@@ -67,10 +67,15 @@ export function sessionLabel(d: Daemon, s: Session): string {
   return s === d.mainSession() ? '👑 Главная' : `📂 ${s.projectName}`
 }
 
-/** Progress and "done" settings of the chat the session answers in: its topic, its user's DMs or the owner's. */
+/** The chat the session answers in: its topic, its user's DMs or the owner's. Its prefs apply there. */
+export function sessionChat(d: Daemon, s: Session): { chatId: string; threadId?: number } {
+  if (s.topic) return { chatId: s.topic.chatId, threadId: s.topic.threadId }
+  return { chatId: d.userIdOf(s) ?? owner() ?? '' }
+}
+
 function sessionPrefs(d: Daemon, s: Session) {
-  if (s.topic) return prefsFor(s.topic.chatId, s.topic.threadId)
-  return prefsFor(d.userIdOf(s) ?? owner() ?? '')
+  const c = sessionChat(d, s)
+  return prefsFor(c.chatId, c.threadId)
 }
 
 /**
@@ -152,7 +157,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
  * started without the channels flag — the usual reason "my session is not
  * in /sessions". For the latter, show how to restart it with the channel.
  */
-async function passiveBlock(d: Daemon): Promise<string | null> {
+export async function passiveBlock(d: Daemon): Promise<string | null> {
   const list = [...d.sessions.values()].filter(s => s.passive)
   if (!list.length) return null
   const items: string[] = []
@@ -173,19 +178,8 @@ async function passiveBlock(d: Daemon): Promise<string | null> {
 }
 
 /** Footer shared by both reports. */
-function footer(d: Daemon): string {
+export function footer(d: Daemon): string {
   return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() ? '' : ' · главная не запущена'}`
-}
-
-export async function sessionsReport(d: Daemon): Promise<string[]> {
-  const list = sortedSessions(d)
-  const blocks = [`📋 <b>Сессии</b> (${list.length})`]
-  for (const s of list) blocks.push(await sessionCard(d, s))
-  if (!list.length) blocks.push('Нет запущенных сессий.')
-  const passive = await passiveBlock(d)
-  if (passive) blocks.push(passive)
-  blocks.push(footer(d))
-  return pack(blocks)
 }
 
 export async function topicsReport(d: Daemon, chatId: string): Promise<string[]> {

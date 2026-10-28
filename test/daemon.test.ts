@@ -17,6 +17,7 @@ const { registerLaunchCommands } = await import('../src/daemon/launch.ts')
 const { startHttp } = await import('../src/daemon/http.ts')
 const { LineDecoder, encode } = await import('../src/ipc.ts')
 const { SOCK_FILE, httpToken, settings } = await import('../src/config.ts')
+const { prefsFor, setPref } = await import('../src/access.ts')
 
 type Inbound = { t: 'inbound'; content: string; meta: Record<string, string> }
 
@@ -390,6 +391,47 @@ describe('topics', () => {
     p.close()
   })
 
+  test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
+    tg.push(textMessage({ text: '/sessions' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))
+    expect(String(r.body.text)).toContain('📂 <b>proj</b> · ')
+    const kb = JSON.stringify(r.body.reply_markup)
+    expect(kb).toContain(`sm:s:${sessionId}`)
+    expect(kb).toContain('sm:list')
+
+    const s = d.sessions.get(sessionId)!
+    const key = `${s.topic!.chatId}:${s.topic!.threadId}`
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && String(c.body.text).includes('в топике'))
+    expect(String(card.body.text)).toContain('📂 <b>proj</b>')
+    const ckb = JSON.stringify(card.body.reply_markup)
+    expect(ckb).toContain(`sm:v:${sessionId}:2`)
+    expect(ckb).toContain(`sm:n:${sessionId}:always`)
+    expect(ckb).toContain(`sm:ar:${sessionId}`)
+    expect(ckb).toContain('• 🔔1')
+
+    tg.push(callbackQuery(`sm:v:${sessionId}:2`))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('• 📢2'))
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).verbose).toBe(2)
+    tg.push(callbackQuery(`sm:n:${sessionId}:always`))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('• ✅ всегда'))
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).notifyDone).toBe('always')
+    setPref(key, { verbose: 1, notifyDone: 'long' })
+
+    tg.push(callbackQuery(`sm:ar:${sessionId}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Архивировать «proj»'))
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && JSON.stringify(c.body.reply_markup ?? '').includes('sm:list'))
+    tg.push(callbackQuery('sm:list'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Выберите сессию'))
+    expect(d.store.topic(s.topic!.chatId, s.topic!.threadId)?.status).toBe('active')
+
+    // Someone else can't use the menu.
+    tg.push(callbackQuery(`sm:v:${sessionId}:0`, { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).verbose).toBe(1)
+  })
+
   test('notify over HTTP reaches a topic by name; bad token is rejected', async () => {
     const url = `http://127.0.0.1:${settings.httpPort}/notify`
     const bad = await fetch(url, { method: 'POST', headers: { authorization: 'Bearer nope' }, body: '{}' })
@@ -486,9 +528,9 @@ describe('archive and restore', () => {
     const sess = [...d.sessions.values()].find(x => x.projectKey === dir)!
     const thread = sess.topic!.threadId
 
-    tg.push(callbackQuery(`ses:ar:${sess.id}`, { chat: Number(group) }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Архивировать «arch»'))
-    tg.push(callbackQuery(`ses:arok:${sess.id}`, { chat: Number(group) }))
+    tg.push(callbackQuery(`sm:ar:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Архивировать «arch»'))
+    tg.push(callbackQuery(`sm:arok:${sess.id}`, { chat: Number(group) }))
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('archived')
     expect(d.store.topic(group, thread)?.name).toBe('🗄 arch')

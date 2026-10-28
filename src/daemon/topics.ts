@@ -16,7 +16,8 @@ import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
-import { sessionLabel, sessionsReport, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { sessionsList } from './menu.ts'
+import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -456,20 +457,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
-    const list = sortedSessions(d)
-    const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
-    const main = d.mainSession()
-    // One row per session: its name first, then the actions in a fixed order.
-    for (const s of list) {
-      const name = sessionLabel(d, s).slice(0, 32)
-      const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-      const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = [link ? InlineKeyboard.url(name, link) : button(name, `ses:info:${s.id}`)]
-      if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
-      if (s !== main) row.push(button('👑', `ses:dm:${s.id}`))
-      if (s.topic) row.push(button('🗄', `ses:ar:${s.id}`))
-      kb.push(row)
-    }
-    await replyReport(ctx, await sessionsReport(d), kb.length ? new InlineKeyboard(kb as never) : undefined)
+    const { text, kb } = await sessionsList(d)
+    await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
   })
 
   bot.command('topics', async ctx => {
