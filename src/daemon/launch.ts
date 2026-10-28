@@ -185,18 +185,22 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }
 
-/** Close user sessions idle for USER_IDLE_MIN; the next DM starts them again with --continue. */
+/**
+ * Close idle sessions: user sessions after USER_IDLE_MIN, project sessions
+ * after PROJECT_IDLE_MIN (0 = never, the default). The next DM or topic
+ * message starts them again; the main session is never closed.
+ */
 export function startIdleCloser(d: Daemon): void {
   const closing = new WeakSet<Session>()
   setInterval(() => {
-    const min = settings.userIdleMin
-    if (min <= 0) return
     for (const s of d.activeSessions()) {
-      if (d.roleOf(s) !== 'user' || s.turn || s.status !== 'idle' || closing.has(s)) continue
+      const role = d.roleOf(s)
+      const min = role === 'user' ? settings.userIdleMin : role === 'project' ? settings.projectIdleMin : 0
+      if (min <= 0 || s.turn || s.status !== 'idle' || closing.has(s)) continue
       if (Date.now() - s.lastActivity < min * 60_000) continue
       if (endSession(d, s)) {
         closing.add(s)
-        d.log(`user session ${s.id} idle ${min} min, closing`)
+        d.log(`${role} session ${s.id} idle ${min} min, closing`)
       }
     }
   }, 60_000).unref?.()
