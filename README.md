@@ -120,7 +120,7 @@ cd ~ && claude --dangerously-load-development-channels plugin:telegram-bewitched
 | `TOPIC_PROJECTS` | `auto` | Топик, созданный владельцем, → проект и сессия: `auto`, `ask` (кнопка), `off` |
 | `PROJECTS_DIR` | `~/projects` | Где создавать папки проектов |
 | `MAIN_DIR` | `~` | Папка главной сессии (личка, General, топики без сессии) |
-| `CONTEXT_WINDOW` | `200000` | Размер окна контекста для процента заполнения в карточках сессий |
+| `CONTEXT_WINDOW` | `1000000` | Размер окна контекста для процента заполнения в карточках сессий |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии |
 

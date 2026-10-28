@@ -305,7 +305,7 @@ describe('topics', () => {
     expect(text).toContain('📱 Remote Control: выкл')
     expect(text).toContain('🌿 <code>feat</code>')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
-    expect(text).toContain('🧠 <code>claude-opus-5-5</code> · контекст 90k из 200k (45%)')
+    expect(text).toContain('🧠 <code>claude-opus-5-5</code> · контекст 90k из 1M (9%)')
     expect(text).toContain('⏳ ход идёт')
     expect(text).toContain('List files')
     expect(text).toContain('🛡 Разрешения: plan')

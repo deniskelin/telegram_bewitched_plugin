@@ -42,6 +42,7 @@ export function permissionMode(paneTail: string | null, fromHook: string | null)
 }
 
 function fmtTokens(n: number): string {
+  if (n >= 1_000_000 && n % 1_000_000 === 0) return `${n / 1_000_000}M`
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
 }
 
