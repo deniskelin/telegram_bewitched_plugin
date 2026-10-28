@@ -532,6 +532,22 @@ describe('topics', () => {
         '✅ Лимит «5 часов» восстановился: 4% ▱▱▱▱▱▱▱▱▱▱',
       ])
       expect(renderDashboard(d)).toContain('📊 5 часов 3%')
+
+      // On the minute: a window over a threshold gets a "tokens are back" at its reset (here: already due).
+      const { scheduleResetNotice, usageKeyboard } = await import('../src/daemon/usage.ts')
+      scheduleResetNotice(d, 'Тест', new Date(Date.now() - 29_900))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест» сброшен'))
+      expect(JSON.parse(d.store.get('limit:Тест')!)).toMatchObject({ level: 0, notified: true })
+
+      // /usage offers 🔔 per limit; pressing it remembers the request.
+      const kb = JSON.stringify(usageKeyboard(d))
+      expect(kb).toContain('🔔 Напомнить о сбросе: 5 часов')
+      tg.push(callbackQuery('lr:0'))
+      await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔔 Напомню'))
+      expect(d.store.get('limit_notify:5 часов')).toBeTruthy()
+      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Напомнить о сбросе: 5 часов')
+      tg.push(callbackQuery('lr:0', { from: 222 }))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Только для владельца подписки.')
     } finally {
       api.stop()
       delete process.env.USAGE_API_URL
