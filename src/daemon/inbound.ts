@@ -16,6 +16,7 @@ import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
+import { handleLaunchCallback } from './launch.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -318,6 +319,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       '/broadcast <текст> — во все сессии',
       '/rename <топик> | <имя>, /archive <топик>, /delete <топик>',
       '/use <id> — какая сессия получает личку',
+      '/new_session <имя|путь> — новый проект и сессия в tmux',
+      'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
       '',
       'В любом чате/топике:',
       '/verbose 0|1|2 — подробность прогресса',
@@ -354,6 +357,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('perm:')) return handlePermissionCallback(d, ctx, data)
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
+    if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

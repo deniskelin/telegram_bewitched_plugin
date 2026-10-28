@@ -33,7 +33,8 @@ test('server.ts starts the daemon and proxies tool calls', async () => {
   expect(tools.map(t => t.name)).toContain('ask_user')
   expect(tools.map(t => t.name)).toContain('notify')
 
-  // The test runner is not a `claude` process → the session is passive and its tools are refused.
+  // Passive when the test runs outside a channel-enabled Claude session (tools refused),
+  // active when run from inside one (no topics group in the temp state).
   let result: Awaited<ReturnType<Client['callTool']>> | null = null
   for (let i = 0; i < 50; i++) {
     result = await client.callTool({ name: 'list_topics', arguments: {} })
@@ -42,6 +43,6 @@ test('server.ts starts the daemon and proxies tool calls', async () => {
     await Bun.sleep(200)
   }
   const text = (result!.content as { text: string }[])[0].text
-  expect(text).toContain('not registered as a channel')
+  expect(text).toMatch(/not registered as a channel|no topics group connected/)
   expect(readFileSync(join(stateDir, 'daemon.pid'), 'utf8')).toMatch(/^\d+$/)
 }, 30_000)

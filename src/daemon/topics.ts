@@ -15,6 +15,7 @@ import { fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button } from './stream.ts'
+import { onManualTopic } from './launch.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -566,6 +567,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
         chat_id: chat, thread_id: ctx.message.message_thread_id, name: ctx.message.forum_topic_created.name,
         kind: 'manual', project_key: null, status: 'active', created_at: Date.now(), last_activity_at: Date.now(),
       })
+      if (ctx.from && isOwner(ctx.from.id)) void onManualTopic(d, chat, ctx.message.message_thread_id, ctx.message.forum_topic_created.name)
     }
     return next()
   })

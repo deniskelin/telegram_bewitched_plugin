@@ -11,6 +11,7 @@ const { Daemon } = await import('../src/daemon/daemon.ts')
 const { registerInbound, handlePermissionRequest } = await import('../src/daemon/inbound.ts')
 const { registerTopicCommands, onSessionRegistered, onSessionGone, scheduleDashboard, connectGroup } = await import('../src/daemon/topics.ts')
 const { handleCall } = await import('../src/daemon/tools.ts')
+const { registerLaunchCommands } = await import('../src/daemon/launch.ts')
 const { startHttp } = await import('../src/daemon/http.ts')
 const { LineDecoder, encode } = await import('../src/ipc.ts')
 const { SOCK_FILE, httpToken, settings } = await import('../src/config.ts')
@@ -69,6 +70,8 @@ d.onSessionGone = s => onSessionGone(d, s)
 d.onSessionsChanged = () => scheduleDashboard(d)
 d.handleCall = (s, n, a) => handleCall(d, s, n, a)
 d.handlePermissionRequest = (s, p) => handlePermissionRequest(d, s, p)
+const launched: string[] = []
+d.launchSession = async dir => { launched.push(dir); return '3' }
 
 const client = new FakeClient()
 let sessionId = ''
@@ -78,6 +81,7 @@ beforeAll(async () => {
   startHttp(d)
   void d.startPolling(bot => {
     registerTopicCommands(d, bot)
+    registerLaunchCommands(d, bot)
     registerInbound(d, bot, '123:TEST')
   })
   await tg.waitFor('getMe')
@@ -251,5 +255,47 @@ describe('topics', () => {
     tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
     await tg.waitFor('answerCallbackQuery', c => String(c.body.text).includes('tmux'))
     expect(d.sessions.get(sessionId)!.notes.length).toBe(1)
+  })
+})
+
+describe('projects from topics', () => {
+  test('a topic created by the owner becomes a project dir and launches a session', async () => {
+    const group = '-100500'
+    tg.push({
+      message: {
+        message_id: 7777, date: Math.floor(Date.now() / 1000), message_thread_id: 77, is_topic_message: true,
+        from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_created: { name: 'Мой Проект!', icon_color: 7322096 },
+      },
+    })
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('запускаю Claude в tmux'))
+    expect(notice.body.message_thread_id).toBe(77)
+    const dir = `${process.env.PROJECTS_DIR}/Мой-Проект`
+    expect(launched).toContain(dir)
+    expect(d.store.topic(group, 77)?.project_key).toBe(dir)
+
+    // The session that starts in that dir binds to the existing topic instead of creating one.
+    const before = tg.callsOf('createForumTopic').length
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 77 })
+    await Bun.sleep(100)
+    expect(tg.callsOf('createForumTopic').length).toBe(before)
+    expect([...d.sessions.values()].find(x => x.projectKey === dir)?.topic?.threadId).toBe(77)
+    s.close()
+  })
+
+  test('topics from other members are ignored', async () => {
+    const n = launched.length
+    tg.push({
+      message: {
+        message_id: 7778, date: 0, message_thread_id: 78, is_topic_message: true,
+        from: { id: 222, is_bot: false, first_name: 'X' },
+        chat: { id: -100500, type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_created: { name: 'чужой', icon_color: 7322096 },
+      },
+    })
+    await Bun.sleep(300)
+    expect(launched.length).toBe(n)
   })
 })
