@@ -13,7 +13,7 @@ import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
-import type { ChatRef, Daemon, Session } from './daemon.ts'
+import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, onManualTopic, startProject } from './launch.ts'
 
@@ -44,7 +44,8 @@ function topicName(d: Daemon, chatId: string, s: Session): string {
 /** Find or create the session's topic in the topics group. */
 export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic']> {
   const chatId = d.topicsChatId
-  if (!chatId || s.passive || settings.topicMode === 'off') return (s.topic = null)
+  // The main session lives in DMs and General, not in a topic of its own.
+  if (!chatId || s.passive || settings.topicMode === 'off' || d.isMain(s)) return (s.topic = null)
   const { key, kind } = topicKey(s)
   let row = d.store.topicForProject(chatId, key)
   if (row && row.status === 'archived') {
@@ -161,10 +162,15 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
         `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n'))
     }
   }
-  const pending = d.store.takePending(topicKey(s).key, settings.pendingTtlH)
+  const all = d.store.takePending(d.isMain(s) ? MAIN_PENDING_KEY : topicKey(s).key, settings.pendingTtlH)
+  const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}: ${p.content}`
+  const handled = all.filter(p => p.meta.handled_by === 'main')
+  const pending = all.filter(p => p.meta.handled_by !== 'main')
+  if (handled.length) {
+    parts.push(`Пока сессия была offline, на эти сообщения уже ответила главная сессия (для контекста, повторно не отвечай):\n` + handled.map(line).join('\n'))
+  }
   if (pending.length) {
-    parts.push(`Пока сессия была offline, пришло сообщений: ${pending.length}. Ответь на них:\n` + pending.map(p =>
-      `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}: ${p.content}`).join('\n'))
+    parts.push(`Пока сессия была offline, пришло сообщений: ${pending.length}. Ответь на них:\n` + pending.map(line).join('\n'))
   }
   if (parts.length && chat) {
     d.deliver(s, parts.join('\n\n'), {
@@ -426,14 +432,14 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!list.length) return void ctx.reply('Нет запущенных сессий.')
     const lines: string[] = []
     const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
-    const dm = d.dmSession()
+    const main = d.mainSession()
     for (const s of list) {
-      lines.push(`${statusLabel(s)} #${s.id} · ${s.projectName}${s.branch ? ` (${s.branch})` : ''}${s === dm ? ' · 📥 личка' : ''}\n   ${s.cwd}`)
+      lines.push(`${statusLabel(s)} #${s.id} · ${s.projectName}${s.branch ? ` (${s.branch})` : ''}${s === main ? ' · 👑 главная' : ''}\n   ${s.cwd}`)
       const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = []
       const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
       if (link) row.push(InlineKeyboard.url(`📂 ${s.projectName}`.slice(0, 40), link))
       if (s.topic) row.push(button('🗄 Архив', `ses:ar:${s.id}`))
-      if (s !== dm) row.push(button('📥 В личку', `ses:dm:${s.id}`))
+      if (s !== main) row.push(button('👑 Главная', `ses:dm:${s.id}`))
       if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
       if (row.length) kb.push(row)
     }
@@ -458,11 +464,13 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!t) return void ctx.reply(`Топик «${parsed[0]}» не найден. /topics — список.`)
     const s = d.sessionForThread(chat, t.thread_id)
     const meta = { chat_id: chat, thread_id: String(t.thread_id), user: safeMeta(ctx.from!.username ?? String(ctx.from!.id)) ?? '', user_id: String(ctx.from!.id), ts: new Date().toISOString(), event: 'control_send' }
-    if (!s) {
+    const main = s ? null : d.mainSession()
+    if (!s && !main) {
       if (t.project_key) d.store.addPending(t.project_key, parsed[1], meta)
       return void ctx.reply('💤 Сессия не запущена — сообщение доставлю при запуске.')
     }
-    d.deliver(s, parsed[1], meta, { chatId: chat, threadId: t.thread_id, isPrivate: false })
+    if (main && t.project_key) d.store.addPending(t.project_key, parsed[1], { ...meta, handled_by: 'main' })
+    d.deliver((s ?? main)!, parsed[1], meta, { chatId: chat, threadId: t.thread_id, isPrivate: false })
     await ctx.reply(`📨 Отправлено в «${t.name}».`)
   })
 
@@ -501,14 +509,24 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     await ctx.reply(`Удалить топик «${t.name}» вместе со всеми сообщениями?`, { reply_markup: confirmKb(`tp:delok:${t.thread_id}`, 'tp:cancel:0') })
   })
 
-  bot.command('use', async ctx => {
+  const mainCommand = async (ctx: Context) => {
     if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
-    const id = (ctx.match ?? '').trim().replace(/^#/, '')
-    const s = d.sessions.get(id)
+    const arg = String(ctx.match ?? '').trim().replace(/^#/, '')
+    if (arg === 'reset') {
+      d.store.set('main_dir', null)
+      return void ctx.reply(`👑 Главная сессия — снова по MAIN_DIR: ${d.mainKey()}`)
+    }
+    if (!arg) {
+      const m = d.mainSession()
+      return void ctx.reply(`👑 Главная сессия: ${d.mainKey()}${m ? ` · #${m.id}` : ' · не запущена'}\n/main <id> — сделать главной другую, /main reset — вернуть MAIN_DIR.`)
+    }
+    const s = d.sessions.get(arg)
     if (!s || s.passive) return void ctx.reply('Сессия не найдена. /sessions — список.')
-    d.store.set('dm_session', s.id)
-    await ctx.reply(`📥 Сообщения из лички теперь идут в #${s.id} · ${s.projectName}.`)
-  })
+    d.store.set('main_dir', s.projectKey)
+    await ctx.reply(`👑 Главная сессия теперь #${s.id} · ${s.projectName} (${s.projectKey}).`)
+  }
+  bot.command('main', mainCommand)
+  bot.command('use', mainCommand)
 
   bot.command('verbose', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
@@ -539,7 +557,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const chat = String(ctx.chat!.id)
     const thread = threadOf(ctx)
-    const s = thread != null ? d.sessionForThread(chat, thread) : d.dmSession()
+    const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? d.mainSession()
     if (!s) return void ctx.reply('Сессия не запущена.', { message_thread_id: thread })
     d.deliver(s, 'Пользователь просит сохранить память этого чата: вызови save_memory с краткой сводкой важного (цели, решения, договорённости, открытые задачи). Предыдущая сводка перезапишется — включи в новую всё нужное из старой.',
       { chat_id: chat, ...(thread != null ? { thread_id: String(thread) } : {}), event: 'remember_request', user_id: String(ctx.from.id), ts: new Date().toISOString() },
@@ -672,8 +690,8 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
     if (ns === 'ses' && action === 'dm') {
       const s = d.sessions.get(arg)
       if (!s) { await answer('Сессия уже отключена.'); return true }
-      d.store.set('dm_session', s.id)
-      await answer(`Личка → #${s.id}`)
+      d.store.set('main_dir', s.projectKey)
+      await answer(`👑 Главная → #${s.id}`)
     } else if (ns === 'ses' && (action === 'ar' || action === 'arok')) {
       const s = d.sessions.get(arg)
       if (!s?.topic) { await answer('Сессия уже отключена или без топика.'); return true }

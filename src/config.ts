@@ -6,7 +6,7 @@
 
 import { chmodSync, copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
-import { join } from 'path'
+import { join, resolve } from 'path'
 import { randomBytes } from 'crypto'
 
 const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
@@ -95,6 +95,8 @@ export const settings = {
   /** Manual topic in the group → project dir + new session. */
   get topicProjects() { return str('TOPIC_PROJECTS', 'auto', ['auto', 'ask', 'off'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
+  /** Folder of the main session: DMs, General and topics without a session of their own. */
+  get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },
 }
