@@ -63,6 +63,23 @@ async function say(d: Daemon, chatId: string, threadId: number | undefined, html
   await d.bot.api.sendMessage(chatId, html, { parse_mode: 'HTML', ...(threadId != null ? { message_thread_id: threadId } : {}) }).catch(err => d.log(`launch notice failed: ${err}`))
 }
 
+/**
+ * End a Claude Code session from outside: interrupt the current turn, then
+ * type /exit into its tmux pane. Returns false when the session isn't in tmux.
+ */
+export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null }): boolean {
+  if (!s.tmuxPane) return false
+  const pane = s.tmuxPane
+  execFile('tmux', ['send-keys', '-t', pane, 'Escape'], () => {
+    setTimeout(() => {
+      execFile('tmux', ['send-keys', '-t', pane, '-l', '/exit'], () => {
+        execFile('tmux', ['send-keys', '-t', pane, 'Enter'], err => { if (err) d.log(`end session ${s.id}: ${err.message}`) })
+      })
+    }, 700)
+  })
+  return true
+}
+
 /** Create the dir (if needed), bind it to the topic, start the session, tell the user where to confirm. */
 export async function startProject(d: Daemon, dir: string, where: { chatId: string; threadId?: number }, bindThread?: number): Promise<void> {
   const created = !existsSync(dir)

@@ -61,12 +61,14 @@ type Target =
   | { kind: 'offline'; projectKey: string }
   | { kind: 'general' }
   | { kind: 'unbound' }
+  | { kind: 'archived'; projectKey: string | null; threadId: number }
   | { kind: 'none' }
 
 function resolveTarget(d: Daemon, chatId: string, threadId: number | undefined): Target {
   if (chatId === d.topicsChatId) {
     if (threadId == null) return { kind: 'general' }
     const t = d.store.topic(chatId, threadId)
+    if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
     if (s) return { kind: 'session', session: s, projectKey: t?.project_key ?? undefined }
     if (t?.project_key) return { kind: 'offline', projectKey: t.project_key }
@@ -131,6 +133,11 @@ async function handleInbound(
   }
   if (target.kind === 'unbound') {
     await reply('Этот топик не привязан к проекту. Сессии создают свои топики сами при запуске.')
+    return
+  }
+  if (target.kind === 'archived') {
+    if (target.projectKey) d.store.addPending(target.projectKey, text, { chat_id: chatId, thread_id: String(threadId), user: safeMeta(from.username ?? String(from.id)) ?? '', user_id: String(from.id), ts: new Date(msg.date * 1000).toISOString() })
+    await reply('🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.', new InlineKeyboard([[button('▶️ Восстановить', `tp:unar:${target.threadId}`, 'success')]]))
     return
   }
   if (target.kind === 'none') {

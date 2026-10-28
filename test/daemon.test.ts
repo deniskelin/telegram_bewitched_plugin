@@ -299,3 +299,55 @@ describe('projects from topics', () => {
     expect(launched.length).toBe(n)
   })
 })
+
+describe('archive and restore', () => {
+  const group = '-100500'
+
+  test('archive from /sessions closes the topic, marks it 🗄 and queues later messages', async () => {
+    const dir = '/tmp/arch'
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 88 })
+    await tg.waitFor('createForumTopic', c => c.body.name === 'arch')
+    const sess = [...d.sessions.values()].find(x => x.projectKey === dir)!
+    const thread = sess.topic!.threadId
+
+    tg.push(callbackQuery(`ses:ar:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Архивировать «arch»'))
+    tg.push(callbackQuery(`ses:arok:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
+    expect(d.store.topic(group, thread)?.status).toBe('archived')
+    expect(d.store.topic(group, thread)?.name).toBe('🗄 arch')
+    // Not in tmux → reported as not closable.
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('не в tmux'))
+    s.close()
+    await Bun.sleep(100)
+
+    tg.push(textMessage({ chat: Number(group), text: 'ещё вопрос', thread }))
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🗄 Топик в архиве'))
+    expect(JSON.stringify(notice.body.reply_markup)).toContain(`tp:unar:${thread}`)
+  })
+
+  test('reopening the topic in Telegram restores it and launches a session; the session then gets queued messages', async () => {
+    const dir = '/tmp/arch'
+    const thread = d.store.topicForProject(group, dir)!.thread_id
+    const n = launched.length
+    tg.push({
+      message: {
+        message_id: 9901, date: Math.floor(Date.now() / 1000), message_thread_id: thread, is_topic_message: true,
+        from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true },
+        forum_topic_reopened: {},
+      },
+    })
+    await tg.waitFor('editForumTopic', c => c.body.message_thread_id === thread && c.body.name === 'arch')
+    expect(d.store.topic(group, thread)?.status).toBe('active')
+    expect(launched.length).toBe(n + 1)
+    expect(tg.callsOf('reopenForumTopic').length).toBe(0) // already open in Telegram
+
+    const s = new FakeClient()
+    await s.connect({ cwd: dir, projectRoot: dir, claudePid: 89 })
+    const resume = await s.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('ещё вопрос')
+    s.close()
+  })
+})

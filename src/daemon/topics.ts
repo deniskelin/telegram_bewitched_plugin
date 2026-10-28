@@ -15,7 +15,7 @@ import { fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button } from './stream.ts'
-import { onManualTopic } from './launch.ts'
+import { endSession, onManualTopic, startProject } from './launch.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -51,6 +51,7 @@ export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic
     const name = row.name.replace(ARCHIVE_PREFIX, '')
     const thread = row.thread_id
     try {
+      await d.bot.api.reopenForumTopic(chatId, thread).catch(() => {})
       await d.bot.api.editForumTopic(chatId, thread, { name })
       d.store.setTopicStatus(chatId, thread, 'active', name)
       row = d.store.topic(chatId, thread)
@@ -343,13 +344,45 @@ function topicsListKeyboard(d: Daemon, rows: TopicRow[]): InlineKeyboard {
   return new InlineKeyboard(kb)
 }
 
-export async function archiveTopic(d: Daemon, chatId: string, threadId: number): Promise<void> {
+/** Sessions currently served by a topic. */
+function sessionsOfTopic(d: Daemon, chatId: string, threadId: number): Session[] {
+  const t = d.store.topic(chatId, threadId)
+  return d.activeSessions().filter(s => (s.topic?.chatId === chatId && s.topic.threadId === threadId) || (t?.project_key != null && s.projectKey === t.project_key))
+}
+
+/**
+ * Archive = close the forum topic, mark it 🗄, and end the sessions working
+ * in it (so topic and session state never disagree). Returns sessions that
+ * could not be ended (not in tmux).
+ */
+export async function archiveTopic(d: Daemon, chatId: string, threadId: number, o: { endSessions?: boolean; alreadyClosed?: boolean } = {}): Promise<Session[]> {
   const t = d.store.topic(chatId, threadId)
   if (!t) throw new Error('topic not found')
+  const stuck: Session[] = []
+  for (const s of sessionsOfTopic(d, chatId, threadId)) {
+    if (o.endSessions !== false && !endSession(d, s)) stuck.push(s)
+    s.topic = null
+  }
   const name = ARCHIVE_PREFIX + t.name.replace(ARCHIVE_PREFIX, '')
-  await d.bot.api.editForumTopic(chatId, threadId, { name }).catch(() => {})
   d.store.setTopicStatus(chatId, threadId, 'archived', name)
-  for (const s of d.sessions.values()) if (s.topic?.threadId === threadId && s.topic.chatId === chatId) s.topic = null
+  await d.bot.api.editForumTopic(chatId, threadId, { name }).catch(() => {})
+  if (!o.alreadyClosed) await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
+  scheduleDashboard(d)
+  return stuck
+}
+
+/** Reopen an archived topic; with launch, start a session for its project if none runs. */
+export async function unarchiveTopic(d: Daemon, chatId: string, threadId: number, o: { launch?: boolean; alreadyOpen?: boolean } = {}): Promise<void> {
+  const t = d.store.topic(chatId, threadId)
+  if (!t) throw new Error('topic not found')
+  const name = t.name.replace(ARCHIVE_PREFIX, '')
+  d.store.setTopicStatus(chatId, threadId, 'active', name)
+  if (!o.alreadyOpen) await d.bot.api.reopenForumTopic(chatId, threadId).catch(() => {})
+  await d.bot.api.editForumTopic(chatId, threadId, { name }).catch(() => {})
+  if (o.launch && t.project_key && !d.sessionForProject(t.project_key) && !t.project_key.includes('#')) {
+    await startProject(d, t.project_key, { chatId, threadId }, threadId)
+  }
+  scheduleDashboard(d)
 }
 
 export async function deleteTopic(d: Daemon, chatId: string, threadId: number): Promise<void> {
@@ -387,6 +420,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
       const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = []
       const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
       if (link) row.push(InlineKeyboard.url(`📂 ${s.projectName}`.slice(0, 40), link))
+      if (s.topic) row.push(button('🗄 Архив', `ses:ar:${s.id}`))
       if (s !== dm) row.push(button('📥 В личку', `ses:dm:${s.id}`))
       if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
       if (row.length) kb.push(row)
@@ -571,6 +605,29 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     }
     return next()
   })
+  bot.on('message:forum_topic_closed', async (ctx, next) => {
+    const chat = String(ctx.chat.id)
+    const thread = ctx.message.message_thread_id
+    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+      const t = d.store.topic(chat, thread)
+      if (t && t.status !== 'archived') {
+        const stuck = await archiveTopic(d, chat, thread, { alreadyClosed: true }).catch(() => [])
+        if (stuck.length) {
+          await d.bot.api.sendMessage(chat, `🗄 Топик в архиве. Сессии ${stuck.map(s => `#${s.id}`).join(', ')} не в tmux — закройте их сами.`, { message_thread_id: thread }).catch(() => {})
+        }
+      }
+    }
+    return next()
+  })
+  bot.on('message:forum_topic_reopened', async (ctx, next) => {
+    const chat = String(ctx.chat.id)
+    const thread = ctx.message.message_thread_id
+    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+      const t = d.store.topic(chat, thread)
+      if (t && t.status === 'archived') await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off', alreadyOpen: true }).catch(err => d.log(`unarchive failed: ${err}`))
+    }
+    return next()
+  })
   bot.on('message:forum_topic_edited', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const name = ctx.message.forum_topic_edited.name
@@ -605,6 +662,16 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
       if (!s) { await answer('Сессия уже отключена.'); return true }
       d.store.set('dm_session', s.id)
       await answer(`Личка → #${s.id}`)
+    } else if (ns === 'ses' && (action === 'ar' || action === 'arok')) {
+      const s = d.sessions.get(arg)
+      if (!s?.topic) { await answer('Сессия уже отключена или без топика.'); return true }
+      if (action === 'ar') {
+        await ctx.reply(`Архивировать «${s.topic.name}»? Сессия #${s.id} будет закрыта, топик — закрыт.`, { reply_markup: confirmKb(`ses:arok:${s.id}`, 'tp:cancel:0') })
+        await answer()
+        return true
+      }
+      const stuck = await archiveTopic(d, s.topic.chatId, s.topic.threadId)
+      await edit(stuck.length ? `🗄 Топик в архиве. Сессию #${s.id} закрыть не смог (не в tmux) — закройте её сами.` : `🗄 В архиве, сессия #${s.id} закрывается.`)
     } else if (ns === 'tp') {
       const thread = Number(arg)
       if (action === 'cancel') await edit('Отменено.')
@@ -615,16 +682,20 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
         await answer(t ? `${t.name}\n${t.project_key ?? 'не привязан к проекту'}` : 'Не найден')
         if (link) await ctx.reply(link).catch(() => {})
       } else if (action === 'ar') {
+        const live = sessionsOfTopic(d, chat, thread)
+        if (live.length) {
+          await ctx.reply(`Архивировать топик? Сессии ${live.map(s => `#${s.id}`).join(', ')} будут закрыты.`, { reply_markup: confirmKb(`tp:arok:${thread}`, 'tp:cancel:0') })
+          await answer()
+          return true
+        }
         await archiveTopic(d, chat, thread)
         await answer('🗄 В архиве')
         await ctx.editMessageReplyMarkup({ reply_markup: topicsListKeyboard(d, d.store.topics(chat)) }).catch(() => {})
+      } else if (action === 'arok') {
+        const stuck = await archiveTopic(d, chat, thread)
+        await edit(stuck.length ? '🗄 В архиве. Часть сессий не в tmux — закройте их сами.' : '🗄 В архиве, сессии закрываются.')
       } else if (action === 'unar') {
-        const t = d.store.topic(chat, thread)
-        if (t) {
-          const name = t.name.replace(ARCHIVE_PREFIX, '')
-          await d.bot.api.editForumTopic(chat, thread, { name }).catch(() => {})
-          d.store.setTopicStatus(chat, thread, 'active', name)
-        }
+        await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off' })
         await answer('↩️ Восстановлен')
         await ctx.editMessageReplyMarkup({ reply_markup: topicsListKeyboard(d, d.store.topics(chat)) }).catch(() => {})
       } else if (action === 'del') {
