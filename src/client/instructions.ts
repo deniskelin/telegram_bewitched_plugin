@@ -16,6 +16,7 @@ export const INSTRUCTIONS = [
   '- event="reminder": a reminder the user (/remind) or a session (the remind tool) set earlier is due — do what it says, then reply in that chat. When the user asks to do something later ("через 2 часа проверь CI", "каждое утро …"), set it with the remind tool, phrased as an instruction to yourself.',
   '',
   'Use reply_to (a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply. format="rich" renders ordinary Markdown (bold, lists, tables, code) — prefer it for structured answers.',
+  'Anything the user may copy — commands (including /slash commands), paths, ids, URLs to type — goes in `inline code` or a code block with format="rich": Telegram copies code on tap, plain text it does not.',
   '',
   'Whenever you offer the user a choice between options or ask for confirmation (yes/no, "which variant?", "proceed?"), use ask_user (or reply with buttons) instead of listing options in text.',
   '',

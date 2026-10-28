@@ -94,9 +94,10 @@ function periodTitle(p: Period): string {
 // Report
 // --------------------------------------------------------------------------
 
+/** For HTML text: "<1%" is escaped. */
 function share(part: number, whole: number): string {
   const pct = (part / (whole || 1)) * 100
-  return pct > 0 && pct < 1 ? '<1%' : `${Math.round(pct)}%`
+  return pct > 0 && pct < 1 ? '&lt;1%' : `${Math.round(pct)}%`
 }
 
 const empty = (): Sum => ({ tokens: 0, cost: 0, unpriced: 0 })

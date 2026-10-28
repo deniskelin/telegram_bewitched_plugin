@@ -6,7 +6,7 @@
  */
 
 import { InlineKeyboard, Keyboard, type Bot, type Context } from 'grammy'
-import { mkdirSync } from 'fs'
+import { existsSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import { loadAccess, owner, saveAccess } from '../access.ts'
 import { settings } from '../config.ts'
@@ -65,20 +65,35 @@ async function confirmInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> 
 async function doInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> {
   const a = loadAccess()
   if (!a.allowFrom.includes(u.id)) a.allowFrom.push(u.id)
+  // Known before the file changes: the allowlist watcher must not prepare them a second time.
+  markKnown(d, [u.id])
   saveAccess(a)
   d.store.set(`user_name:${u.id}`, u.username ?? u.name)
   d.log(`invited user ${u.id} (${u.name})`)
+  await ctx.editMessageText(`✅ ${escapeHtml(u.name)} добавлен в список доступа. Готовлю сессию…`, { parse_mode: 'HTML' }).catch(() => {})
+  await onUserAdded(d, u.id)
+}
 
-  const done: string[] = [`✅ ${escapeHtml(u.name)} добавлен в список доступа.`]
+/**
+ * A user was added to the allowlist (here, by the access skill or by hand):
+ * their folder, their session, a one-person group link, and a note to the
+ * owner with what is left to do plus an invitation to forward.
+ */
+export async function onUserAdded(d: Daemon, id: string): Promise<void> {
+  const to = owner()
+  if (!to || id === to) return
+  const name = d.userName(id) ?? id
+  const done: string[] = [`👥 <b>${escapeHtml(name)}</b>${name !== id ? ` (id <code>${id}</code>)` : ''} в списке доступа.`]
   let window: string | null = null
   if (settings.userSessions) {
-    const dir = join(settings.usersDir, u.id)
+    const dir = join(settings.usersDir, id)
     mkdirSync(dir, { recursive: true })
-    if (!d.userSession(u.id)) {
+    done.push(`📁 Папка <code>${escapeHtml(dir)}</code>.`)
+    if (!d.userSession(id)) {
       try {
         window = await d.launchSession(dir, { name: sessionName(d, dir) })
         d.launching.set(dir, Date.now())
-        done.push(`🚀 Сессия запускается в tmux (окно ${escapeHtml(window)}, <code>${escapeHtml(sessionName(d, dir) ?? '')}</code>).`)
+        done.push(`🚀 Сессия <code>${escapeHtml(sessionName(d, dir) ?? '')}</code> запускается в tmux (окно ${escapeHtml(window)}).`)
       } catch (err) {
         done.push(`⚠️ Сессию запустить не удалось (${escapeHtml(String(err instanceof Error ? err.message : err))}) — она запустится сама по первому сообщению.`)
       }
@@ -86,25 +101,63 @@ async function doInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> {
   }
   let groupLink: string | null = null
   if (d.topicsChatId) {
-    groupLink = await d.bot.api.createChatInviteLink(d.topicsChatId, { name: `invite ${u.name}`.slice(0, 32), member_limit: 1 })
-      .then(l => l.invite_link, err => { d.log(`invite link failed: ${err}`); return null })
-    if (!groupLink) done.push('⚠️ Ссылку в группу сделать не вышло: дайте боту право «Приглашать пользователей» или добавьте его в группу сами.')
+    groupLink = await d.bot.api.createChatInviteLink(d.topicsChatId, { name: `invite ${name}`.slice(0, 32), member_limit: 1 })
+      .then(l => l.invite_link ?? null, err => { d.log(`invite link failed: ${err}`); return null })
+    if (!groupLink) done.push('⚠️ Ссылку в группу сделать не вышло: дайте боту право «Приглашать пользователей» или добавьте человека в группу сами.')
   }
 
   const steps = ['', '<b>Что сделать вам:</b>']
-  if (window) steps.push('1. Подтвердите запуск сессии: кнопка «👁 Экран и клавиши» ниже → выберите пункт в экране каналов (обычно 1 и Enter).')
-  steps.push(`${window ? 2 : 1}. Перешлите ${escapeHtml(u.name)} сообщение-приглашение ниже.`)
-  steps.push(`${window ? 3 : 2}. Когда он напишет боту, сообщение уйдёт в его сессию. Удалить из доступа: /telegram-bewitched:access remove ${u.id} в терминале.`)
-  await ctx.editMessageText([...done, ...steps].join('\n'), { parse_mode: 'HTML', ...(window ? { reply_markup: screenKb(window) } : {}) }).catch(async () => {
-    await ctx.reply([...done, ...steps].join('\n'), { parse_mode: 'HTML', ...(window ? { reply_markup: screenKb(window) } : {}) })
-  })
+  let n = 1
+  if (window) steps.push(`${n++}. Подтвердите запуск сессии: «👁 Экран и клавиши» ниже → в экране каналов выберите пункт (обычно 1 и Enter).`)
+  steps.push(`${n++}. Перешлите ${escapeHtml(name)} приглашение из следующего сообщения.`)
+  steps.push(`${n++}. Когда он напишет боту, сообщение уйдёт в его сессию. Убрать доступ: <code>/telegram-bewitched:access remove ${id}</code> в терминале.`)
+  await d.bot.api.sendMessage(to, [...done, ...steps].join('\n'), { parse_mode: 'HTML', ...(window ? { reply_markup: screenKb(window) } : {}) })
+    .catch(err => d.log(`user-added notice failed: ${err}`))
 
   const botLink = `https://t.me/${d.botUsername}?start=hello`
-  await ctx.reply([
+  await d.bot.api.sendMessage(to, [
     `Привет! Я дал тебе доступ к своему боту с Claude Code: ${botLink}`,
     'Открой его, нажми «Старт» и пиши как обычному собеседнику — у тебя там своя сессия Claude.',
     ...(groupLink ? [`Группа с топиками проектов: ${groupLink}`] : []),
-  ].join('\n'), { link_preview_options: { is_disabled: true } })
+  ].join('\n'), { link_preview_options: { is_disabled: true } }).catch(err => d.log(`invitation failed: ${err}`))
+}
+
+// --------------------------------------------------------------------------
+// Allowlist watcher
+// --------------------------------------------------------------------------
+
+function knownUsers(d: Daemon): Set<string> | null {
+  const raw = d.store.get('known_users')
+  return raw ? new Set(JSON.parse(raw) as string[]) : null
+}
+
+function markKnown(d: Daemon, ids: string[]): void {
+  const known = knownUsers(d) ?? new Set(loadAccess().allowFrom)
+  for (const id of ids) known.add(id)
+  d.store.set('known_users', JSON.stringify([...known]))
+}
+
+/**
+ * Users who appeared in allowFrom since the last look. The first look (no
+ * record yet) counts only those without a folder in USERS_DIR: users who
+ * already worked here are not new.
+ */
+export function newUsers(d: Daemon): string[] {
+  const allow = loadAccess().allowFrom
+  const known = knownUsers(d)
+  const fresh = known
+    ? allow.filter(id => !known.has(id))
+    : allow.slice(1).filter(id => settings.userSessions && !existsSync(join(settings.usersDir, id)))
+  d.store.set('known_users', JSON.stringify(allow))
+  return fresh
+}
+
+export function startAllowlistWatch(d: Daemon): void {
+  const tick = () => {
+    for (const id of newUsers(d)) void onUserAdded(d, id).catch(err => d.log(`user ${id} setup failed: ${err}`))
+  }
+  setTimeout(tick, 3000).unref?.()
+  setInterval(tick, 5000).unref?.()
 }
 
 export function registerInviteCommands(d: Daemon, bot: Bot): void {
