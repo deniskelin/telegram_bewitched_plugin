@@ -93,7 +93,13 @@ describe('ipc', () => {
 })
 
 describe('launch', async () => {
-  const { slugify, projectPath } = await import('../src/daemon/launch.ts')
+  const { slugify, projectPath, launchCommand } = await import('../src/daemon/launch.ts')
+  test('launch command: -n only for a safe name, then --resume or --continue', () => {
+    const { settings } = require('../src/config.ts')
+    expect(launchCommand({ name: 'claude-topic-Мой-Проект', continue: true })).toBe(`${settings.launchCmd} -n claude-topic-Мой-Проект --continue`)
+    expect(launchCommand({ name: 'x; rm -rf ~', resume: 'abc-1' })).toBe(`${settings.launchCmd} --resume abc-1`)
+    expect(launchCommand({})).toBe(settings.launchCmd)
+  })
   test('slugify keeps letters of any script, drops path tricks', () => {
     expect(slugify('Мой Проект!')).toBe('Мой-Проект')
     expect(slugify('../../etc/passwd')).toBe('etcpasswd')

@@ -582,6 +582,7 @@ describe('session types', () => {
     tg.push(textMessage({ text: 'привет, это я' }))
     await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
+    expect(calls.at(-1)!.o?.name).toBe('claude-den')
     u = new FakeClient()
     await u.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 1111 })
     const resume = await u.inbound(x => x.meta.event === 'session_resume')
@@ -626,13 +627,14 @@ describe('session types', () => {
     d.launching.clear()
     tg.push(textMessage({ chat: Number(group), text: 'запустись', thread }))
     await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю сессию проекта') && c.body.message_thread_id === thread)
-    expect(calls.at(-1)!.dir).toBe('/tmp/other')
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { name: 'claude-topic-other' } })
 
     d.launching.clear()
     const ok = d.launchSession
     d.launchSession = async () => { throw new Error('no tmux') }
     tg.push(textMessage({ chat: Number(group), text: 'ещё раз', thread }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
+    const failed = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
+    expect(String(failed.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-topic-other</pre>`)
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     tg.push(textMessage({ chat: Number(group), text: 'и ещё', thread }))
@@ -652,13 +654,13 @@ describe('session types', () => {
     const closes = tg.callsOf('closeForumTopic').length
     p.close()
     const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('остановилась') && c.body.message_thread_id === thread)
-    expect(String(notice.body.text)).toContain('--continue')
+    expect(String(notice.body.text)).toContain(`${settings.launchCmd} -n claude-topic-other --continue`)
     await tg.waitFor('closeForumTopic', () => tg.callsOf('closeForumTopic').length > closes)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true } })
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-topic-other' } })
   })
 
   test('a stopped user session is reported in its DM; a planned end is not', async () => {

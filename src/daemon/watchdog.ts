@@ -16,11 +16,12 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { launchCommand, launchForTopic, manualCmd } from './launch.ts'
+import { launchCommand, launchForTopic, manualCmd, sessionName } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 
-type Restart = { dir: string; resume: string | null; name: string }
+/** session: -n <name> and the tmux window name. */
+type Restart = { dir: string; resume: string | null; name: string; session?: string }
 
 export function onSessionStopped(d: Daemon, s: Session): void {
   if (s.passive || d.ending.delete(s.id)) return
@@ -34,7 +35,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
   const role = d.roleOf(s)
   const user = d.userIdOf(s)
   const name = user ? `👤 ${d.store.lastSenderName(user) ?? user}` : role === 'main' ? '👑 главная' : `📂 ${s.projectName}`
-  const restart: Restart = { dir: s.cwd, resume, name }
+  const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey) }
   const id = randomBytes(4).toString('hex')
   d.store.set(`wd:${id}`, JSON.stringify(restart))
 
@@ -43,7 +44,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
     '',
     'Запустить заново в терминале:',
     `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}  # или: tmux new -s ${escapeHtml(settings.tmuxSession)}</pre>`,
-    manualCmd(s.cwd, { resume: resume ?? undefined, continue: !resume }),
+    manualCmd(s.cwd, { resume: resume ?? undefined, continue: !resume, name: restart.session }),
     'и примите экран подтверждения каналов. Или кнопкой — запущу в новом окне tmux.',
   ].join('\n')
   const kb = new InlineKeyboard([[button('🚀 Запустить', `wd:run:${id}`, 'success')]])
@@ -82,12 +83,13 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
   const r = JSON.parse(raw) as Restart
   if (d.activeSessions().some(s => s.cwd === r.dir)) { await answer('Сессия уже работает.'); return true }
   try {
-    const win = await d.launchSession(r.dir, { resume: r.resume ?? undefined, continue: !r.resume })
+    const o = { resume: r.resume ?? undefined, continue: !r.resume, name: r.session }
+    const win = await d.launchSession(r.dir, o)
     d.launching.set(r.dir, Date.now())
     d.store.set(`wd:${m[2]}`, null)
     await answer('🚀 Запускаю')
     await ctx.editMessageText(
-      `🚀 Запускаю <b>${escapeHtml(r.name)}</b> в tmux: окно ${escapeHtml(win)}.\nПодтвердите:<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов.\n<code>${escapeHtml(launchCommand({ resume: r.resume ?? undefined, continue: !r.resume }))}</code>`,
+      `🚀 Запускаю <b>${escapeHtml(r.name)}</b> в tmux: окно ${escapeHtml(win)}.\nПодтвердите:<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов.\n<code>${escapeHtml(launchCommand(o))}</code>`,
       { parse_mode: 'HTML' },
     ).catch(() => {})
   } catch (err) {

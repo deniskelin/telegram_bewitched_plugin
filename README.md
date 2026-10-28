@@ -152,7 +152,7 @@ bun bin/bewitched.ts notify --topic myproj "сборка упала"
 | `CONTEXT_WINDOW` | `1000000` | Размер окна контекста для процента заполнения в карточках сессий |
 | `USAGE_LIMITS` | `on` | `/usage`: запрашивать проценты лимитов у незадокументированного эндпоинта Anthropic (`off` — только локальные данные) |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<username>` (сессия пользователя) или `-n claude-topic-<топик>` (проект); так же называется окно tmux |
 
 Доступ (pairing, allowlist, группы) — как у официального плагина, см. [ACCESS.md](ACCESS.md) и `/telegram-bewitched:access`.
 
