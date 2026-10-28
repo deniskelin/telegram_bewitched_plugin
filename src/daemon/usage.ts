@@ -9,7 +9,9 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
+import { InlineKeyboard, type Context } from 'grammy'
 import { owner } from '../access.ts'
+import { button } from './stream.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { commitsSince } from './git.ts'
 
@@ -296,9 +298,10 @@ export function fmtReset(at: Date, now: number): string {
   return `сброс ${when} (через ${days ? `${days} д ${Math.floor((left % 86_400_000) / 3600_000)} ч` : fmtDuration(left)})`
 }
 
+/** 20 segments, 5% each. */
 export function bar(percent: number): string {
-  const n = Math.max(0, Math.min(10, Math.round(percent / 10)))
-  return '▰'.repeat(n) + '▱'.repeat(10 - n)
+  const n = Math.max(0, Math.min(20, Math.round(percent / 5)))
+  return '▰'.repeat(n) + '▱'.repeat(20 - n)
 }
 
 /** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
@@ -356,7 +359,7 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
 // Limit alerts
 // --------------------------------------------------------------------------
 
-type LimitState = { level: number; resetsAt: string | null }
+type LimitState = { level: number; resetsAt: string | null; notified?: boolean }
 
 /**
  * Tell the owner when a limit crosses an alert threshold, and when a window
@@ -377,18 +380,111 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
     const level = thresholds.filter(t => l.percent >= t).at(-1) ?? 0
     const reset = l.resetsAt ? `\n${fmtReset(l.resetsAt, now)}` : ''
     const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
-    if (prev.level > 0 && level === 0) {
+    // The reset timer (below) already said so, on the minute; this is the fallback if it didn't run.
+    if (prev.level > 0 && level === 0 && !prev.notified) {
       await d.bot.api.sendMessage(to, `✅ Лимит «${escapeHtml(l.label)}» восстановился: ${Math.round(l.percent)}% ${bar(l.percent)}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
     } else if (level > (newWindow ? 0 : prev.level)) {
       const icon = level >= thresholds.at(-1)! ? '🚨' : '⚠️'
       await d.bot.api.sendMessage(to, `${icon} Лимит «${escapeHtml(l.label)}»: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${reset}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
     }
     d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
+    // Over a threshold: say "tokens are back" exactly when the window resets.
+    if (level > 0 && l.resetsAt) scheduleResetNotice(d, l.label, l.resetsAt)
   }
+  rescheduleRequested(d)
   d.onSessionsChanged()
 }
 
+// --------------------------------------------------------------------------
+// Reset notices, on the minute
+// --------------------------------------------------------------------------
+
+const resetTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+/**
+ * One message to the owner when this window resets (a little after resets_at,
+ * so the API already counts the new window). Idempotent per window.
+ */
+export function scheduleResetNotice(d: Daemon, label: string, resetsAt: Date, now = Date.now()): void {
+  const key = `${label}|${resetsAt.toISOString()}`
+  if (resetTimers.has(key) || resetsAt.getTime() < now - 60_000) return
+  const t = setTimeout(() => void fireResetNotice(d, label, key), Math.max(0, resetsAt.getTime() + 30_000 - now))
+  t.unref?.()
+  resetTimers.set(key, t)
+}
+
+async function fireResetNotice(d: Daemon, label: string, key: string): Promise<void> {
+  resetTimers.delete(key)
+  const to = owner()
+  if (!to) return
+  // Asked for in /usage for this window (maybe silently): done now.
+  const req = parseRequest(d.store.get(`limit_notify:${label}`))
+  const silent = req?.at === key.split('|')[1] && req.silent
+  if (req?.at === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
+  // The 10-minute check would otherwise announce the same reset again.
+  d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
+  await d.bot.api.sendMessage(to, `✅ Токены обновились: лимит «${escapeHtml(label)}» сброшен, можно пользоваться.`, { parse_mode: 'HTML', disable_notification: silent })
+    .catch(err => d.log(`reset notice failed: ${err}`))
+}
+
+/** Stored as "<iso>" or "<iso>|silent". */
+function parseRequest(raw: string | null): { at: string; silent: boolean } | null {
+  if (!raw) return null
+  const [at, mode] = raw.split('|')
+  return { at, silent: mode === 'silent' }
+}
+
+/** "🔔 Напомнить о сбросе" / "🔕 Тихо" in /usage: remembered in the store, so a restart keeps it. */
+export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false): void {
+  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${silent ? '|silent' : ''}`)
+  scheduleResetNotice(d, label, resetsAt)
+}
+
+function rescheduleRequested(d: Daemon): void {
+  // Timers live in memory: after a restart, set again the ones asked for in /usage.
+  for (const key of d.store.keys('limit_notify:')) {
+    const req = parseRequest(d.store.get(key))
+    if (req) scheduleResetNotice(d, key.slice('limit_notify:'.length), new Date(req.at))
+  }
+}
+
+/** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
+export function usageKeyboard(d: Daemon): InlineKeyboard | undefined {
+  const l = lastLimits()
+  if (!l) return undefined
+  const rows = l.limits.items.flatMap((it, i) => {
+    if (!it.resetsAt) return []
+    const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
+    const asked = req?.at === it.resetsAt.toISOString() ? req : null
+    return [[
+      button(`${asked && !asked.silent ? '✅' : '🔔'} Напомнить о сбросе: ${it.label}`, `lr:${i}`),
+      button(`${asked?.silent ? '✅' : '🔕'} Тихо`, `lr:${i}:s`),
+    ]]
+  })
+  return rows.length ? new InlineKeyboard(rows) : undefined
+}
+
+export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const m = /^lr:(\d+)(:s)?$/.exec(data)
+  if (!m) return false
+  if (!ctx.from || String(ctx.from.id) !== owner()) {
+    await ctx.answerCallbackQuery({ text: 'Только для владельца подписки.' }).catch(() => {})
+    return true
+  }
+  const it = lastLimits()?.limits.items[Number(m[1])]
+  if (!it?.resetsAt) {
+    await ctx.answerCallbackQuery({ text: 'Данные о лимитах устарели — откройте /usage заново.' }).catch(() => {})
+    return true
+  }
+  const silent = !!m[2]
+  requestResetNotice(d, it.label, it.resetsAt, silent)
+  await ctx.answerCallbackQuery({ text: `${silent ? '🔕 Тихо напомню' : '🔔 Напомню'} ${fmtReset(it.resetsAt, Date.now()).replace(/^сброс /, '')}` }).catch(() => {})
+  await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
+  return true
+}
+
 export function startLimitWatch(d: Daemon): void {
+  rescheduleRequested(d)
   const min = settings.limitCheckMin
   if (min <= 0) return
   const tick = () => void checkLimits(d).catch(err => d.log(`limit check failed: ${err}`))

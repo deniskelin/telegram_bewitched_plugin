@@ -21,7 +21,7 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
-import { digestReport, usageReport } from './usage.ts'
+import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
 import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
@@ -509,7 +509,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   // The subscription is the owner's, and the breakdown shows everyone's sessions.
   bot.command('usage', async ctx => {
     if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
-    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
   })
 
   bot.command('digest', async ctx => {
@@ -525,6 +525,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
+    if (await handleResetCallback(d, ctx, data)) return
     if (await handleReminderCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
