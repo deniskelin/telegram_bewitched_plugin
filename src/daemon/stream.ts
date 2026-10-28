@@ -11,7 +11,7 @@
  */
 
 import { InlineKeyboard } from 'grammy'
-import { prefsFor } from '../access.ts'
+import { prefsFor, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
 import { fmtDuration, maskSecrets } from '../format.ts'
 import { isMessageNotModified, sendDraft } from '../tg.ts'
@@ -93,7 +93,7 @@ export class Streams {
     } else {
       void this.d.bot.api.sendChatAction(chatId, 'typing', thread).catch(() => {})
       st.typing = setInterval(() => void this.d.bot.api.sendChatAction(chatId, 'typing', thread).catch(() => {}), TYPING_MS)
-      const msg = await this.d.bot.api.sendMessage(chatId, '⏳ Работаю…', {
+      const msg = await this.d.bot.api.sendMessage(chatId, `⏳ Работаю… · ${verboseBadge(prefsFor(chatId, threadId).verbose)}`, {
         ...thread,
         disable_notification: true,
         reply_markup: stopKeyboard(s.id),
@@ -163,7 +163,7 @@ export class Streams {
         await sendDraft(this.d.bot, Number(chatId), st.draftId, { thinking, body, canStop: settings.stopMode !== 'off' },
           threadId != null ? { message_thread_id: threadId } : {})
       } else if (st.progressMsgId != null) {
-        const head = `⏳ Работаю… (${fmtDuration(Date.now() - st.startedAt)})`
+        const head = `⏳ Работаю… · ${verboseBadge(prefsFor(chatId, threadId).verbose)} (${fmtDuration(Date.now() - st.startedAt)})`
         const text = [head, thinking, body].filter(Boolean).join('\n\n').slice(0, 4000)
         await this.d.bot.api.editMessageText(chatId, st.progressMsgId, text, { reply_markup: stopKeyboard(s.id) })
       }

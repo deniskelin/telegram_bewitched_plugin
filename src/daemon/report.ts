@@ -4,6 +4,7 @@
  */
 
 import { basename } from 'path'
+import { owner, prefsBadge, prefsFor } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
@@ -66,6 +67,12 @@ export function sessionLabel(d: Daemon, s: Session): string {
   return s === d.mainSession() ? '👑 Главная' : `📂 ${s.projectName}`
 }
 
+/** Progress and "done" settings of the chat the session answers in: its topic, its user's DMs or the owner's. */
+function sessionPrefs(d: Daemon, s: Session) {
+  if (s.topic) return prefsFor(s.topic.chatId, s.topic.threadId)
+  return prefsFor(d.userIdOf(s) ?? owner() ?? '')
+}
+
 /**
  * The transcript: from hooks once the session did anything, before that from
  * its own --resume <id> / --continue (right after a daemon restart).
@@ -115,6 +122,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   else if (rc.on) flags.push('📱 RC вкл')
   else flags.push(tr ? '📱 RC выкл' : '📱 RC ?')
   main.push(flags.join(' · '))
+  main.push(`📣 ${prefsBadge(sessionPrefs(d, s))}`)
 
   if (tr?.model && tr.tokens != null) {
     // Over the configured window means the real one is bigger: show the size only.

@@ -93,6 +93,7 @@ void d.startPolling(bot => {
     { command: 'topics', description: 'Топики проектов' },
     { command: 'connect_group', description: 'Подключить группу с топиками' },
     { command: 'new_session', description: 'Новый проект и сессия в tmux' },
+    { command: 'usage', description: 'Лимиты подписки и расход' },
     { command: 'status', description: 'Состояние бота и демона' },
     { command: 'help', description: 'Команды' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})

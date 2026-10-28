@@ -4,6 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdirSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
 
@@ -192,7 +194,7 @@ describe('topics', () => {
     const m = await client.inbound(x => x.content === 'сделай тесты')
     expect(m.meta.thread_id).toBe(String(thread))
     expect(m.meta.topic_name).toBe('proj')
-    const progress = await tg.waitFor('sendMessage', c => c.body.text === '⏳ Работаю…')
+    const progress = await tg.waitFor('sendMessage', c => c.body.text === '⏳ Работаю… · 🔔1')
     expect(JSON.stringify(progress.body.reply_markup)).toContain(`stop:${sessionId}`)
 
     const res = await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
@@ -299,7 +301,7 @@ describe('topics', () => {
     expect(text).toContain(`#${sessionId}`)
     expect(text).toContain('📂 <b>tmuxed</b> «my-box» · 🔵 работает')
     expect(text).toContain('🌿 feat · 💬 <a href=')
-    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
+    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
     expect(text).toContain('<blockquote expandable>🆔')
     expect(text).toContain('🖥 сессия work · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
@@ -309,6 +311,70 @@ describe('topics', () => {
     expect(text).toContain('/tmp/other')
     expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
     t.close()
+  })
+
+  test('/usage: plan, limits from the endpoint, tokens and API cost by model and session', async () => {
+    const cfg = process.env.CLAUDE_CONFIG_DIR!
+    mkdirSync(join(cfg, 'projects', '-tmp-proj', 's1', 'subagents'), { recursive: true })
+    writeFileSync(join(cfg, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() + 3600_000, subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' } }))
+    const now = new Date().toISOString()
+    const reply = (id: string, model: string, cwd: string, usage: Record<string, unknown>) =>
+      JSON.stringify({ type: 'assistant', timestamp: now, cwd, requestId: `r${id}`, message: { id, model, usage } })
+    const u = { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 1_000_000, cache_creation_input_tokens: 0 }
+    // Two lines of one reply count once; a later `cd` stays in the session's folder.
+    writeFileSync(join(cfg, 'projects', '-tmp-proj', 's1.jsonl'), [
+      reply('m1', 'claude-opus-5-5', '/tmp/proj', u), reply('m1', 'claude-opus-5-5', '/tmp/proj', u),
+      reply('m2', 'claude-opus-5-5', '/tmp/proj/sub', u), '{broken',
+    ].join('\n'))
+    writeFileSync(join(cfg, 'projects', '-tmp-proj', 's1', 'subagents', 'a.jsonl'), reply('m3', 'claude-haiku-5-5', '/tmp/proj', u))
+    let auth = ''
+    const api = Bun.serve({
+      port: 0,
+      fetch: req => {
+        auth = req.headers.get('authorization') ?? ''
+        return Response.json({ limits: [
+          { kind: 'session', percent: 42, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+          { kind: 'weekly_all', percent: 7, resets_at: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+        ], seven_day_breakdown: { rows: [{ display_name: 'Claude Code', percent: 90 }, { display_name: 'Chats', percent: 10 }] } })
+      },
+    })
+    process.env.USAGE_API_URL = `http://127.0.0.1:${api.port}/`
+    try {
+      tg.push(textMessage({ text: '/usage' }))
+      const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊'))
+      const text = String(r.body.text)
+      expect(auth).toBe('Bearer tok')
+      expect(text).toContain('Подписка</b>: Max 20x')
+      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▱▱▱▱▱▱')
+      expect(text).toContain('Неделя: <b>7%</b>')
+      expect(text).toContain('через 3 д')
+      expect(text).toContain('За неделю: Claude Code 90%, Chats 10%')
+      // opus: 2 × (1000·4 + 1000·20 + 1M·0.2)/1M = $0.448; haiku: (1000·0.5 + 1000·2.5 + 1M·0.05)/1M = $0.053
+      expect(text).toContain('opus-5-5: 2.0 млн ток. · $0.45')
+      expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
+      expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
+      expect(text).not.toContain('📂 sub')
+    } finally {
+      api.stop()
+      delete process.env.USAGE_API_URL
+    }
+    // Someone else in the DM gets nothing.
+    const before = tg.callsOf('sendMessage').length
+    tg.push(textMessage({ text: '/usage', from: 222 }))
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').length).toBe(before)
+  })
+
+  test('/verbose without an argument shows the level; with one sets it', async () => {
+    tg.push(textMessage({ text: '/verbose' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Здесь: 🔔1 · ✅ после долгих ходов'))
+    expect(String(r.body.text)).toContain('📢2 + текст модели')
+    tg.push(textMessage({ text: '/verbose 2' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Подробность прогресса: 📢2 + текст модели')
+    tg.push(textMessage({ text: '/notify_done' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Здесь: ✅ после долгих ходов'))
+    tg.push(textMessage({ text: '/verbose 1' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Подробность прогресса: 🔔1 + действия')
   })
 
   test('/sessions lists sessions without the channel and how to restart them', async () => {

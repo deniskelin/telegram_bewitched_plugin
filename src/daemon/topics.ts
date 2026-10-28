@@ -8,7 +8,7 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { isOwner, loadAccess, owner, saveAccess, setPref } from '../access.ts'
+import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { fmtDuration, safeMeta } from '../format.ts'
@@ -560,18 +560,26 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('verbose', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
-    const v = Number((ctx.match ?? '').trim())
-    if (![0, 1, 2].includes(v)) return void ctx.reply('Формат: /verbose 0|1|2\n0 — только «думает» и ответ\n1 — + действия\n2 — + текст модели')
+    const arg = (ctx.match ?? '').trim()
+    const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${VERBOSE_INFO[l]}`).join('\n')
+    if (!arg) {
+      const p = prefsFor(String(ctx.chat!.id), threadOf(ctx))
+      return void ctx.reply(`Здесь: ${prefsBadge(p)}\n\n/verbose 0|1|2 — подробность прогресса:\n${levels}\n/notify_done off|long|always — «✅ готово» после хода`, { message_thread_id: threadOf(ctx) })
+    }
+    const v = Number(arg)
+    if (![0, 1, 2].includes(v)) return void ctx.reply(`Формат: /verbose 0|1|2\n${levels}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { verbose: v as 0 | 1 | 2 })
-    await ctx.reply(`Подробность прогресса: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Подробность прогресса: ${verboseBadge(v as 0 | 1 | 2)} ${VERBOSE_INFO[v]}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('notify_done', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: /notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`)
+    const help = `/notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`
+    if (!v) return void ctx.reply(`Здесь: ✅ ${NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
-    await ctx.reply(`Уведомления о завершении: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {
