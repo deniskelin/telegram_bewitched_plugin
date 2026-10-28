@@ -18,6 +18,8 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
+import { usageReport } from './usage.ts'
+import { handleSessionMenu } from './menu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -368,11 +370,11 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
       '',
       'В любом чате/топике:',
-      '/verbose 0|1|2 — подробность прогресса',
-      '/notify_done off|long|always — уведомления о завершении',
+      '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
+      '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
       '/remember — сохранить память чата, /forget — стереть историю',
       '',
-      'Только в личке: /connect_group, /group, /disconnect_group, /status',
+      'Только в личке: /usage — лимиты подписки и расход, /connect_group, /group, /disconnect_group, /status',
     ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
@@ -397,6 +399,12 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     await ctx.reply('Не сопряжено. Напишите мне сообщение, чтобы получить код.')
   })
 
+  // The subscription is the owner's, and the breakdown shows everyone's sessions.
+  bot.command('usage', async ctx => {
+    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+  })
+
   bot.on('callback_query:data', async ctx => {
     const data = ctx.callbackQuery.data
     if (data.startsWith('perm:')) return handlePermissionCallback(d, ctx, data)
@@ -404,6 +412,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
+    if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

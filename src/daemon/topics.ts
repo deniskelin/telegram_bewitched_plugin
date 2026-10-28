@@ -8,7 +8,7 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { isOwner, loadAccess, owner, saveAccess, setPref } from '../access.ts'
+import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { fmtDuration, safeMeta } from '../format.ts'
@@ -16,7 +16,8 @@ import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
-import { sessionLabel, sessionsReport, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { sessionsList } from './menu.ts'
+import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -456,20 +457,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
-    const list = sortedSessions(d)
-    const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
-    const main = d.mainSession()
-    // One row per session: its name first, then the actions in a fixed order.
-    for (const s of list) {
-      const name = sessionLabel(d, s).slice(0, 32)
-      const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-      const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = [link ? InlineKeyboard.url(name, link) : button(name, `ses:info:${s.id}`)]
-      if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
-      if (s !== main) row.push(button('👑', `ses:dm:${s.id}`))
-      if (s.topic) row.push(button('🗄', `ses:ar:${s.id}`))
-      kb.push(row)
-    }
-    await replyReport(ctx, await sessionsReport(d), kb.length ? new InlineKeyboard(kb as never) : undefined)
+    const { text, kb } = await sessionsList(d)
+    await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
   })
 
   bot.command('topics', async ctx => {
@@ -560,18 +549,26 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('verbose', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
-    const v = Number((ctx.match ?? '').trim())
-    if (![0, 1, 2].includes(v)) return void ctx.reply('Формат: /verbose 0|1|2\n0 — только «думает» и ответ\n1 — + действия\n2 — + текст модели')
+    const arg = (ctx.match ?? '').trim()
+    const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${VERBOSE_INFO[l]}`).join('\n')
+    if (!arg) {
+      const p = prefsFor(String(ctx.chat!.id), threadOf(ctx))
+      return void ctx.reply(`Здесь: ${prefsBadge(p)}\n\n/verbose 0|1|2 — подробность прогресса:\n${levels}\n/notify_done off|long|always — «✅ готово» после хода`, { message_thread_id: threadOf(ctx) })
+    }
+    const v = Number(arg)
+    if (![0, 1, 2].includes(v)) return void ctx.reply(`Формат: /verbose 0|1|2\n${levels}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { verbose: v as 0 | 1 | 2 })
-    await ctx.reply(`Подробность прогресса: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Подробность прогресса: ${verboseBadge(v as 0 | 1 | 2)} ${VERBOSE_INFO[v]}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('notify_done', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: /notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`)
+    const help = `/notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`
+    if (!v) return void ctx.reply(`Здесь: ✅ ${NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
-    await ctx.reply(`Уведомления о завершении: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {

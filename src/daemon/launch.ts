@@ -9,7 +9,7 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { execFile } from 'child_process'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { homedir } from 'os'
-import { basename, isAbsolute, join, resolve } from 'path'
+import { basename, isAbsolute, join, relative, resolve } from 'path'
 import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
@@ -51,10 +51,26 @@ function run(args: string[]): Promise<string> {
  */
 export type LaunchOptions = { continue?: boolean; resume?: string; name?: string }
 
-/** CLAUDE_LAUNCH_CMD plus --resume <id> (ids are checked) or --continue. */
+/** CLAUDE_LAUNCH_CMD plus -n <name> (a slug) and --resume <id> (ids are checked) or --continue. */
 export function launchCommand(o: LaunchOptions = {}): string {
-  if (o.resume && /^[\w-]+$/.test(o.resume)) return `${settings.launchCmd} --resume ${o.resume}`
-  return o.continue ? `${settings.launchCmd} --continue` : settings.launchCmd
+  const base = o.name && /^[\p{L}\p{N}._-]+$/u.test(o.name) ? `${settings.launchCmd} -n ${o.name}` : settings.launchCmd
+  if (o.resume && /^[\w-]+$/.test(o.resume)) return `${base} --resume ${o.resume}`
+  return o.continue ? `${base} --continue` : base
+}
+
+/**
+ * Name for the Claude session (-n) and its tmux window: claude-<username> for
+ * a user's session, claude-topic-<topic> for a project. Undefined for the
+ * main session: it keeps the folder name.
+ */
+export function sessionName(d: Daemon, dir: string): string | undefined {
+  const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
+  if (user) return `claude-${slugify(d.store.lastSenderName(user) ?? '') || user}`
+  if (dir === d.mainKey()) return undefined
+  const chat = d.topicsChatId
+  const topic = chat ? d.store.topicForProject(chat, dir) : null
+  const slug = slugify((topic?.name ?? basename(dir)).replace(/^🗄 /, ''))
+  return slug ? `claude-topic-${slug}` : undefined
 }
 
 export async function tmuxLaunch(dir: string, o: LaunchOptions = {}): Promise<string> {
@@ -152,15 +168,15 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
   const dir = join(settings.usersDir, userId)
   mkdirSync(dir, { recursive: true })
   const cont = hasTranscripts(dir)
-  const r = await launchOnce(d, dir, { continue: cont, name: `user-${userId}` })
+  const r = await launchOnce(d, dir, { continue: cont, name: sessionName(d, dir) })
   const o = owner()
   if (!r.ok && r.skipped) {
     await say(d, where.chatId, where.threadId, '⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.')
     return
   }
   if (!r.ok) {
-    await say(d, where.chatId, where.threadId, `❌ Не удалось запустить вашу сессию: ${escapeHtml(r.error)}\nСообщение сохранено. Запустить вручную:${manualCmd(dir, { continue: cont })}`)
-    if (o && o !== userId) await say(d, o, undefined, `❌ Не удалось запустить сессию пользователя ${escapeHtml(name)} (${userId}): ${escapeHtml(r.error)}${manualCmd(dir, { continue: cont })}`)
+    await say(d, where.chatId, where.threadId, `❌ Не удалось запустить вашу сессию: ${escapeHtml(r.error)}\nСообщение сохранено. Запустить вручную:${manualCmd(dir, { continue: cont, name: sessionName(d, dir) })}`)
+    if (o && o !== userId) await say(d, o, undefined, `❌ Не удалось запустить сессию пользователя ${escapeHtml(name)} (${userId}): ${escapeHtml(r.error)}${manualCmd(dir, { continue: cont, name: sessionName(d, dir) })}`)
     return
   }
   const self = o === userId
@@ -179,7 +195,7 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
  */
 export async function launchForTopic(d: Daemon, chatId: string, threadId: number, projectKey: string): Promise<void> {
   const launchable = !projectKey.includes('#') && existsSync(projectKey)
-  const r: Launch = launchable ? await launchOnce(d, projectKey, {}) : { ok: false, skipped: false, error: 'папки проекта нет' }
+  const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: 'папки проекта нет' }
   if (!r.ok && r.skipped) {
     await say(d, chatId, threadId, '⏳ Сессия проекта уже запускается — сообщение в очереди.')
     return
@@ -189,7 +205,7 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
     return
   }
   const dir = projectKey.replace(/#.*$/, '')
-  await say(d, chatId, threadId, `❌ Не удалось запустить сессию проекта: ${escapeHtml(r.error)}\nСообщение сохранено. Запустите вручную:${manualCmd(dir)}Топик закрыт, пока сессия не подключится.`)
+  await say(d, chatId, threadId, `❌ Не удалось запустить сессию проекта: ${escapeHtml(r.error)}\nСообщение сохранено. Запустите вручную:${manualCmd(dir, { name: sessionName(d, dir) })}Топик закрыт, пока сессия не подключится.`)
   d.store.setTopicStatus(chatId, threadId, 'waiting')
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }
@@ -233,7 +249,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   }
   let win: string
   try {
-    win = await d.launchSession(dir)
+    win = await d.launchSession(dir, { name: sessionName(d, dir) })
   } catch (err) {
     await say(d, where.chatId, where.threadId, `❌ Не удалось запустить сессию в tmux: ${escapeHtml(String(err instanceof Error ? err.message : err))}`)
     return

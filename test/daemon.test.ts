@@ -4,6 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdirSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
 
@@ -15,6 +17,7 @@ const { registerLaunchCommands } = await import('../src/daemon/launch.ts')
 const { startHttp } = await import('../src/daemon/http.ts')
 const { LineDecoder, encode } = await import('../src/ipc.ts')
 const { SOCK_FILE, httpToken, settings } = await import('../src/config.ts')
+const { prefsFor, setPref } = await import('../src/access.ts')
 
 type Inbound = { t: 'inbound'; content: string; meta: Record<string, string> }
 
@@ -192,7 +195,7 @@ describe('topics', () => {
     const m = await client.inbound(x => x.content === 'сделай тесты')
     expect(m.meta.thread_id).toBe(String(thread))
     expect(m.meta.topic_name).toBe('proj')
-    const progress = await tg.waitFor('sendMessage', c => c.body.text === '⏳ Работаю…')
+    const progress = await tg.waitFor('sendMessage', c => c.body.text === '⏳ Работаю… · 🔔1')
     expect(JSON.stringify(progress.body.reply_markup)).toContain(`stop:${sessionId}`)
 
     const res = await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
@@ -299,7 +302,7 @@ describe('topics', () => {
     expect(text).toContain(`#${sessionId}`)
     expect(text).toContain('📂 <b>tmuxed</b> «my-box» · 🔵 работает')
     expect(text).toContain('🌿 feat · 💬 <a href=')
-    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
+    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
     expect(text).toContain('<blockquote expandable>🆔')
     expect(text).toContain('🖥 сессия work · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
@@ -309,6 +312,70 @@ describe('topics', () => {
     expect(text).toContain('/tmp/other')
     expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
     t.close()
+  })
+
+  test('/usage: plan, limits from the endpoint, tokens and API cost by model and session', async () => {
+    const cfg = process.env.CLAUDE_CONFIG_DIR!
+    mkdirSync(join(cfg, 'projects', '-tmp-proj', 's1', 'subagents'), { recursive: true })
+    writeFileSync(join(cfg, '.credentials.json'), JSON.stringify({ claudeAiOauth: { accessToken: 'tok', expiresAt: Date.now() + 3600_000, subscriptionType: 'max', rateLimitTier: 'default_claude_max_20x' } }))
+    const now = new Date().toISOString()
+    const reply = (id: string, model: string, cwd: string, usage: Record<string, unknown>) =>
+      JSON.stringify({ type: 'assistant', timestamp: now, cwd, requestId: `r${id}`, message: { id, model, usage } })
+    const u = { input_tokens: 1000, output_tokens: 1000, cache_read_input_tokens: 1_000_000, cache_creation_input_tokens: 0 }
+    // Two lines of one reply count once; a later `cd` stays in the session's folder.
+    writeFileSync(join(cfg, 'projects', '-tmp-proj', 's1.jsonl'), [
+      reply('m1', 'claude-opus-5-5', '/tmp/proj', u), reply('m1', 'claude-opus-5-5', '/tmp/proj', u),
+      reply('m2', 'claude-opus-5-5', '/tmp/proj/sub', u), '{broken',
+    ].join('\n'))
+    writeFileSync(join(cfg, 'projects', '-tmp-proj', 's1', 'subagents', 'a.jsonl'), reply('m3', 'claude-haiku-5-5', '/tmp/proj', u))
+    let auth = ''
+    const api = Bun.serve({
+      port: 0,
+      fetch: req => {
+        auth = req.headers.get('authorization') ?? ''
+        return Response.json({ limits: [
+          { kind: 'session', percent: 42, resets_at: new Date(Date.now() + 3600_000).toISOString() },
+          { kind: 'weekly_all', percent: 7, resets_at: new Date(Date.now() + 3 * 86_400_000).toISOString() },
+        ], seven_day_breakdown: { rows: [{ display_name: 'Claude Code', percent: 90 }, { display_name: 'Chats', percent: 10 }] } })
+      },
+    })
+    process.env.USAGE_API_URL = `http://127.0.0.1:${api.port}/`
+    try {
+      tg.push(textMessage({ text: '/usage' }))
+      const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊'))
+      const text = String(r.body.text)
+      expect(auth).toBe('Bearer tok')
+      expect(text).toContain('Подписка</b>: Max 20x')
+      expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▱▱▱▱▱▱')
+      expect(text).toContain('Неделя: <b>7%</b>')
+      expect(text).toContain('через 3 д')
+      expect(text).toContain('За неделю: Claude Code 90%, Chats 10%')
+      // opus: 2 × (1000·4 + 1000·20 + 1M·0.2)/1M = $0.448; haiku: (1000·0.5 + 1000·2.5 + 1M·0.05)/1M = $0.053
+      expect(text).toContain('opus-5-5: 2.0 млн ток. · $0.45')
+      expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
+      expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
+      expect(text).not.toContain('📂 sub')
+    } finally {
+      api.stop()
+      delete process.env.USAGE_API_URL
+    }
+    // Someone else in the DM gets nothing.
+    const before = tg.callsOf('sendMessage').length
+    tg.push(textMessage({ text: '/usage', from: 222 }))
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').length).toBe(before)
+  })
+
+  test('/verbose without an argument shows the level; with one sets it', async () => {
+    tg.push(textMessage({ text: '/verbose' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Здесь: 🔔1 · ✅ после долгих ходов'))
+    expect(String(r.body.text)).toContain('📢2 + текст модели')
+    tg.push(textMessage({ text: '/verbose 2' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Подробность прогресса: 📢2 + текст модели')
+    tg.push(textMessage({ text: '/notify_done' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Здесь: ✅ после долгих ходов'))
+    tg.push(textMessage({ text: '/verbose 1' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Подробность прогресса: 🔔1 + действия')
   })
 
   test('/sessions lists sessions without the channel and how to restart them', async () => {
@@ -322,6 +389,47 @@ describe('topics', () => {
     expect(text).toContain(`<code>${settings.launchCmd} `)
     expect(text.indexOf('👻')).toBeGreaterThan(text.indexOf('👑 <b>Главная</b>'))
     p.close()
+  })
+
+  test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
+    tg.push(textMessage({ text: '/sessions' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))
+    expect(String(r.body.text)).toContain('📂 <b>proj</b> · ')
+    const kb = JSON.stringify(r.body.reply_markup)
+    expect(kb).toContain(`sm:s:${sessionId}`)
+    expect(kb).toContain('sm:list')
+
+    const s = d.sessions.get(sessionId)!
+    const key = `${s.topic!.chatId}:${s.topic!.threadId}`
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && String(c.body.text).includes('в топике'))
+    expect(String(card.body.text)).toContain('📂 <b>proj</b>')
+    const ckb = JSON.stringify(card.body.reply_markup)
+    expect(ckb).toContain(`sm:v:${sessionId}:2`)
+    expect(ckb).toContain(`sm:n:${sessionId}:always`)
+    expect(ckb).toContain(`sm:ar:${sessionId}`)
+    expect(ckb).toContain('• 🔔1')
+
+    tg.push(callbackQuery(`sm:v:${sessionId}:2`))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('• 📢2'))
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).verbose).toBe(2)
+    tg.push(callbackQuery(`sm:n:${sessionId}:always`))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('• ✅ всегда'))
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).notifyDone).toBe('always')
+    setPref(key, { verbose: 1, notifyDone: 'long' })
+
+    tg.push(callbackQuery(`sm:ar:${sessionId}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Архивировать «proj»'))
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && JSON.stringify(c.body.reply_markup ?? '').includes('sm:list'))
+    tg.push(callbackQuery('sm:list'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Выберите сессию'))
+    expect(d.store.topic(s.topic!.chatId, s.topic!.threadId)?.status).toBe('active')
+
+    // Someone else can't use the menu.
+    tg.push(callbackQuery(`sm:v:${sessionId}:0`, { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(prefsFor(s.topic!.chatId, s.topic!.threadId).verbose).toBe(1)
   })
 
   test('notify over HTTP reaches a topic by name; bad token is rejected', async () => {
@@ -420,9 +528,9 @@ describe('archive and restore', () => {
     const sess = [...d.sessions.values()].find(x => x.projectKey === dir)!
     const thread = sess.topic!.threadId
 
-    tg.push(callbackQuery(`ses:ar:${sess.id}`, { chat: Number(group) }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Архивировать «arch»'))
-    tg.push(callbackQuery(`ses:arok:${sess.id}`, { chat: Number(group) }))
+    tg.push(callbackQuery(`sm:ar:${sess.id}`, { chat: Number(group) }))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Архивировать «arch»'))
+    tg.push(callbackQuery(`sm:arok:${sess.id}`, { chat: Number(group) }))
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('archived')
     expect(d.store.topic(group, thread)?.name).toBe('🗄 arch')
@@ -516,6 +624,7 @@ describe('session types', () => {
     tg.push(textMessage({ text: 'привет, это я' }))
     await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
+    expect(calls.at(-1)!.o?.name).toBe('claude-den')
     u = new FakeClient()
     await u.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 1111 })
     const resume = await u.inbound(x => x.meta.event === 'session_resume')
@@ -560,13 +669,14 @@ describe('session types', () => {
     d.launching.clear()
     tg.push(textMessage({ chat: Number(group), text: 'запустись', thread }))
     await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю сессию проекта') && c.body.message_thread_id === thread)
-    expect(calls.at(-1)!.dir).toBe('/tmp/other')
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { name: 'claude-topic-other' } })
 
     d.launching.clear()
     const ok = d.launchSession
     d.launchSession = async () => { throw new Error('no tmux') }
     tg.push(textMessage({ chat: Number(group), text: 'ещё раз', thread }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
+    const failed = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
+    expect(String(failed.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-topic-other</pre>`)
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     tg.push(textMessage({ chat: Number(group), text: 'и ещё', thread }))
@@ -586,13 +696,13 @@ describe('session types', () => {
     const closes = tg.callsOf('closeForumTopic').length
     p.close()
     const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('остановилась') && c.body.message_thread_id === thread)
-    expect(String(notice.body.text)).toContain('--continue')
+    expect(String(notice.body.text)).toContain(`${settings.launchCmd} -n claude-topic-other --continue`)
     await tg.waitFor('closeForumTopic', () => tg.callsOf('closeForumTopic').length > closes)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true } })
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-topic-other' } })
   })
 
   test('a stopped user session is reported in its DM; a planned end is not', async () => {

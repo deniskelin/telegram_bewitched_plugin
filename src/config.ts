@@ -109,6 +109,9 @@ export const settings = {
   get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'main', 'queue'] as const) },
   /** Context window used for the fill percentage in session cards. */
   get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
+  /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
+  get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },
+  get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },
