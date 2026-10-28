@@ -16,7 +16,7 @@ import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
-import { sessionsList } from './menu.ts'
+import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
 import { limitsLine } from './usage.ts'
 import { sessionLabel, sortedSessions, statusLabel } from './report.ts'
@@ -452,6 +452,12 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!requireControl(ctx)) return
     const { text, kb } = await sessionsList(d)
     await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
+  })
+
+  bot.command('permissions', async ctx => {
+    if (!requireControl(ctx)) return
+    const { text, kb } = permissionsScreen(d)
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb })
   })
 
   bot.command('topics', async ctx => {

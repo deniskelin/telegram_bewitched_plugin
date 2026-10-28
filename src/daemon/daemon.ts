@@ -50,6 +50,8 @@ export type Session = {
   /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
   claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
   lastTool: { text: string; at: number } | null
+  /** Tools the owner allowed for the rest of this session ("♾ Всегда"); asked again after a reconnect. */
+  alwaysAllow: Set<string>
   /** The "context is filling up" notice went out (reset when the context shrinks). */
   contextWarned: boolean
   /** Command line of the Claude process, read at connect (it is gone once the process exits). */
@@ -237,6 +239,7 @@ export class Daemon {
       claude: { sessionId: null, transcript: null, permissionMode: null },
       lastTool: null,
       contextWarned: false,
+      alwaysAllow: new Set(),
       argv: h.claudePid ? cmdlineOf(h.claudePid) : [],
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.
