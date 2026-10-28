@@ -31,7 +31,8 @@ export type TopicRow = {
   name: string
   kind: 'project' | 'session' | 'manual'
   project_key: string | null
-  status: 'active' | 'archived'
+  /** waiting: closed by the bot until the project's session connects. */
+  status: 'active' | 'archived' | 'waiting'
   created_at: number
   last_activity_at: number
 }
@@ -290,6 +291,11 @@ export class Store {
 
   addPending(projectKey: string, content: string, meta: Record<string, string>): void {
     this.db.query('INSERT INTO pending (project_key, content, meta, created_at) VALUES (?, ?, ?, ?)').run(projectKey, content, JSON.stringify(meta), Date.now())
+  }
+
+  /** Display name of the last inbound message in a chat (a user's DM). */
+  lastSenderName(chatId: string): string | null {
+    return this.db.query<{ from_name: string | null }, [string]>("SELECT from_name FROM messages WHERE chat_id = ? AND direction = 'in' AND from_name IS NOT NULL ORDER BY date DESC LIMIT 1").get(chatId)?.from_name ?? null
   }
 
   pendingCount(projectKey: string, ttlH: number): number {

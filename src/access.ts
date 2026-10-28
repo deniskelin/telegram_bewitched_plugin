@@ -115,6 +115,20 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long' }
 }
 
+const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const
+export const VERBOSE_INFO = ['только ответ', '+ действия', '+ текст модели'] as const
+export const NOTIFY_DONE_INFO = { off: 'выкл', long: 'после долгих ходов', always: 'всегда' } as const
+
+/** 🔕0, 🔔1, 📢2 */
+export function verboseBadge(v: 0 | 1 | 2): string {
+  return `${VERBOSE_ICONS[v]}${v}`
+}
+
+/** "🔔1 · ✅ после долгих ходов" for session cards and /verbose. */
+export function prefsBadge(p: Required<Prefs>): string {
+  return `${verboseBadge(p.verbose)} · ✅ ${NOTIFY_DONE_INFO[p.notifyDone]}`
+}
+
 export function setPref(chatKey: string | null, patch: Prefs): void {
   const a = loadAccess()
   a.prefs ??= {}

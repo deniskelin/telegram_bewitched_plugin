@@ -13,10 +13,13 @@ import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { safeMeta } from '../format.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
-import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
+import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
-import { handleLaunchCallback } from './launch.ts'
+import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
+import { handleWatchdogCallback } from './watchdog.ts'
+import { usageReport } from './usage.ts'
+import { handleSessionMenu } from './menu.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -57,26 +60,44 @@ export function enrichMeta(d: Daemon, msg: Message): Record<string, string> {
 }
 
 type Target =
-  /** fallback: a topic without its own session, handled by the main session. */
+  /** fallback: a topic without a project, handled by the main session. */
   | { kind: 'session'; session: Session; projectKey?: string; fallback?: boolean }
   | { kind: 'offline'; projectKey: string }
+  | { kind: 'launch'; projectKey: string; threadId: number }
+  | { kind: 'waiting'; projectKey: string }
+  | { kind: 'user_offline'; userId: string }
   | { kind: 'main_offline' }
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
 
-function resolveTarget(d: Daemon, chatId: string, threadId: number | undefined): Target {
+function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
+  const { chatId, threadId } = chat
   if (chatId === d.topicsChatId && threadId != null) {
     const t = d.store.topic(chatId, threadId)
     if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
     if (s) return { kind: 'session', session: s, projectKey: t?.project_key ?? undefined }
-    if (main) return { kind: 'session', session: main, projectKey: t?.project_key ?? undefined, fallback: true }
-    if (t?.project_key) return { kind: 'offline', projectKey: t.project_key }
+    if (t?.project_key) {
+      if (t.status === 'waiting') return { kind: 'waiting', projectKey: t.project_key }
+      const mode = settings.topicNoSession
+      if (mode === 'launch') return { kind: 'launch', projectKey: t.project_key, threadId }
+      if (mode === 'main' && main) return { kind: 'session', session: main, projectKey: t.project_key, fallback: true }
+      return { kind: 'offline', projectKey: t.project_key }
+    }
+    // A topic without a project: the author's own session (or the main one without user sessions).
+    if (settings.userSessions) return userTarget(d, fromId)
+    if (main) return { kind: 'session', session: main, fallback: true }
     return { kind: 'unbound' }
   }
-  // DMs and the General topic belong to the main session.
+  // DMs and General: the author's own session; without user sessions, the main one.
+  if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
+}
+
+function userTarget(d: Daemon, userId: string): Target {
+  const s = d.userSession(userId)
+  return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId }
 }
 
 // --- forward batching: several forwards within 3 s become one event ---
@@ -126,7 +147,7 @@ async function handleInbound(
     return
   }
 
-  const target = resolveTarget(d, chatId, threadId)
+  const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
   // Unknown commands in General are not for Claude.
   if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
@@ -175,6 +196,21 @@ async function handleInbound(
     await reply(`💤 Главная сессия не запущена (папка ${d.mainKey()}). Сообщение доставлю, когда она подключится.`)
     return
   }
+  if (target.kind === 'user_offline') {
+    d.store.addPending(userPendingKey(target.userId), text, meta)
+    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name, { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
+    return
+  }
+  if (target.kind === 'launch') {
+    d.store.addPending(target.projectKey, text, meta)
+    void launchForTopic(d, chatId, target.threadId, target.projectKey).catch(err => d.log(`topic launch failed: ${err}`))
+    return
+  }
+  if (target.kind === 'waiting') {
+    d.store.addPending(target.projectKey, text, meta)
+    await reply('⏳ Сессия проекта не подключена — сообщение в очереди.', new InlineKeyboard([[button('🚀 Запустить', `wd:topic:${threadId}`, 'success')]]))
+    return
+  }
   // The project session will see what the main session answered for it.
   if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
 
@@ -198,7 +234,7 @@ function flushBatch(d: Daemon, key: string): void {
   const b = batches.get(key)
   if (!b) return
   batches.delete(key)
-  const target = resolveTarget(d, b.chat.chatId, b.chat.threadId)
+  const target = resolveTarget(d, b.chat, String(b.ctx.from?.id ?? ''))
   if (target.kind !== 'session') return
   if (b.items.length === 1) return d.deliver(target.session, b.items[0].text, b.items[0].meta, b.chat)
   const content = `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) =>
@@ -235,7 +271,10 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
   if (toTopic) void d.bot.api.sendMessage(s.topic!.chatId, text, { message_thread_id: s.topic!.threadId, reply_markup: kb }).catch(err => d.log(`permission → topic failed: ${err}`))
-  if (toDm) for (const chat of loadAccess().allowFrom) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
+  // A user's session asks only that user.
+  const user = d.userIdOf(s)
+  const dmTo = user ? [user] : loadAccess().allowFrom
+  if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
@@ -331,11 +370,11 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
       '',
       'В любом чате/топике:',
-      '/verbose 0|1|2 — подробность прогресса',
-      '/notify_done off|long|always — уведомления о завершении',
+      '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
+      '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
       '/remember — сохранить память чата, /forget — стереть историю',
       '',
-      'Только в личке: /connect_group, /group, /disconnect_group, /status',
+      'Только в личке: /usage — лимиты подписки и расход, /connect_group, /group, /disconnect_group, /status',
     ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
@@ -360,12 +399,20 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     await ctx.reply('Не сопряжено. Напишите мне сообщение, чтобы получить код.')
   })
 
+  // The subscription is the owner's, and the breakdown shows everyone's sessions.
+  bot.command('usage', async ctx => {
+    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+  })
+
   bot.on('callback_query:data', async ctx => {
     const data = ctx.callbackQuery.data
     if (data.startsWith('perm:')) return handlePermissionCallback(d, ctx, data)
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
+    if (await handleWatchdogCallback(d, ctx, data)) return
+    if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

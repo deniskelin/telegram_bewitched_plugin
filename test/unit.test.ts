@@ -93,7 +93,13 @@ describe('ipc', () => {
 })
 
 describe('launch', async () => {
-  const { slugify, projectPath } = await import('../src/daemon/launch.ts')
+  const { slugify, projectPath, launchCommand } = await import('../src/daemon/launch.ts')
+  test('launch command: -n only for a safe name, then --resume or --continue', () => {
+    const { settings } = require('../src/config.ts')
+    expect(launchCommand({ name: 'claude-topic-Мой-Проект', continue: true })).toBe(`${settings.launchCmd} -n claude-topic-Мой-Проект --continue`)
+    expect(launchCommand({ name: 'x; rm -rf ~', resume: 'abc-1' })).toBe(`${settings.launchCmd} --resume abc-1`)
+    expect(launchCommand({})).toBe(settings.launchCmd)
+  })
   test('slugify keeps letters of any script, drops path tricks', () => {
     expect(slugify('Мой Проект!')).toBe('Мой-Проект')
     expect(slugify('../../etc/passwd')).toBe('etcpasswd')
@@ -197,5 +203,30 @@ describe('transcript guess', async () => {
     expect(guessTranscript(['claude', '--continue'], '/w/p', conf)).toBe(join(dir, 'new.jsonl'))
     expect(guessTranscript(['claude'], '/w/p', conf)).toBeNull()
     expect(guessTranscript(['claude', '--resume', '../x'], '/w/p', conf)).toBeNull()
+  })
+})
+
+describe('usage', async () => {
+  const { parseLimits, planName, costOf } = await import('../src/daemon/usage.ts')
+
+  test('limits: the old per-window shape, unknown fields ignored', () => {
+    const l = parseLimits({ five_hour: { utilization: 12.5, resets_at: '2026-01-01T00:00:00Z' }, seven_day: { utilization: 3, resets_at: null }, seven_day_opus: null })
+    expect(l.items.map(i => [i.label, i.percent, i.resetsAt?.toISOString() ?? null])).toEqual([
+      ['5 часов', 12.5, '2026-01-01T00:00:00.000Z'], ['Неделя', 3, null],
+    ])
+    expect(l.breakdown).toBeNull()
+    expect(parseLimits({ limits: [{ kind: 'weekly_new', scope: 'x', percent: 5 }] }).items[0].label).toBe('weekly_new (x)')
+  })
+
+  test('plan name and prices', () => {
+    expect(planName({ subscriptionType: 'pro', rateLimitTier: 'default_claude_ai' })).toBe('Pro')
+    expect(planName({ subscriptionType: 'max', rateLimitTier: 'default_claude_max_5x' })).toBe('Max 5x')
+    expect(planName(null)).toBeNull()
+    const e = { id: '', ts: 0, cwd: '', input: 1e6, output: 1e6, write5m: 1e6, write1h: 1e6, read: 1e6 }
+    expect(costOf({ ...e, model: 'claude-opus-5-5' })).toBeCloseTo(4 + 20 + 5 + 8 + 0.2)
+    expect(costOf({ ...e, model: 'claude-sonnet-5-5' })).toBeCloseTo(2 + 10 + 2.5 + 4 + 0.2)
+    expect(costOf({ ...e, model: 'claude-fable-5-1' })).toBeCloseTo(10 + 50 + 12.5 + 20 + 0.25)
+    expect(costOf({ ...e, model: 'claude-haiku-5-5', input: 1000, write5m: 0, write1h: 0, read: 0 })).toBeCloseTo(0.0001 + 0.5)
+    expect(costOf({ ...e, model: 'some-new-model' })).toBeNull()
   })
 })

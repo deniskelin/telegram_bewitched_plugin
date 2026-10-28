@@ -19,6 +19,11 @@ process.env.STREAM_MIN_INTERVAL_MS = '50'
 process.env.NOTIFY_LONG_SEC = '0'
 process.env.PROJECTS_DIR = join(root, 'projects')
 process.env.MAIN_DIR = join(root, 'main')
+process.env.USERS_DIR = join(root, 'user')
+// The 1.0.x routing; the session-types tests switch these on.
+process.env.USER_SESSIONS = 'off'
+process.env.TOPIC_NO_SESSION = 'main'
+process.env.WATCHDOG_GRACE_SEC = '3600'
 writeFileSync(join(stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['111'], groups: {}, pending: {} }))
 
 export const fakeTelegram = new FakeTelegram()

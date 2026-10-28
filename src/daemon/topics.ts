@@ -8,15 +8,17 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { isOwner, loadAccess, owner, saveAccess, setPref } from '../access.ts'
+import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { fmtDuration, safeMeta } from '../format.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
-import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
+import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
-import { endSession, onManualTopic, startProject } from './launch.ts'
-import { sessionsReport, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
+import { sessionsList } from './menu.ts'
+import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
+import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -45,10 +47,16 @@ function topicName(d: Daemon, chatId: string, s: Session): string {
 /** Find or create the session's topic in the topics group. */
 export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic']> {
   const chatId = d.topicsChatId
-  // The main session lives in DMs and General, not in a topic of its own.
-  if (!chatId || s.passive || settings.topicMode === 'off' || d.isMain(s)) return (s.topic = null)
+  // Only project sessions own a topic; user and main sessions live in DMs and General.
+  if (!chatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
   const { key, kind } = topicKey(s)
   let row = d.store.topicForProject(chatId, key)
+  // Closed by the bot while the session was down: open it again.
+  if (row && row.status === 'waiting') {
+    await d.bot.api.reopenForumTopic(chatId, row.thread_id).catch(() => {})
+    d.store.setTopicStatus(chatId, row.thread_id, 'active')
+    row = d.store.topic(chatId, row.thread_id)
+  }
   if (row && row.status === 'archived') {
     const name = row.name.replace(ARCHIVE_PREFIX, '')
     const thread = row.thread_id
@@ -84,8 +92,10 @@ export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic
   return s.topic
 }
 
-/** Where unsolicited messages for a session go: its topic, the last chat, or the owner's DM. */
+/** Where unsolicited messages for a session go: its user's chat, its topic, the last chat, or the owner's DM. */
 export function sessionTarget(d: Daemon, s: Session | null): ChatRef | null {
+  const user = s ? d.userIdOf(s) : null
+  if (user) return s!.lastChat ?? { chatId: user, isPrivate: true }
   if (s?.topic) return { chatId: s.topic.chatId, threadId: s.topic.threadId, isPrivate: false }
   if (s?.lastChat) return s.lastChat
   const o = owner()
@@ -134,6 +144,8 @@ function fmtTime(sec: number): string {
 /** On connect: topic, welcome card, and a resume event with memory, recent history and queued messages. */
 export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> {
   if (s.passive) return
+  d.launching.delete(s.projectKey)
+  d.launching.delete(s.cwd)
   try {
     await ensureTopic(d, s)
   } catch (err) {
@@ -163,8 +175,10 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
         `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n'))
     }
   }
-  const all = d.store.takePending(d.isMain(s) ? MAIN_PENDING_KEY : topicKey(s).key, settings.pendingTtlH)
-  const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}: ${p.content}`
+  const role = d.roleOf(s)
+  const key = role === 'user' ? userPendingKey(d.userIdOf(s)!) : role === 'main' ? MAIN_PENDING_KEY : topicKey(s).key
+  const all = d.store.takePending(key, settings.pendingTtlH)
+  const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}`
   const handled = all.filter(p => p.meta.handled_by === 'main')
   const pending = all.filter(p => p.meta.handled_by !== 'main')
   if (handled.length) {
@@ -184,6 +198,13 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
 }
 
+/** Where a queued message came from, when it is not the session's own DM: General or a topic. */
+function pendingWhere(d: Daemon, meta: Record<string, string>): string {
+  if (!meta.chat_id?.startsWith('-')) return ''
+  const place = meta.thread_id ? `топик «${meta.topic_name ?? meta.thread_id}»` : 'General'
+  return ` (${place}; chat_id=${meta.chat_id}${meta.thread_id ? `, message_thread_id=${meta.thread_id}` : ''})`
+}
+
 function replaceStatusCard(d: Daemon, chatId: string, threadId: number | undefined, messageId: number): void {
   const key = `status_card:${chatId}:${threadId ?? 0}`
   const prev = Number(d.store.get(key))
@@ -192,6 +213,7 @@ function replaceStatusCard(d: Daemon, chatId: string, threadId: number | undefin
 }
 
 export function onSessionGone(d: Daemon, s: Session): void {
+  onSessionStopped(d, s)
   if (!s.topic || s.passive) return
   // Another live session may still serve this topic (TOPIC_MODE=project).
   if (d.activeSessions().some(o => o.topic?.threadId === s.topic!.threadId && o.topic.chatId === s.topic!.chatId)) return
@@ -210,12 +232,12 @@ let dashLast = 0
 
 export function renderDashboard(d: Daemon): string {
   const list = sortedSessions(d)
-  const main = d.mainSession()
   const lines = ['🎛 Пульт Claude Code', '']
   if (!list.length) lines.push('Нет запущенных сессий.')
   for (const s of list) {
     const ago = fmtDuration(Date.now() - s.lastActivity)
-    lines.push(`${statusLabel(s)} · ${s === main ? '👑 главная' : s.projectName}${s.branch ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
+    const user = d.userIdOf(s)
+    lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
   }
   lines.push('', `Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, '/sessions · /topics · /help')
   return lines.join('\n')
@@ -435,20 +457,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
-    const list = sortedSessions(d)
-    const kb: ReturnType<typeof button | typeof InlineKeyboard.url>[][] = []
-    const main = d.mainSession()
-    // One row per session: its name first, then the actions in a fixed order.
-    for (const s of list) {
-      const name = (s === main ? '👑 Главная' : `📂 ${s.projectName}`).slice(0, 32)
-      const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-      const row: ReturnType<typeof button | typeof InlineKeyboard.url>[] = [link ? InlineKeyboard.url(name, link) : button(name, `ses:info:${s.id}`)]
-      if (s.tmuxPane && s.status === 'working') row.push(button('⏹', `stop:${s.id}`, 'danger'))
-      if (s !== main) row.push(button('👑', `ses:dm:${s.id}`))
-      if (s.topic) row.push(button('🗄', `ses:ar:${s.id}`))
-      kb.push(row)
-    }
-    await replyReport(ctx, await sessionsReport(d), kb.length ? new InlineKeyboard(kb as never) : undefined)
+    const { text, kb } = await sessionsList(d)
+    await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
   })
 
   bot.command('topics', async ctx => {
@@ -468,7 +478,12 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!t) return void ctx.reply(`Топик «${parsed[0]}» не найден. /topics — список.`)
     const s = d.sessionForThread(chat, t.thread_id)
     const meta = { chat_id: chat, thread_id: String(t.thread_id), user: safeMeta(ctx.from!.username ?? String(ctx.from!.id)) ?? '', user_id: String(ctx.from!.id), ts: new Date().toISOString(), event: 'control_send' }
-    const main = s ? null : d.mainSession()
+    if (!s && t.project_key && settings.topicNoSession === 'launch') {
+      d.store.addPending(t.project_key, parsed[1], meta)
+      await ctx.reply('🚀 Сессия не запущена — запускаю её, сообщение дойдёт после подключения.')
+      return void launchForTopic(d, chat, t.thread_id, t.project_key).catch(err => d.log(`topic launch failed: ${err}`))
+    }
+    const main = s || settings.topicNoSession !== 'main' ? null : d.mainSession()
     if (!s && !main) {
       if (t.project_key) d.store.addPending(t.project_key, parsed[1], meta)
       return void ctx.reply('💤 Сессия не запущена — сообщение доставлю при запуске.')
@@ -534,18 +549,26 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('verbose', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
-    const v = Number((ctx.match ?? '').trim())
-    if (![0, 1, 2].includes(v)) return void ctx.reply('Формат: /verbose 0|1|2\n0 — только «думает» и ответ\n1 — + действия\n2 — + текст модели')
+    const arg = (ctx.match ?? '').trim()
+    const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${VERBOSE_INFO[l]}`).join('\n')
+    if (!arg) {
+      const p = prefsFor(String(ctx.chat!.id), threadOf(ctx))
+      return void ctx.reply(`Здесь: ${prefsBadge(p)}\n\n/verbose 0|1|2 — подробность прогресса:\n${levels}\n/notify_done off|long|always — «✅ готово» после хода`, { message_thread_id: threadOf(ctx) })
+    }
+    const v = Number(arg)
+    if (![0, 1, 2].includes(v)) return void ctx.reply(`Формат: /verbose 0|1|2\n${levels}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { verbose: v as 0 | 1 | 2 })
-    await ctx.reply(`Подробность прогресса: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Подробность прогресса: ${verboseBadge(v as 0 | 1 | 2)} ${VERBOSE_INFO[v]}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('notify_done', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: /notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`)
+    const help = `/notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`
+    if (!v) return void ctx.reply(`Здесь: ✅ ${NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
-    await ctx.reply(`Уведомления о завершении: ${v}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {
@@ -561,7 +584,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const chat = String(ctx.chat!.id)
     const thread = threadOf(ctx)
-    const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? d.mainSession()
+    const own = settings.userSessions ? d.userSession(String(ctx.from.id)) : null
+    const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? own ?? d.mainSession()
     if (!s) return void ctx.reply('Сессия не запущена.', { message_thread_id: thread })
     d.deliver(s, 'Пользователь просит сохранить память этого чата: вызови save_memory с краткой сводкой важного (цели, решения, договорённости, открытые задачи). Предыдущая сводка перезапишется — включи в новую всё нужное из старой.',
       { chat_id: chat, ...(thread != null ? { thread_id: String(thread) } : {}), event: 'remember_request', user_id: String(ctx.from.id), ts: new Date().toISOString() },
