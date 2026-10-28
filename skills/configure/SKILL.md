@@ -11,7 +11,7 @@ allowed-tools:
   - Bash(chmod *)
 ---
 
-# /telegram:configure — Telegram Channel Setup
+# /telegram-bewitched:configure — Telegram Channel Setup
 
 Writes the bot token to `<state-dir>/.env` and orients the user on access
 policy. The server reads both files at boot.
@@ -20,11 +20,11 @@ policy. The server reads both files at boot.
 per-project setups):
 
 ```bash
-echo "${TELEGRAM_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/channels/telegram}"
+echo "${TELEGRAM_BEWITCHED_STATE_DIR:-${CLAUDE_CONFIG_DIR:-$HOME/.claude}/channels/telegram-bewitched}"
 ```
 
 Use the printed path everywhere below in place of `<state-dir>`. The default
-is `~/.claude/channels/telegram`.
+is `~/.claude/channels/telegram-bewitched`.
 
 Arguments passed: `$ARGUMENTS`
 
@@ -47,10 +47,10 @@ Read both state files and give the user a complete picture:
    - Pending pairings: count, with codes and display names if any
 
 3. **What next** — end with a concrete next step based on state:
-   - No token → *"Run `/telegram:configure <token>` with the token from
+   - No token → *"Run `/telegram-bewitched:configure <token>` with the token from
      BotFather."*
    - Token set, policy is pairing, nobody allowed → *"DM your bot on
-     Telegram. It replies with a code; approve with `/telegram:access pair
+     Telegram. It replies with a code; approve with `/telegram-bewitched:access pair
      <code>`."*
    - Token set, someone allowed → *"Ready. DM your bot to reach the
      assistant."*
@@ -66,10 +66,10 @@ Drive the conversation this way:
 2. Ask: *"Is that everyone who should reach you through this bot?"*
 3. **If yes and policy is still `pairing`** → *"Good. Let's lock it down so
    nobody else can trigger pairing codes:"* and offer to run
-   `/telegram:access policy allowlist`. Do this proactively — don't wait to
+   `/telegram-bewitched:access policy allowlist`. Do this proactively — don't wait to
    be asked.
 4. **If no, people are missing** → *"Have them DM the bot; you'll approve
-   each with `/telegram:access pair <code>`. Run this skill again once
+   each with `/telegram-bewitched:access pair <code>`. Run this skill again once
    everyone's in and we'll lock it."*
 5. **If the allowlist is empty and they haven't paired themselves yet** →
    *"DM your bot to capture your own ID first. Then we'll add anyone else
@@ -77,7 +77,7 @@ Drive the conversation this way:
 6. **If policy is already `allowlist`** → confirm this is the locked state.
    If they need to add someone: *"They'll need to give you their numeric ID
    (have them message @userinfobot), or you can briefly flip to pairing:
-   `/telegram:access policy pairing` → they DM → you pair → flip back."*
+   `/telegram-bewitched:access policy pairing` → they DM → you pair → flip back."*
 
 Never frame `pairing` as the correct long-term choice. Don't skip the lockdown
 offer.
@@ -102,7 +102,11 @@ Delete the `TELEGRAM_BOT_TOKEN=` line (or the file if that's the only line).
 
 - The channels dir might not exist if the server hasn't run yet. Missing file
   = not configured, not an error.
-- The server reads `.env` once at boot. Token changes need a session restart
-  or `/reload-plugins`. Say so after saving.
+- The shared daemon reads `.env` once at boot and keeps running between
+  sessions. Token changes need a daemon restart: tell the user to run
+  `bun <plugin root>/bin/bewitched.ts daemon restart` (the plugin root is the
+  directory of this skill's plugin). Say so after saving.
+- On first run the daemon copies `.env` and `access.json` from the official
+  plugin's `~/.claude/channels/telegram/` if this state dir has none.
 - `access.json` is re-read on every inbound message — policy changes via
-  `/telegram:access` take effect immediately, no restart.
+  `/telegram-bewitched:access` take effect immediately, no restart.

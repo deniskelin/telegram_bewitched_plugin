@@ -1,11 +1,18 @@
 {
-  "name": "telegram",
-  "description": "Telegram channel for Claude Code \u2014 messaging bridge with built-in access control. Manage pairing, allowlists, and policy via /telegram:access.",
-  "version": "0.0.7",
+  "name": "telegram-bewitched",
+  "description": "Telegram channel for Claude Code with a shared polling daemon, per-project forum topics, live progress, answer buttons and persistent history. Fork of the official telegram plugin.",
+  "version": "0.1.0",
   "keywords": [
     "telegram",
     "messaging",
     "channel",
-    "mcp"
-  ]
+    "mcp",
+    "topics",
+    "streaming"
+  ],
+  "author": {
+    "name": "Денис Келин",
+    "url": "https://github.com/deniskelin"
+  },
+  "homepage": "https://github.com/deniskelin/telegram_bewitched_plugin"
 }

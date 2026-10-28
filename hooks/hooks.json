@@ -1,0 +1,23 @@
+{
+  "description": "telegram-bewitched: live progress and turn-finished notices for Telegram",
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "PreToolUse": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "PostToolUseFailure": [
+      { "matcher": "*", "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "MessageDisplay": [
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "Stop": [
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "StopFailure": [
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ]
+  }
+}
