@@ -19,6 +19,8 @@ import { endSession, launchForTopic, onManualTopic, startProject } from './launc
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
 import { limitsLine } from './usage.ts'
+import { sttEnabled } from '../voice/stt.ts'
+import { ttsEnabled } from '../voice/tts.ts'
 import { sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
@@ -568,6 +570,27 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
     await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
+  })
+
+  bot.command('voice', async ctx => {
+    if (!ctx.from || !isOwner(ctx.from.id)) return
+    const v = (ctx.match ?? '').trim()
+    const info = { off: 'только текст', mirror: 'голосом на голосовое', always: 'всегда голосом' } as const
+    const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install'}`
+    if (!v) return void ctx.reply(`Здесь: 🔊 ${info[prefsFor(String(ctx.chat!.id), threadOf(ctx)).voice]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (!(v in info)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    setPref(chatKey(ctx), { voice: v as keyof typeof info })
+    await ctx.reply(`🔊 Ответы: ${info[v as keyof typeof info]}`, { message_thread_id: threadOf(ctx) })
+  })
+
+  bot.command('transcript', async ctx => {
+    if (!ctx.from || !isOwner(ctx.from.id)) return
+    const v = (ctx.match ?? '').trim()
+    const help = `/transcript on|off — показывать расшифровку голосовых в чате${sttEnabled() ? '' : '\n⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'}`
+    if (!v) return void ctx.reply(`Здесь: 🎤 расшифровка ${prefsFor(String(ctx.chat!.id), threadOf(ctx)).transcript ? 'показывается' : 'не показывается'}\n\n${help}`, { message_thread_id: threadOf(ctx) })
+    if (v !== 'on' && v !== 'off') return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    setPref(chatKey(ctx), { transcript: v === 'on' })
+    await ctx.reply(`🎤 Расшифровка в чате: ${v === 'on' ? 'показывается' : 'не показывается'}`, { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {

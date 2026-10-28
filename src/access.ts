@@ -30,6 +30,10 @@ export type Prefs = {
   verbose?: 0 | 1 | 2
   /** Auto "done" notice after a turn. */
   notifyDone?: 'off' | 'long' | 'always'
+  /** Show the transcript of a voice message in the chat. */
+  transcript?: boolean
+  /** Answer by voice: never, when the user spoke, or always. */
+  voice?: 'off' | 'mirror' | 'always'
 }
 
 export type Access = {
@@ -112,7 +116,7 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long' }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror' }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const
