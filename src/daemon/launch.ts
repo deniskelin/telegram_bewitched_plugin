@@ -59,13 +59,14 @@ export function launchCommand(o: LaunchOptions = {}): string {
 }
 
 /**
- * Name for the Claude session (-n) and its tmux window: claude-<username> for
+ * Name for the Claude session (-n) and its tmux window: claude-<telegram id> for
  * a user's session, claude-topic-<topic> for a project. Undefined for the
  * main session: it keeps the folder name.
  */
 export function sessionName(d: Daemon, dir: string): string | undefined {
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
-  if (user) return `claude-${slugify(d.userName(user) ?? '') || user}`
+  // The Telegram id: always there and never changes, unlike a username.
+  if (user) return `claude-${user}`
   if (dir === d.mainKey()) return undefined
   const chat = d.topicsChatId
   const topic = chat ? d.store.topicForProject(chat, dir) : null
