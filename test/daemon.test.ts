@@ -275,7 +275,7 @@ describe('topics', () => {
     await main.inbound(x => x.content === 'снова главной')
   })
 
-  test('/topics shows a card per session with its tmux target, plus topics without a session', async () => {
+  test('session card has the tmux target, RC, model; /topics is a menu of topics; 👁 screen', async () => {
     d.tmuxLocation = async p => (p === '%9' ? { session: 'work', window: '2', windowName: 'tmuxed', pane: '0', tail: '> \n  ? for shortcuts   /rc active\n' } : null)
     const t = new FakeClient()
     await t.connect({ cwd: '/tmp/tmuxed', projectRoot: '/tmp/tmuxed', tmuxPane: '%9', branch: 'feat', claudePid: 99 })
@@ -294,35 +294,46 @@ describe('topics', () => {
       headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
       body: JSON.stringify({ event: 'PreToolUse', claudePid: 99, data: { session_id: 'abc-123', transcript_path: transcript, permission_mode: 'plan', tool_name: 'Bash', tool_input: { command: 'ls', description: 'List files' } } }),
     })
-    tg.push(textMessage({ text: '/topics' }))
-    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии и топики'))
-    const text = String(r.body.text)
-    expect(r.body.parse_mode).toBe('HTML')
-    expect(text.indexOf('👑 <b>Главная</b>')).toBeLessThan(text.indexOf('📂 <b>proj</b>'))
-    expect(text).toContain(`#${sessionId}`)
+    // The session card (from the /sessions menu) has everything about the session.
+    const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
+    tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
+    const c1 = await tg.waitFor('editMessageText', c => String(c.body.text).includes('📂 <b>tmuxed</b>'))
+    const text = String(c1.body.text)
+    expect(c1.body.parse_mode).toBe('HTML')
     expect(text).toContain('📂 <b>tmuxed</b> «my-box» · 🔵 работает')
     expect(text).toContain('🌿 feat · 💬 <a href=')
-    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)</blockquote>')
-    expect(text).not.toContain('🔧')
+    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
     expect(text).toContain('<blockquote expandable>🆔')
     expect(text).toContain('🖥 сессия work · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
-    expect(text).toContain('🖥 не в tmux')
-    expect(text).toContain('📱 RC ?')
-    expect(text).toContain('💤 <b>Без сессии</b>')
-    expect(text).toContain('/tmp/other')
-    expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
-    // The last action is in the session's own card.
-    const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
-    tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
-    await tg.waitFor('editMessageText', c => String(c.body.text).includes('🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>'))
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const c2 = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && String(c.body.text).includes('📂 <b>proj</b>'))
+    expect(String(c2.body.text)).toContain('🖥 не в tmux')
+    expect(String(c2.body.text)).toContain('📱 RC ?')
+
+    // /topics: a menu of topics; the one without a session can be started from its screen.
+    tg.push(textMessage({ text: '/topics' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📂 <b>Топики</b>'))
+    expect(String(r.body.text)).toContain('📁 <b>tmuxed</b> · 🔵 работает')
+    expect(String(r.body.text)).toContain('📁 <b>other</b> · 💤 без сессии')
+    const otherThread = d.store.topicForProject(group, '/tmp/other')!.thread_id
+    expect(JSON.stringify(r.body.reply_markup)).toContain(`tm:t:${otherThread}`)
+    tg.push(callbackQuery(`tm:t:${otherThread}`))
+    const ts = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>'))
+    expect(String(ts.body.text)).toContain('<code>/tmp/other</code>')
+    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:run:${otherThread}`)
+    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:ar:${otherThread}`)
+    tg.push(callbackQuery(`tm:del:${otherThread}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Удалить топик «other»'))
+    tg.push(callbackQuery(`tm:t:${otherThread}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>') && tg.callsOf('editMessageText').length > 0)
+    expect(d.store.topic(group, otherThread)).toBeTruthy()
 
     // 👁 screen of its pane with keys; the keys go to tmux, the screen is captured again.
     const pressed: string[][] = []
     d.tmuxCapture = async t => (t === '%9' ? 'Load development channels?\n❯ 1. Yes\n  2. No\n\n\n' : null)
     d.tmuxKeys = async (t, k) => { pressed.push([t, ...k]) }
-    const card = await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('tx:p9'))
-    expect(card).toBeTruthy()
+    expect(JSON.stringify(c1.body.reply_markup)).toContain('tx:p9')
     tg.push(callbackQuery('tx:p9'))
     const scr = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>%9</code>'))
     expect(String(scr.body.text)).toContain('<pre>Load development channels?\n❯ 1. Yes\n  2. No</pre>')
