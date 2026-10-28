@@ -395,6 +395,31 @@ describe('topics', () => {
       const digest = await digestReport(d)
       expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
       expect(digest).toContain('📂 proj · $0.50')
+
+      // Period reports: off by default; switched on, the day report goes out once after midnight.
+      const { sendDueReports } = await import('../src/daemon/reports.ts')
+      tg.push(textMessage({ text: '/reports' }))
+      const rs = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Отчёты о потреблении</b>'))
+      expect(String(rs.body.text)).toContain('⬜️ За сутки')
+      tg.push(callbackQuery('rp:t:day'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).includes('✅ За сутки'))
+      const tomorrow = new Date(Date.now() + 86_400_000)
+      tomorrow.setHours(0, 30, 0, 0)
+      const photos = () => tg.callsOf('sendPhoto').length
+      const before = photos()
+      await sendDueReports(d, tomorrow)
+      expect(photos()).toBe(before + 1)
+      const rep = tg.callsOf('sendMessage').at(-1)!
+      expect(String(rep.body.text)).toStartWith('📊 <b>Статистика за сутки</b>')
+      expect(String(rep.body.text)).toContain('💸 3.0 млн ток. · $0.50')
+      expect(String(rep.body.text)).toContain('• 📂 proj: $0.50')
+      await sendDueReports(d, tomorrow)
+      expect(photos()).toBe(before + 1)
+      tg.push(callbackQuery('rp:now:week'))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за неделю</b>'))
+      expect(photos()).toBe(before + 2)
+      tg.push(callbackQuery('rp:t:day'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).includes('⬜️ За сутки'))
     } finally {
       api.stop()
       delete process.env.USAGE_API_URL

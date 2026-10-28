@@ -226,7 +226,10 @@ function* jsonlFiles(dir: string, depth = 0): Generator<string> {
   }
 }
 
-/** Every reply of the last `days` (≤ 7) days across all projects; unchanged files come from the cache. */
+/** Two months and a day: a monthly report compares with the month before. */
+const CACHE_DAYS = 64
+
+/** Every reply of the last `days` (< CACHE_DAYS) days across all projects; unchanged files come from the cache. */
 export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DIR): Entry[] {
   const since = now - days * 86_400_000
   const out = new Map<string, Entry>()
@@ -238,7 +241,7 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
     } catch {
       continue
     }
-    if (st.mtimeMs < now - 8 * 86_400_000) continue
+    if (st.mtimeMs < now - CACHE_DAYS * 86_400_000) continue
     alive.add(file)
     // Nothing in the window, but keep it cached for the longer windows.
     if (st.mtimeMs < since && fileCache.has(file)) continue
@@ -250,8 +253,8 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
       } catch {
         continue
       }
-      // Always 8 days, whatever the caller asked: the cached copy serves every window up to 7 days as it slides.
-      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, now - 8 * 86_400_000) }
+      // Always CACHE_DAYS, whatever the caller asked: the cached copy serves every window as it slides.
+      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, now - CACHE_DAYS * 86_400_000) }
       fileCache.set(file, c)
     }
     for (const e of c.entries) if (e.ts >= since) out.set(e.id.startsWith('line:') ? `${file}:${e.id}` : e.id, e)
@@ -264,23 +267,23 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
 // Report
 // --------------------------------------------------------------------------
 
-type Sum = { tokens: number; cost: number; unpriced: number }
+export type Sum = { tokens: number; cost: number; unpriced: number }
 
-function add(s: Sum, e: Entry): void {
+export function add(s: Sum, e: Entry): void {
   s.tokens += e.input + e.output + e.write5m + e.write1h + e.read
   const c = costOf(e)
   if (c == null) s.unpriced++
   else s.cost += c
 }
 
-function fmtTok(n: number): string {
+export function fmtTok(n: number): string {
   if (n >= 1e9) return `${(n / 1e9).toFixed(1)} млрд`
   if (n >= 1e6) return `${(n / 1e6).toFixed(1)} млн`
   if (n >= 1e3) return `${Math.round(n / 1e3)} тыс.`
   return String(n)
 }
 
-function fmtSum(s: Sum): string {
+export function fmtSum(s: Sum): string {
   return `${fmtTok(s.tokens)} ток. · $${s.cost.toFixed(2)}${s.unpriced ? ` (+${s.unpriced} без цены)` : ''}`
 }
 
@@ -299,7 +302,7 @@ export function bar(percent: number): string {
 }
 
 /** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
-function ownerOf(d: Daemon, cwd: string): string {
+export function ownerOf(d: Daemon, cwd: string): string {
   if (!cwd) return '❔ неизвестно'
   const rel = relative(settings.usersDir, cwd)
   const user = /^(\d+)(\/|$)/.exec(rel)?.[1]
