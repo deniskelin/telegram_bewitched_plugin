@@ -65,6 +65,26 @@ function fileName(p: unknown): string {
   return typeof p === 'string' ? p.split('/').slice(-2).join('/') : '?'
 }
 
+/** This plugin's own tools, as people would say it. */
+const OWN_TOOLS: Record<string, string> = {
+  reply: '💬 ответ в Telegram',
+  ask_user: '❓ вопрос с кнопками',
+  notify: '🔔 уведомление',
+  react: '👍 реакция на сообщение',
+  edit_message: '✏️ правка сообщения',
+  download_attachment: '📎 скачивание вложения',
+  get_history: '📜 чтение истории чата',
+  search_messages: '🔎 поиск по сообщениям',
+  get_message: '📜 чтение сообщения',
+  save_memory: '🧠 сохранение памяти чата',
+  read_memory: '🧠 чтение памяти чата',
+  list_topics: '📋 список топиков',
+  create_topic: '➕ создание топика',
+  rename_topic: '✏️ переименование топика',
+  archive_topic: '🗄 архивирование топика',
+  delete_topic: '🗑 удаление топика',
+}
+
 /** One progress line for a tool call: "🔧 Bash: npm test". */
 export function summarizeTool(name: string, input: Record<string, unknown> | undefined): string {
   const i = input ?? {}
@@ -82,7 +102,8 @@ export function summarizeTool(name: string, input: Record<string, unknown> | und
     case 'TodoWrite': line = `📋 план`; break
     default: {
       const m = /^mcp__(.+?)__(.+)$/.exec(name)
-      line = m ? `🔌 ${m[1]}: ${m[2]}` : `🔧 ${name}`
+      const own = m && isOwnTool(name) ? OWN_TOOLS[m[2]] : undefined
+      line = own ?? (m ? `🔌 ${m[1]}: ${m[2]}` : `🔧 ${name}`)
     }
   }
   return maskSecrets(line)

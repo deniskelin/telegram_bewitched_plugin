@@ -29,6 +29,8 @@ describe('format', () => {
     expect(summarizeTool('Bash', { command: 'npm test', description: 'Run tests' })).toBe('💻 Run tests')
     expect(summarizeTool('Read', { file_path: '/root/projects/x/src/a.ts' })).toBe('📖 src/a.ts')
     expect(summarizeTool('mcp__github__create_pr', {})).toBe('🔌 github: create_pr')
+    expect(summarizeTool('mcp__plugin_telegram-bewitched_telegram__reply', { text: 'hi' })).toBe('💬 ответ в Telegram')
+    expect(summarizeTool('mcp__plugin_telegram-bewitched_telegram__new_tool', {})).toBe('🔌 plugin_telegram-bewitched_telegram: new_tool')
     expect(isOwnTool('mcp__plugin_telegram-bewitched_telegram__reply')).toBe(true)
     expect(isOwnTool('Bash')).toBe(false)
   })
