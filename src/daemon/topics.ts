@@ -137,8 +137,8 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
     d.log(`topic for ${s.projectKey} failed: ${err}`)
   }
   const chat = sessionTarget(d, s)
-  if (s.topic) {
-    s.lastChat = chat
+  if (s.topic) s.lastChat = chat
+  if (s.topic && !s.reconnect) {
     const card = [
       '🟢 Сессия подключена',
       `📁 ${s.cwd}`,
@@ -149,7 +149,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
 
   const parts: string[] = []
-  if (chat) {
+  if (chat && !s.reconnect) {
     const mem = readMemory(chat.chatId, chat.threadId)
     if (mem) parts.push(`Память этого чата (save_memory):\n${mem.trim()}`)
     const hist = d.store.history(chat.chatId, chat.threadId ?? null, settings.resumeLastN)

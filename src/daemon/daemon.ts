@@ -38,6 +38,7 @@ export type Session = {
   turn: { start: number; replied: boolean } | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
+  reconnect: boolean
 }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
@@ -176,6 +177,7 @@ export class Daemon {
       lastChat: null,
       turn: null,
       notes: [],
+      reconnect: h.reconnect === true,
     }
     this.sessions.set(id, s)
     this.log(`session ${id} connected: ${projectKey}${h.passive ? ' (passive)' : ''} pid=${h.claudePid}`)

@@ -12,6 +12,8 @@ export type Hello = {
   branch: string | null
   tmuxPane: string | null
   passive: boolean
+  /** Same Claude session reconnecting (daemon restart): skip the welcome card and resume summary. */
+  reconnect?: boolean
 }
 
 export type ClientMsg =
