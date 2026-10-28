@@ -178,3 +178,24 @@ describe('transcript', async () => {
     expect(remoteControl(['claude', '--rc'], '/', null, undefined)).toEqual({ on: true, via: 'flag' })
   })
 })
+
+describe('transcript guess', async () => {
+  const { guessTranscript, projectTranscriptDir } = await import('../src/daemon/transcript.ts')
+  const { mkdtempSync, mkdirSync, writeFileSync, utimesSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('--resume names the file, --continue picks the newest, otherwise unknown', () => {
+    const conf = mkdtempSync(join(tmpdir(), 'gt-'))
+    expect(projectTranscriptDir('/root/projects/telegram_bewitched_plugin', conf)).toBe(join(conf, 'projects', '-root-projects-telegram-bewitched-plugin'))
+    const dir = projectTranscriptDir('/w/p', conf)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'old.jsonl'), '')
+    writeFileSync(join(dir, 'new.jsonl'), '')
+    utimesSync(join(dir, 'old.jsonl'), 1, 1)
+    expect(guessTranscript(['claude', '--resume', 'abc-1'], '/w/p', conf)).toBe(join(dir, 'abc-1.jsonl'))
+    expect(guessTranscript(['claude', '--continue'], '/w/p', conf)).toBe(join(dir, 'new.jsonl'))
+    expect(guessTranscript(['claude'], '/w/p', conf)).toBeNull()
+    expect(guessTranscript(['claude', '--resume', '../x'], '/w/p', conf)).toBeNull()
+  })
+})

@@ -4,7 +4,10 @@
  * session (last remote_session_change) and the /rename title.
  */
 
+import { readdirSync, statSync } from 'fs'
 import { open } from 'fs/promises'
+import { join } from 'path'
+import { CONFIG_DIR } from '../config.ts'
 
 const CHUNK = 1024 * 1024
 
@@ -78,4 +81,28 @@ export async function transcriptInfo(path: string): Promise<TranscriptInfo | nul
     return null
   }
   return info
+}
+
+/** ~/.claude/projects/<cwd with every non-alphanumeric char as "-">. */
+export function projectTranscriptDir(cwd: string, configDir = CONFIG_DIR): string {
+  return join(configDir, 'projects', cwd.replace(/[^a-zA-Z0-9]/g, '-'))
+}
+
+/**
+ * Transcript of a session from its own arguments: --resume <id> names it,
+ * --continue picks the newest one in the folder. Null when unknown.
+ */
+export function guessTranscript(argv: string[], cwd: string, configDir = CONFIG_DIR): string | null {
+  const dir = projectTranscriptDir(cwd, configDir)
+  const i = argv.findIndex(a => a === '--resume' || a === '-r')
+  const id = i >= 0 ? argv[i + 1] : argv.find(a => a.startsWith('--resume='))?.slice('--resume='.length)
+  if (id && /^[\w-]+$/.test(id)) return join(dir, `${id}.jsonl`)
+  if (!argv.includes('--continue') && !argv.includes('-c')) return null
+  try {
+    const files = readdirSync(dir).filter(f => f.endsWith('.jsonl'))
+    files.sort((a, b) => statSync(join(dir, b)).mtimeMs - statSync(join(dir, a)).mtimeMs)
+    return files[0] ? join(dir, files[0]) : null
+  } catch {
+    return null
+  }
 }
