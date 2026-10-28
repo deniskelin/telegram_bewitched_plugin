@@ -150,12 +150,12 @@ function threadOf(ctx: Context): number | undefined {
 }
 
 /** This chat's reminders (in a topic: the topic's), with a 🗑 for each. */
-function remindersScreen(d: Daemon, chatId: string, threadId: number | undefined): { text: string; kb: InlineKeyboard } {
+export function remindersScreen(d: Daemon, chatId: string, threadId: number | undefined): { text: string; kb: InlineKeyboard } {
   const mine = listReminders(d).filter(r => r.chatId === chatId && r.threadId === threadId).sort((a, b) => a.at - b.at)
   const lines = [`⏰ <b>Напоминания</b> (${mine.length})`]
   for (const r of mine) lines.push(`• ${fmtWhen(r)} — ${escapeHtml(r.text.length > 100 ? r.text.slice(0, 99) + '…' : r.text)}`)
   if (!mine.length) lines.push('Нет. ' + escapeHtml(USAGE.split('\n')[0]))
-  const kb = new InlineKeyboard(mine.slice(0, 20).map(r => [button(clip(`🗑 ${fmtWhen(r)} · ${r.text}`, 40), `rm:del:${r.id}`)]))
+  const kb = new InlineKeyboard([...mine.slice(0, 20).map(r => [button(clip(`🗑 ${fmtWhen(r)} · ${r.text}`, 40), `rm:del:${r.id}`)]), [button('« Меню', 'hub:main')]])
   return { text: lines.join('\n'), kb }
 }
 

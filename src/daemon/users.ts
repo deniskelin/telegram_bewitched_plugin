@@ -125,7 +125,7 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
   return done
 }
 
-function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
+export function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   const [first, ...rest] = loadAccess().allowFrom
   const lines = ['👥 <b>Пользователи</b>', `👑 ${escapeHtml(label(d, first ?? '?'))} — владелец`]
   const kb: ReturnType<typeof button>[][] = []
@@ -135,7 +135,7 @@ function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
     kb.push([button(clip(`🚫 ${label(d, id)}`, 40), `ur:ask:${id}`)])
   }
   if (!rest.length) lines.push('', 'Кроме вас — никого.')
-  kb.push([button('👥 Пригласить', 'inv:start')])
+  kb.push([button('👥 Пригласить', 'inv:start'), button('« Меню', 'hub:main')])
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb) }
 }
 

@@ -43,6 +43,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
     else rows.at(-1)!.push(b)
   }
   rows.push([...(d.permissions.size ? [button(`🔐 Разрешения (${d.permissions.size})`, 'sm:perms')] : []), button('👥 Пригласить', 'inv:start'), button('🔄 Обновить', 'sm:list')])
+  rows.push([button('« Меню', 'hub:main')])
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
@@ -254,6 +255,6 @@ export function permissionsScreen(d: Daemon): Screen {
     rows.push([button(clip(`✅ ${p.tool_name} · ${who}`, 40), `perm:allow:${rid}`, 'success'), button('❌', `perm:deny:${rid}`, 'danger')])
   }
   if (!items.length) lines.push('Ничего не ждёт.')
-  rows.push([button('« К сессиям', 'sm:list'), button('🔄', 'sm:perms')])
+  rows.push([button('« К сессиям', 'sm:list'), button('🔄', 'sm:perms'), button('« Меню', 'hub:main')])
   return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }

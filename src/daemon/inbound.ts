@@ -29,6 +29,8 @@ import { handleReportCallback, registerReportCommands } from './reports.ts'
 import { handleInviteCallback, registerInviteCommands } from './invite.ts'
 import { handleUserCallback, registerUserCommands } from './users.ts'
 import { handleTopicMenu } from './topicmenu.ts'
+import { handleServerCallback, registerServerCommands } from './server.ts'
+import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -439,6 +441,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   registerReportCommands(d, bot)
   registerInviteCommands(d, bot)
   registerUserCommands(d, bot)
+  registerServerCommands(d, bot)
+  registerHubCommands(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -462,27 +466,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.command('help', async ctx => {
     if (ctx.chat.type === 'private' && !dmCommandGate(ctx)) return
     if (ctx.chat.type !== 'private' && !isOwner(ctx.from!.id)) return
-    await ctx.reply([
-      'Пульт (личка или General группы):',
-      '/sessions — запущенные сессии',
-      '/permissions — ждущие запросы разрешений',
-      '/topics — все топики',
-      '/send <топик> <текст> — написать в сессию другого топика',
-      '/broadcast <текст> — во все сессии',
-      '/rename <топик> | <имя>, /archive <топик>, /delete <топик>',
-      '/main [id|reset] — главная сессия: личка, General и топики без своей сессии',
-      '/new_session <имя|путь> — новый проект и сессия в tmux',
-      'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
-      '',
-      'В любом чате/топике:',
-      '/remind <когда> <текст> — напоминание (30m, 2h, 18:30, завтра 9:00, каждый день 9:00), /reminders — список',
-      '/verbose [0|1|2] — подробность прогресса: 🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели',
-      '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
-      '/voice off|mirror|always — отвечать голосом, /transcript on|off — показывать расшифровку голосовых',
-      '/remember — сохранить память чата, /forget — стереть историю',
-      '',
-      'Только в личке: /invite — пригласить пользователя, /users — пользователи и удаление доступа, /usage — лимиты подписки и расход, /digest — итоги дня, /reports — отчёты за день/неделю/месяц с графиком, /connect_group, /group, /disconnect_group, /status',
-    ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
+    const { text, kb } = helpScreen()
+    await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
   bot.command('status', async ctx => {
@@ -530,6 +515,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
     if (await handleUserCallback(d, ctx, data)) return
+    if (await handleServerCallback(d, ctx, data)) return
+    if (await handleHubCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return

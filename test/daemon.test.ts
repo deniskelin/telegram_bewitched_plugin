@@ -1081,6 +1081,60 @@ describe('voice', () => {
   }, 20_000)
 })
 
+describe('server stats', () => {
+  test('/server: CPU, memory, disks, sessions; 🔄 refreshes; owner only', async () => {
+    tg.push(textMessage({ text: '/server' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const text = String(r.body.text)
+    for (const part of ['⚙️ CPU: <b>', '🧠 Память: <b>', '💾 Диск /: <b>', '🤖 Claude Code:', '🔥 <b>Больше всего CPU</b>', '🐘 <b>Больше всего памяти</b>']) expect(text).toContain(part)
+    expect(JSON.stringify(r.body.reply_markup)).toContain('srv:refresh')
+    tg.push(callbackQuery('srv:refresh'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const before = tg.callsOf('sendMessage').length
+    tg.push(textMessage({ from: 333, text: '/server' }))
+    await Bun.sleep(1500)
+    expect(tg.callsOf('sendMessage').slice(before).some(c => String(c.body.text).startsWith('🖥'))).toBe(false)
+  }, 15_000)
+})
+
+describe('menu', () => {
+  test('/menu leads to every section and back; chat settings are toggled with buttons', async () => {
+    const { prefsFor } = await import('../src/access.ts')
+    tg.push(textMessage({ text: '/menu' }))
+    const m = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Меню</b>'))
+    const kb = JSON.stringify(m.body.reply_markup)
+    for (const cb of ['sm:list', 'tm:list', 'hub:stats', 'hub:people', 'hub:rem', 'hub:set', 'hub:help']) expect(kb).toContain(cb)
+
+    const open = async (data: string, startsWith: string) => {
+      tg.push(callbackQuery(data))
+      return tg.waitFor('editMessageText', c => String(c.body.text).startsWith(startsWith), 6000)
+    }
+    expect(JSON.stringify((await open('hub:stats', '📊 <b>Статистика</b>')).body.reply_markup)).toContain('srv:refresh')
+    expect(JSON.stringify((await open('hub:people', '👥 <b>Люди</b>')).body.reply_markup)).toContain('inv:start')
+    await open('hub:rem', '⏰ <b>Напоминания</b>')
+    await open('hub:help', '❓ <b>Помощь</b>')
+    const list = await open('sm:list', '📋 <b>Сессии</b>')
+    expect(JSON.stringify(list.body.reply_markup)).toContain('hub:main')
+    await open('hub:main', '🎛 <b>Меню</b>')
+
+    const set = await open('hub:set', '⚙️ <b>Настройки в этой личке</b>')
+    expect(JSON.stringify(set.body.reply_markup)).toContain('hub:vo:always')
+    tg.push(callbackQuery('hub:v:2'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Подробность прогресса: 📢2'))
+    expect(prefsFor('111').verbose).toBe(2)
+    tg.push(callbackQuery('hub:vo:off'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Ответы: текстом'))
+    expect(prefsFor('111').voice).toBe('off')
+    tg.push(callbackQuery('hub:v:1'))
+    tg.push(callbackQuery('hub:vo:mirror'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Ответы: голосом на голосовое'))
+
+    tg.push(callbackQuery('hub:stats', { from: 444 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(tg.callsOf('setMyCommands').at(-1)?.body.commands).toBeTruthy()
+  }, 20_000)
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

@@ -127,19 +127,12 @@ void d.startPolling(bot => {
   registerTopicCommands(d, bot)
   registerLaunchCommands(d, bot)
   registerInbound(d, bot, TOKEN)
+  // A short menu: everything else is a button in /menu (old commands still work).
   void bot.api.setMyCommands([
-    { command: 'sessions', description: 'Запущенные сессии' },
-    { command: 'topics', description: 'Топики проектов' },
-    { command: 'connect_group', description: 'Подключить группу с топиками' },
-    { command: 'new_session', description: 'Новый проект и сессия в tmux' },
-    { command: 'reminders', description: 'Напоминания' },
-    { command: 'invite', description: 'Пригласить пользователя' },
-    { command: 'users', description: 'Пользователи и удаление доступа' },
+    { command: 'menu', description: 'Меню: сессии, статистика, люди, настройки' },
+    { command: 'sessions', description: 'Сессии' },
     { command: 'usage', description: 'Лимиты подписки и расход' },
-    { command: 'digest', description: 'Итоги дня' },
-    { command: 'reports', description: 'Отчёты о потреблении с графиком' },
-    { command: 'status', description: 'Состояние бота и демона' },
-    { command: 'help', description: 'Команды' },
+    { command: 'help', description: 'Помощь' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})
 }).catch(err => {
   log(`startup failed: ${err}`)

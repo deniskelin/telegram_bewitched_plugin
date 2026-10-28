@@ -47,7 +47,7 @@ export function topicsList(d: Daemon, chatId: string, archived = false): Screen 
   }
   kb.push(archived
     ? [button('« Рабочие топики', 'tm:list')]
-    : [...(inArchive ? [button(`🗄 Архив (${inArchive})`, 'tm:arc')] : []), button('🔄 Обновить', 'tm:list')])
+    : [...(inArchive ? [button(`🗄 Архив (${inArchive})`, 'tm:arc')] : []), button('🔄 Обновить', 'tm:list'), button('« Меню', 'hub:main')])
   return { text, kb: new InlineKeyboard(kb as never) }
 }
 

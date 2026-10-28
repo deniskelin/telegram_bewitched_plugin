@@ -225,13 +225,14 @@ export function startReports(d: Daemon): void {
 
 const WHEN: Record<Kind, string> = { day: 'в 00:00 за прошедшие сутки', week: 'в понедельник за прошлую неделю', month: '1-го числа за прошлый месяц' }
 
-function settingsScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
+export function reportsScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   const on = reportSettings(d)
   const lines = ['📊 <b>Отчёты о потреблении</b>', 'График расхода и статистика приходят сюда, когда период закончился.', '']
   for (const k of KINDS) lines.push(`${on[k] ? '✅' : '⬜️'} ${KIND_NAME[k][0].toUpperCase() + KIND_NAME[k].slice(1)} — ${WHEN[k]}`)
   const kb = new InlineKeyboard([
     KINDS.map(k => button(`${on[k] ? '✅' : '⬜️'} ${k === 'day' ? 'День' : k === 'week' ? 'Неделя' : 'Месяц'}`, `rp:t:${k}`, on[k] ? 'success' : undefined)),
     KINDS.map(k => button(`📨 ${k === 'day' ? 'Вчера' : k === 'week' ? 'Прошл. неделя' : 'Прошл. месяц'}`, `rp:now:${k}`)),
+    [button('« Статистика', 'hub:stats')],
   ])
   return { text: lines.join('\n'), kb }
 }
@@ -239,7 +240,7 @@ function settingsScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
 export function registerReportCommands(d: Daemon, bot: Bot): void {
   bot.command('reports', async ctx => {
     if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
-    const { text, kb } = settingsScreen(d)
+    const { text, kb } = reportsScreen(d)
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb })
   })
 }
@@ -256,7 +257,7 @@ export async function handleReportCallback(d: Daemon, ctx: Context, data: string
     const on = !reportSettings(d)[kind]
     setReport(d, kind, on)
     await ctx.answerCallbackQuery({ text: `${on ? '✅ Включён' : '⬜️ Выключен'} отчёт ${KIND_NAME[kind]}` }).catch(() => {})
-    const { text, kb } = settingsScreen(d)
+    const { text, kb } = reportsScreen(d)
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {})
     return true
   }
