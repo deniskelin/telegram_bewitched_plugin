@@ -75,6 +75,8 @@ d.launchSession = async dir => { launched.push(dir); return '3' }
 
 const client = new FakeClient()
 let sessionId = ''
+const mainDir = process.env.MAIN_DIR!
+let main = new FakeClient()
 
 beforeAll(async () => {
   d.listen()
@@ -90,24 +92,36 @@ beforeAll(async () => {
 
 afterAll(async () => {
   client.close()
+  main.close()
   await d.bot.stop()
   tg.stop()
 })
 
 describe('DM flow', () => {
-  test('inbound DM reaches the session and opens a draft stream', async () => {
+  test('DM without a main session is queued and reaches the main session when it connects', async () => {
+    tg.push(textMessage({ text: 'есть кто?' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('💤 Главная сессия не запущена'))
+    await main.connect({ cwd: mainDir, projectRoot: null, claudePid: 777 })
+    const resume = await main.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('есть кто?')
+    expect(resume.meta.pending_count).toBe('1')
+    expect(client.msgs.some(m => m.t === 'inbound')).toBe(false)
+  })
+
+  test('inbound DM reaches the main session, not the project session, and opens a draft stream', async () => {
     tg.push(textMessage({ text: 'привет' }))
-    const m = await client.inbound(x => x.content === 'привет')
+    const m = await main.inbound(x => x.content === 'привет')
     expect(m.meta.chat_id).toBe('111')
     expect(m.meta.user).toBe('den')
     await tg.waitFor('sendMessageDraft')
+    expect(client.msgs.some(x => x.t === 'inbound')).toBe(false)
   })
 
   test('reply sends the answer and records history', async () => {
-    const r = await client.call('reply', { chat_id: '111', text: 'ответ' })
+    const r = await main.call('reply', { chat_id: '111', text: 'ответ' })
     expect(r.ok).toBe(true)
     await tg.waitFor('sendMessage', c => c.body.text === 'ответ')
-    const h = await client.call('get_history', { chat_id: '111' })
+    const h = await main.call('get_history', { chat_id: '111' })
     expect(h.text).toContain('привет')
     expect(h.text).toContain('bot: ответ')
   })
@@ -115,12 +129,12 @@ describe('DM flow', () => {
   test('non-allowlisted sender is dropped', async () => {
     tg.push(textMessage({ from: 222, text: 'чужой' }))
     await Bun.sleep(300)
-    expect(client.msgs.some(m => m.t === 'inbound' && (m as Inbound).content === 'чужой')).toBe(false)
+    expect(main.msgs.some(m => m.t === 'inbound' && (m as Inbound).content === 'чужой')).toBe(false)
   })
 
   test('reply-to and quote are enriched', async () => {
     tg.push(textMessage({ text: 'а это?', replyTo: { message_id: 1000, date: 0, chat: { id: 111, type: 'private' }, from: { id: 999, is_bot: true, first_name: 'Test' }, text: 'исходное сообщение бота' }, extra: { quote: { text: 'исходное', position: 0 } } }))
-    const m = await client.inbound(x => x.content === 'а это?')
+    const m = await main.inbound(x => x.content === 'а это?')
     expect(m.meta.reply_to_from).toBe('bot')
     expect(m.meta.reply_to_text).toBe('исходное сообщение бота')
     expect(m.meta.quote_text).toBe('исходное')
@@ -130,7 +144,7 @@ describe('DM flow', () => {
     const passive = new FakeClient()
     await passive.connect({ passive: true, claudePid: 1 })
     tg.push(textMessage({ text: 'только активной' }))
-    await client.inbound(x => x.content === 'только активной')
+    await main.inbound(x => x.content === 'только активной')
     expect(passive.msgs.some(m => m.t === 'inbound')).toBe(false)
     const r = await passive.call('reply', { chat_id: '111', text: 'x' })
     expect(r.ok).toBe(false)
@@ -196,23 +210,66 @@ describe('topics', () => {
     await tg.waitFor('deleteMessage')
   })
 
-  test('topic of an offline project queues messages and delivers them on reconnect', async () => {
+  test('topic without a session goes to the main session; the project session later sees it as handled', async () => {
     const other = new FakeClient()
     await other.connect({ cwd: '/tmp/other', projectRoot: '/tmp/other', claudePid: 5 })
-    const topic = await tg.waitFor('createForumTopic', c => c.body.name === 'other')
+    await tg.waitFor('createForumTopic', c => c.body.name === 'other')
     other.close()
     await Bun.sleep(200)
     const thread = Number((d.store.topicForProject(group, '/tmp/other'))!.thread_id)
-    void topic
     tg.push(textMessage({ chat: Number(group), text: 'ты тут?', thread }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('💤'))
+    const m = await main.inbound(x => x.content === 'ты тут?')
+    expect(m.meta.thread_id).toBe(String(thread))
+    const r = await main.call('reply', { chat_id: group, message_thread_id: String(thread), text: 'я за него' })
+    expect(r.ok).toBe(true)
+    const ans = await tg.waitFor('sendMessage', c => c.body.text === 'я за него')
+    expect(ans.body.message_thread_id).toBe(thread)
 
     const again = new FakeClient()
     await again.connect({ cwd: '/tmp/other', projectRoot: '/tmp/other', claudePid: 6 })
     const resume = await again.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('уже ответила главная сессия')
     expect(resume.content).toContain('ты тут?')
+    expect(resume.meta.pending_count).toBe('0')
+    again.close()
+  })
+
+  test('without a main session an offline topic queues messages and delivers them on reconnect', async () => {
+    main.close()
+    await Bun.sleep(200)
+    const thread = Number((d.store.topicForProject(group, '/tmp/other'))!.thread_id)
+    tg.push(textMessage({ chat: Number(group), text: 'а теперь?', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('💤 Сессия этого проекта'))
+
+    const again = new FakeClient()
+    await again.connect({ cwd: '/tmp/other', projectRoot: '/tmp/other', claudePid: 7 })
+    const resume = await again.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('а теперь?')
     expect(resume.meta.pending_count).toBe('1')
     again.close()
+    main = new FakeClient()
+    await main.connect({ cwd: mainDir, projectRoot: null, claudePid: 778 })
+  })
+
+  test('General: text goes to the main session, unknown commands do not; the main session has no topic', async () => {
+    tg.push(textMessage({ chat: Number(group), text: 'общий вопрос' }))
+    const m = await main.inbound(x => x.content === 'общий вопрос')
+    expect(m.meta.thread_id).toBeUndefined()
+    tg.push(textMessage({ chat: Number(group), text: '/nope' }))
+    await Bun.sleep(300)
+    expect(main.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === '/nope')).toBe(false)
+    expect(d.store.topicForProject(group, mainDir)).toBeFalsy()
+  })
+
+  test('/main <id> makes another session the main one; /main reset returns to MAIN_DIR', async () => {
+    tg.push(textMessage({ text: `/main ${sessionId}` }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith(`👑 Главная сессия теперь #${sessionId}`))
+    tg.push(textMessage({ text: 'теперь тебе' }))
+    await client.inbound(x => x.content === 'теперь тебе')
+    tg.push(textMessage({ text: '/main reset' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).includes('снова по MAIN_DIR'))
+    tg.push(textMessage({ text: 'снова главной' }))
+    await main.inbound(x => x.content === 'снова главной')
   })
 
   test('notify over HTTP reaches a topic by name; bad token is rejected', async () => {
