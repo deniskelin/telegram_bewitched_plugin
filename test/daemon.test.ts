@@ -440,6 +440,33 @@ describe('topics', () => {
     }
   })
 
+  test('🌿 git: status, last commits, diff as a file', async () => {
+    const { mkdtempSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { execFileSync } = await import('child_process')
+    const repo = mkdtempSync(`${tmpdir()}/repo-`)
+    const git = (...a: string[]) => execFileSync('git', ['-C', repo, '-c', 'user.name=t', '-c', 'user.email=t@t', ...a])
+    git('init', '-q', '-b', 'main')
+    writeFileSync(join(repo, 'a.txt'), 'one\n')
+    git('add', '.')
+    git('commit', '-qm', 'first commit')
+    writeFileSync(join(repo, 'a.txt'), 'two\n')
+    const c = new FakeClient()
+    await c.connect({ cwd: repo, projectRoot: repo, branch: 'main', claudePid: 1313 })
+    const s = [...d.sessions.values()].find(x => x.projectKey === repo)!
+    try {
+      tg.push(callbackQuery(`sm:git:${s.id}`))
+      const g = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🌿 <b>Git</b>') && String(x.body.text).includes(s.projectName))
+      expect(String(g.body.text)).toContain('M a.txt')
+      expect(String(g.body.text)).toContain('first commit')
+      tg.push(callbackQuery(`sm:gdf:${s.id}`))
+      const doc = await tg.waitFor('sendDocument', x => String(x.body.caption ?? '').includes(s.projectName))
+      expect(String(doc.body.caption)).toContain('1 файл')
+    } finally {
+      c.close()
+    }
+  })
+
   test('limit alerts: one notice per threshold crossed, a notice when the window resets; dashboard line', async () => {
     const { checkLimits, resetLimitsCache } = await import('../src/daemon/usage.ts')
     const { renderDashboard } = await import('../src/daemon/topics.ts')

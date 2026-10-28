@@ -4,12 +4,13 @@
  * the progress settings of its chat; « Назад returns to the list.
  */
 
-import { InlineKeyboard, type Context } from 'grammy'
+import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { isOwner, NOTIFY_DONE_INFO, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
 import { footer, passiveBlock, sessionCard, sessionChat, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
@@ -54,7 +55,10 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s !== d.mainSession() && !d.userIdOf(s)) actions.push(button('👑 Сделать главной', `sm:main:${s.id}`))
   if (s.topic) actions.push(button('🗄 В архив', `sm:ar:${s.id}`))
   if (actions.length) rows.push(actions)
-  if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) rows.push([button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`)])
+  const look: Btn[] = []
+  if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) look.push(button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`))
+  if (s.branch) look.push(button('🌿 Git', `sm:git:${s.id}`))
+  if (look.length) rows.push(look)
   if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button('🧠 Модель', `sm:mdl:${s.id}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
   if (link) rows.push([InlineKeyboard.url(`💬 Открыть топик «${s.topic!.name}»`.slice(0, 40), link)])
@@ -95,6 +99,21 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   return { toast: `➡️ ${line}`, sent: true }
 }
 
+async function gitScreen(s: Session): Promise<Screen> {
+  const back = [button('« Назад', `sm:s:${s.id}`), button('🔄', `sm:git:${s.id}`)]
+  const g = await gitInfo(s.cwd)
+  if (!g) return { text: `🌿 <code>${escapeHtml(s.cwd)}</code> — не git-репозиторий.`, kb: new InlineKeyboard([back]) }
+  const parts = [`🌿 <b>Git</b> · ${escapeHtml(s.projectName)}`, `<pre>${escapeHtml(g.status)}</pre>`]
+  if (g.log) parts.push(`Последние коммиты:\n<pre>${escapeHtml(g.log)}</pre>`)
+  if (g.pr) parts.push(`🔀 PR <a href="${escapeHtml(g.pr.url)}">#${g.pr.number}</a> · ${escapeHtml(g.pr.state.toLowerCase())} · ${escapeHtml(g.pr.title)}`)
+  let text = parts.join('\n')
+  if (text.length > MAX_MESSAGE) text = text.slice(0, MAX_MESSAGE - 1) + '…'
+  const rows: Btn[][] = [[button('📄 diff файлом', `sm:gdf:${s.id}`)]]
+  if (g.pr) rows[0].push(InlineKeyboard.url(`🔀 PR #${g.pr.number}`, g.pr.url))
+  rows.push(back)
+  return { text, kb: new InlineKeyboard(rows as never) }
+}
+
 async function show(ctx: Context, sc: Screen): Promise<void> {
   await ctx.editMessageText(sc.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: sc.kb })
     .catch(err => { if (!isMessageNotModified(err)) throw err })
@@ -122,6 +141,24 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   let toast: string | undefined
+  if (action === 'git') {
+    await answer()
+    await show(ctx, await gitScreen(s))
+    return true
+  }
+  if (action === 'gdf') {
+    const diff = await gitDiff(s.cwd)
+    if (diff == null) { await answer('Не удалось получить diff.'); return true }
+    if (!diff.trim()) { await answer('Изменений нет: рабочее дерево чистое.'); return true }
+    await answer('📄 Отправляю diff')
+    const name = `${s.projectName}${s.branch ? `-${s.branch.replace(/[^\w.-]+/g, '_')}` : ''}.diff`
+    const thread = ctx.callbackQuery?.message?.message_thread_id
+    await ctx.replyWithDocument(new InputFile(Buffer.from(diff), name), {
+      caption: `📄 git diff HEAD · ${s.projectName} · ${diff.split('\n').filter(l => /^diff --git/.test(l)).length} файл(ов)`,
+      ...(thread ? { message_thread_id: thread } : {}),
+    })
+    return true
+  }
   if (action === 'cmpn') {
     // The button under a "context is filling up" notice: keep the notice, drop the button.
     const r = await controlAction(d, s, 'cmp', undefined)
