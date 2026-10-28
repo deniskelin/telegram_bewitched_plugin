@@ -13,6 +13,7 @@ import { startHttp } from './http.ts'
 import { handlePermissionRequest, registerInbound } from './inbound.ts'
 import { handleCall } from './tools.ts'
 import { registerLaunchCommands, startIdleCloser } from './launch.ts'
+import { startLimitWatch } from './usage.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -81,6 +82,7 @@ startHttp(d)
 startQuestionExpiry(d)
 d.startIdleWatch(() => shutdown())
 startIdleCloser(d)
+startLimitWatch(d)
 setInterval(() => d.store.pruneHistory(settings.historyMaxDays), 6 * 3600_000).unref()
 log(`daemon pid=${process.pid} listening on ${SOCK_FILE}, http 127.0.0.1:${settings.httpPort}`)
 

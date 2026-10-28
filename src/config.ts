@@ -113,6 +113,12 @@ export const settings = {
   /** Pause after a key press in 👁 Экран before capturing the screen again. */
   get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
   get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },
+  /** Warn the owner when a limit crosses these percentages and when it resets ("off" = never). */
+  get limitAlerts(): number[] {
+    const v = process.env.LIMIT_ALERTS ?? '80,95'
+    return v === 'off' ? [] : v.split(',').map(Number).filter(n => n > 0 && n <= 100).sort((a, b) => a - b)
+  },
+  get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
   get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },

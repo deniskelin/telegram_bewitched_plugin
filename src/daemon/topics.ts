@@ -17,6 +17,7 @@ import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Sessi
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
 import { sessionsList } from './menu.ts'
+import { limitsLine } from './usage.ts'
 import { sessionLabel, sortedSessions, statusLabel, topicsReport } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
@@ -239,6 +240,8 @@ export function renderDashboard(d: Daemon): string {
     const user = d.userIdOf(s)
     lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
   }
+  const limits = limitsLine()
+  if (limits) lines.push('', limits)
   lines.push('', `Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, '/sessions · /topics · /help')
   return lines.join('\n')
 }
