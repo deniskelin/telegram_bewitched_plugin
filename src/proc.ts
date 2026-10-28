@@ -78,6 +78,46 @@ export function isPassiveLaunch(argv: string[]): boolean {
   return !argv.slice(flagIdx).some(a => a.includes('telegram-bewitched'))
 }
 
+function envOf(pid: number): Record<string, string> {
+  try {
+    const out: Record<string, string> = {}
+    for (const kv of readFileSync(`/proc/${pid}/environ`, 'utf8').split('\0')) {
+      const i = kv.indexOf('=')
+      if (i > 0) out[kv.slice(0, i)] = kv.slice(i + 1)
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+/**
+ * tmux pane the Claude process runs in. Plugin MCP servers may not inherit
+ * the session's environment, so read the claude process's own environ, and
+ * fall back to matching its terminal against `tmux list-panes`.
+ */
+export function tmuxPaneOf(pid: number | null): string | null {
+  if (process.env.TMUX_PANE) return process.env.TMUX_PANE
+  if (pid == null) return null
+  const fromEnv = envOf(pid).TMUX_PANE
+  if (fromEnv) return fromEnv
+  let tty: string
+  try {
+    tty = readlinkSync(`/proc/${pid}/fd/0`)
+  } catch {
+    return null
+  }
+  if (!tty.startsWith('/dev/pts/')) return null
+  try {
+    const out = execFileSync('tmux', ['list-panes', '-a', '-F', '#{pane_id} #{pane_tty}'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], timeout: 2000 })
+    for (const line of out.split('\n')) {
+      const [id, paneTty] = line.split(' ')
+      if (paneTty === tty) return id
+    }
+  } catch {}
+  return null
+}
+
 export type GitInfo = { root: string | null; branch: string | null }
 
 export function gitInfo(cwd: string): GitInfo {

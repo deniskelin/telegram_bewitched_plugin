@@ -15,7 +15,7 @@ import { z } from 'zod'
 import type { Socket } from 'bun'
 import { PROTOCOL_VERSION, SOCK_FILE, loadEnv, migrateLegacy } from './src/config.ts'
 import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from './src/ipc.ts'
-import { cmdlineOf, cwdOf, findClaudePid, gitInfo, isPassiveLaunch } from './src/proc.ts'
+import { cmdlineOf, cwdOf, findClaudePid, gitInfo, isPassiveLaunch, tmuxPaneOf } from './src/proc.ts'
 import { ensureDaemon } from './src/spawn.ts'
 import { TOOLS } from './src/client/tools.ts'
 import { INSTRUCTIONS } from './src/client/instructions.ts'
@@ -38,7 +38,7 @@ const hello: Hello = {
   cwd: projectCwd,
   projectRoot: git.root ?? projectCwd,
   branch: git.branch,
-  tmuxPane: process.env.TMUX_PANE || null,
+  tmuxPane: tmuxPaneOf(claudePid),
   passive,
 }
 
