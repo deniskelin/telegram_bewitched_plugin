@@ -232,3 +232,18 @@ describe('usage', async () => {
     expect(costOf({ ...e, model: 'some-new-model' })).toBeNull()
   })
 })
+
+describe('screen', async () => {
+  const { tmuxTarget, screenText } = await import('../src/daemon/screen.ts')
+  test('targets: only pane and window codes', () => {
+    expect(tmuxTarget('p12')).toBe('%12')
+    expect(tmuxTarget('w3')).toBe('claude:3')
+    expect(tmuxTarget('w3;kill')).toBeNull()
+    expect(tmuxTarget('x1')).toBeNull()
+  })
+  test('screen text: trailing blanks dropped, secrets masked, last 40 lines', () => {
+    expect(screenText('a  \nb\n\n\n   \n')).toBe('a\nb')
+    expect(screenText('token=sk-ant-abcdefghijklmnopqrstuvwxyz0123')).not.toContain('abcdefghijklmnop')
+    expect(screenText(Array.from({ length: 60 }, (_, i) => String(i)).join('\n')).split('\n')[0]).toBe('20')
+  })
+})

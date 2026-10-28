@@ -316,6 +316,24 @@ describe('topics', () => {
     const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
     tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
     await tg.waitFor('editMessageText', c => String(c.body.text).includes('🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>'))
+
+    // 👁 screen of its pane with keys; the keys go to tmux, the screen is captured again.
+    const pressed: string[][] = []
+    d.tmuxCapture = async t => (t === '%9' ? 'Load development channels?\n❯ 1. Yes\n  2. No\n\n\n' : null)
+    d.tmuxKeys = async (t, k) => { pressed.push([t, ...k]) }
+    const card = await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('tx:p9'))
+    expect(card).toBeTruthy()
+    tg.push(callbackQuery('tx:p9'))
+    const scr = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>%9</code>'))
+    expect(String(scr.body.text)).toContain('<pre>Load development channels?\n❯ 1. Yes\n  2. No</pre>')
+    expect(JSON.stringify(scr.body.reply_markup)).toContain(`sm:s:${tmuxed.id}`)
+    tg.push(callbackQuery('tx:p9:e'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нажато: ⏎ Enter')
+    expect(pressed).toEqual([['%9', 'Enter']])
+    tg.push(callbackQuery('tx:p9;rm', {}))
+    tg.push(callbackQuery('tx:p9:e', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    expect(pressed.length).toBe(1)
     t.close()
   })
 
@@ -627,7 +645,8 @@ describe('session types', () => {
 
   test('a DM without a user session launches it in USERS_DIR/<id>; the message arrives on connect', async () => {
     tg.push(textMessage({ text: 'привет, это я' }))
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    const launchMsg = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    expect(JSON.stringify(launchMsg.body.reply_markup)).toContain('tx:w7')
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
     expect(calls.at(-1)!.o?.name).toBe('claude-den')
     u = new FakeClient()

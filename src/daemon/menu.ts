@@ -52,6 +52,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s !== d.mainSession() && !d.userIdOf(s)) actions.push(button('👑 Сделать главной', `sm:main:${s.id}`))
   if (s.topic) actions.push(button('🗄 В архив', `sm:ar:${s.id}`))
   if (actions.length) rows.push(actions)
+  if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) rows.push([button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
   if (link) rows.push([InlineKeyboard.url(`💬 Открыть топик «${s.topic!.name}»`.slice(0, 40), link)])
 
