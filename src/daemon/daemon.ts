@@ -16,7 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
-import { tmuxLaunch, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { tmuxCapture, tmuxKeys, tmuxLaunch, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -204,6 +204,9 @@ export class Daemon {
   launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = tmuxLaunch
   /** Where a tmux pane lives. Replaced in tests. */
   tmuxLocation: (pane: string) => Promise<TmuxLocation | null> = tmuxLocation
+  /** Screen of a pane/window and key presses into it. Replaced in tests. */
+  tmuxCapture: (target: string) => Promise<string | null> = tmuxCapture
+  tmuxKeys: (target: string, keys: string[]) => Promise<void> = tmuxKeys
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd

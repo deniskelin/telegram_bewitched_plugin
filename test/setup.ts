@@ -24,6 +24,7 @@ process.env.USERS_DIR = join(root, 'user')
 process.env.USER_SESSIONS = 'off'
 process.env.TOPIC_NO_SESSION = 'main'
 process.env.WATCHDOG_GRACE_SEC = '3600'
+process.env.SCREEN_REDRAW_MS = '0'
 writeFileSync(join(stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['111'], groups: {}, pending: {} }))
 
 export const fakeTelegram = new FakeTelegram()

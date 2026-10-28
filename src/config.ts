@@ -110,6 +110,8 @@ export const settings = {
   /** Context window used for the fill percentage in session cards. */
   get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
   /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
+  /** Pause after a key press in 👁 Экран before capturing the screen again. */
+  get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
   get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },
   get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
