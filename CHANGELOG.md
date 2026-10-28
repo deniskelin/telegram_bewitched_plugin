@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- STT-сервер падал на новых версиях PyAV (`metadata_errors`): WAV от демона теперь декодируется без PyAV. Жадное декодирование по умолчанию (`STT_BEAM`, 1), замеры скорости по моделям в `docs/voice.md`.
 - **🎤 Расшифровка голосовых (этап 6):** голосовые, аудио и кружки расшифровываются до того, как попадут к Claude (`🎤 …` + `voice_transcribed`, `voice_language`, …); провайдер `openai-compatible` с цепочкой адресов; локальный faster-whisper как дочерний сервис демона с прогревом модели; `/transcript on|off`; при ошибке — исходное поведение с `stt_error`.
 - **🔊 Ответы голосом (этап 7):** `reply_voice`, `voice: true` у `reply`, `/voice off|mirror|always` (по умолчанию — голосом на голосовое); Silero (локальный сервис, поднимается по требованию), Piper, любой OpenAI-совместимый TTS; очистка markdown/кода/ссылок, OGG/Opus через ffmpeg, кэш, текст при ошибке синтеза.
 - `bewitched voice install [stt|tts]` — venv, модели, проверка, `.env`. Документация: `docs/voice.md`.
