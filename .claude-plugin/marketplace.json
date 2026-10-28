@@ -11,7 +11,7 @@
       "name": "telegram-bewitched",
       "source": "./",
       "description": "Telegram channel with a shared polling daemon, per-project forum topics, live progress, answer buttons and persistent history.",
-      "version": "1.1.1"
+      "version": "1.2.0"
     }
   ]
 }
