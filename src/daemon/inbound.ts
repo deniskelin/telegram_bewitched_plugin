@@ -13,7 +13,7 @@ import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { safeMeta } from '../format.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
-import type { ChatRef, Daemon, Session } from './daemon.ts'
+import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback } from './launch.ts'
@@ -57,25 +57,26 @@ export function enrichMeta(d: Daemon, msg: Message): Record<string, string> {
 }
 
 type Target =
-  | { kind: 'session'; session: Session; projectKey?: string }
+  /** fallback: a topic without its own session, handled by the main session. */
+  | { kind: 'session'; session: Session; projectKey?: string; fallback?: boolean }
   | { kind: 'offline'; projectKey: string }
-  | { kind: 'general' }
+  | { kind: 'main_offline' }
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
-  | { kind: 'none' }
 
 function resolveTarget(d: Daemon, chatId: string, threadId: number | undefined): Target {
-  if (chatId === d.topicsChatId) {
-    if (threadId == null) return { kind: 'general' }
+  const main = d.mainSession()
+  if (chatId === d.topicsChatId && threadId != null) {
     const t = d.store.topic(chatId, threadId)
     if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
     if (s) return { kind: 'session', session: s, projectKey: t?.project_key ?? undefined }
+    if (main) return { kind: 'session', session: main, projectKey: t?.project_key ?? undefined, fallback: true }
     if (t?.project_key) return { kind: 'offline', projectKey: t.project_key }
     return { kind: 'unbound' }
   }
-  const s = d.dmSession()
-  return s ? { kind: 'session', session: s } : { kind: 'none' }
+  // DMs and the General topic belong to the main session.
+  return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
 }
 
 // --- forward batching: several forwards within 3 s become one event ---
@@ -127,12 +128,10 @@ async function handleInbound(
 
   const target = resolveTarget(d, chatId, threadId)
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
-  if (target.kind === 'general') {
-    if (!text.startsWith('/')) await reply('🎛 Это пульт. Пишите в топике проекта или используйте /sessions, /topics, /send, /help.')
-    return
-  }
+  // Unknown commands in General are not for Claude.
+  if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
-    await reply('Этот топик не привязан к проекту. Сессии создают свои топики сами при запуске.')
+    await reply('Этот топик не привязан к проекту, а главная сессия не запущена.')
     return
   }
   if (target.kind === 'archived') {
@@ -140,11 +139,6 @@ async function handleInbound(
     await reply('🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.', new InlineKeyboard([[button('▶️ Восстановить', `tp:unar:${target.threadId}`, 'success')]]))
     return
   }
-  if (target.kind === 'none') {
-    await reply('💤 Нет запущенных сессий Claude Code.')
-    return
-  }
-
   if (access.ackReaction) {
     void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
   }
@@ -176,6 +170,13 @@ async function handleInbound(
     await reply('💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.')
     return
   }
+  if (target.kind === 'main_offline') {
+    d.store.addPending(MAIN_PENDING_KEY, text, meta)
+    await reply(`💤 Главная сессия не запущена (папка ${d.mainKey()}). Сообщение доставлю, когда она подключится.`)
+    return
+  }
+  // The project session will see what the main session answered for it.
+  if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
 
   if (msg.forward_origin) {
     const key = `${chatId}:${threadId ?? 0}:${from.id}`
@@ -325,7 +326,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       '/send <топик> <текст> — написать в сессию другого топика',
       '/broadcast <текст> — во все сессии',
       '/rename <топик> | <имя>, /archive <топик>, /delete <топик>',
-      '/use <id> — какая сессия получает личку',
+      '/main [id|reset] — главная сессия: личка, General и топики без своей сессии',
       '/new_session <имя|путь> — новый проект и сессия в tmux',
       'Новый топик в группе → проект в PROJECTS_DIR и сессия в tmux',
       '',

@@ -5,6 +5,7 @@ export const INSTRUCTIONS = [
   '',
   'Messages from Telegram arrive as <channel source="telegram-bewitched" chat_id="..." message_id="..." user="..." ts="...">. Extra attributes:',
   '- thread_id / topic_name: the forum topic the message came from. This session usually owns one topic (its project). Replies default to the right chat and topic; pass chat_id anyway.',
+  '- The main session (launched in MAIN_DIR) gets DMs from all users and the General topic, plus messages from project topics that have no session running. For those, reply into that topic: pass chat_id and message_thread_id from the message.',
   '- reply_to_message_id, reply_to_from ("bot" = your own earlier message), reply_to_text: the message the user replied to. quote_text: the part they quoted.',
   '- forward_from / forward_date: the message was forwarded from someone else — it is not the user\'s own words. Several forwards arrive batched with forward_count.',
   '- image_path: Read that file — it is a photo the sender attached. attachment_file_id: call download_attachment, then Read the returned path.',

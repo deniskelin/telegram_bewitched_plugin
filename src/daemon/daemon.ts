@@ -18,6 +18,9 @@ import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
 import { tmuxLaunch } from './launch.ts'
 
+/** Queue for messages to the main session while it is not running. */
+export const MAIN_PENDING_KEY = '__main__'
+
 export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 
 export type Session = {
@@ -114,12 +117,19 @@ export class Daemon {
     return all.find(s => !s.passive) ?? all[0] ?? null
   }
 
-  /** Session that receives DMs: the one picked with /use, else the newest. */
-  dmSession(): Session | null {
-    const picked = this.store.get('dm_session')
-    const list = this.activeSessions()
-    const byPick = list.find(s => s.id === picked)
-    if (byPick) return byPick
+  /** Folder of the main session: picked with /main, else MAIN_DIR. */
+  mainKey(): string {
+    return this.store.get('main_dir') ?? settings.mainDir
+  }
+
+  isMain(s: Session): boolean {
+    const key = this.mainKey()
+    return s.projectKey === key || s.cwd === key
+  }
+
+  /** Session for DMs, General and topics without a session of their own. */
+  mainSession(): Session | null {
+    const list = this.activeSessions().filter(s => this.isMain(s))
     list.sort((a, b) => b.connectedAt - a.connectedAt)
     return list[0] ?? null
   }
