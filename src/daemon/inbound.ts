@@ -18,7 +18,7 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
-import { usageReport } from './usage.ts'
+import { digestReport, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
 
@@ -375,7 +375,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       '/notify_done [off|long|always] — уведомление «✅ готово» после хода',
       '/remember — сохранить память чата, /forget — стереть историю',
       '',
-      'Только в личке: /usage — лимиты подписки и расход, /connect_group, /group, /disconnect_group, /status',
+      'Только в личке: /usage — лимиты подписки и расход, /digest — итоги дня, /connect_group, /group, /disconnect_group, /status',
     ].join('\n'), { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
 
@@ -404,6 +404,11 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.command('usage', async ctx => {
     if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
     await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+  })
+
+  bot.command('digest', async ctx => {
+    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    await ctx.reply(await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
   })
 
   bot.on('callback_query:data', async ctx => {

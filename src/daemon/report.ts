@@ -11,6 +11,7 @@ import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
+import { sessionCostLine } from './usage.ts'
 import { guessTranscript, transcriptInfo } from './transcript.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -135,6 +136,8 @@ export async function sessionCard(d: Daemon, s: Session, o: { lastTool?: boolean
     const fill = tr.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((tr.tokens / win) * 100)}%)` : ''
     main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
   }
+  const cost = sessionCostLine(s)
+  if (cost) main.push(cost)
   if (s.lastTool && o.lastTool !== false) {
     const tool = escapeHtml(s.lastTool.text.slice(0, 80))
     main.push(s.turn && s.lastTool.at >= s.turn.start ? `🔧 ${tool}` : `🔧 ${tool} · ${fmtDuration(now - s.lastTool.at)} назад`)

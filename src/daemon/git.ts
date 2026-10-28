@@ -35,3 +35,9 @@ export async function gitDiff(cwd: string): Promise<string | null> {
   const diff = await run('git', ['diff', 'HEAD'], cwd, 10_000)
   return diff == null ? null : maskSecrets(diff)
 }
+
+/** Subjects of commits made since `since` (all branches, no merges); null when not a repository. */
+export async function commitsSince(cwd: string, since: Date): Promise<string[] | null> {
+  const out = await run('git', ['log', '--all', '--no-merges', `--since=${since.toISOString()}`, '--format=%s'], cwd)
+  return out == null ? null : out.split('\n').filter(Boolean)
+}

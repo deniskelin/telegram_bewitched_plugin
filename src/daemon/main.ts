@@ -13,7 +13,7 @@ import { startHttp } from './http.ts'
 import { handlePermissionRequest, registerInbound } from './inbound.ts'
 import { handleCall } from './tools.ts'
 import { registerLaunchCommands, startIdleCloser } from './launch.ts'
-import { startLimitWatch } from './usage.ts'
+import { startDigest, startLimitWatch } from './usage.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -83,6 +83,7 @@ startQuestionExpiry(d)
 d.startIdleWatch(() => shutdown())
 startIdleCloser(d)
 startLimitWatch(d)
+startDigest(d)
 setInterval(() => d.store.pruneHistory(settings.historyMaxDays), 6 * 3600_000).unref()
 log(`daemon pid=${process.pid} listening on ${SOCK_FILE}, http 127.0.0.1:${settings.httpPort}`)
 
@@ -96,6 +97,7 @@ void d.startPolling(bot => {
     { command: 'connect_group', description: 'Подключить группу с топиками' },
     { command: 'new_session', description: 'Новый проект и сессия в tmux' },
     { command: 'usage', description: 'Лимиты подписки и расход' },
+    { command: 'digest', description: 'Итоги дня' },
     { command: 'status', description: 'Состояние бота и демона' },
     { command: 'help', description: 'Команды' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})

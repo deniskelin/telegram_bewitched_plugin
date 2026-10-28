@@ -10,7 +10,8 @@ import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { owner } from '../access.ts'
-import type { Daemon } from './daemon.ts'
+import type { Daemon, Session } from './daemon.ts'
+import { commitsSince } from './git.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -225,7 +226,7 @@ function* jsonlFiles(dir: string, depth = 0): Generator<string> {
   }
 }
 
-/** Every reply of the last `days` days across all projects; unchanged files come from the cache. */
+/** Every reply of the last `days` (≤ 7) days across all projects; unchanged files come from the cache. */
 export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DIR): Entry[] {
   const since = now - days * 86_400_000
   const out = new Map<string, Entry>()
@@ -237,8 +238,10 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
     } catch {
       continue
     }
-    if (st.mtimeMs < since) continue
+    if (st.mtimeMs < now - 8 * 86_400_000) continue
     alive.add(file)
+    // Nothing in the window, but keep it cached for the longer windows.
+    if (st.mtimeMs < since && fileCache.has(file)) continue
     let c = fileCache.get(file)
     if (!c || c.mtime !== st.mtimeMs || c.size !== st.size) {
       let text: string
@@ -247,8 +250,8 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
       } catch {
         continue
       }
-      // Parse a day more than asked so the cached copy stays useful as the window slides.
-      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, since - 86_400_000) }
+      // Always 8 days, whatever the caller asked: the cached copy serves every window up to 7 days as it slides.
+      c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, now - 8 * 86_400_000) }
       fileCache.set(file, c)
     }
     for (const e of c.entries) if (e.ts >= since) out.set(e.id.startsWith('line:') ? `${file}:${e.id}` : e.id, e)
@@ -395,4 +398,70 @@ export function limitsLine(): string | null {
   const l = lastLimits()
   if (!l || !l.limits.items.length) return null
   return '📊 ' + l.limits.items.map(i => `${i.label} ${Math.round(i.percent)}%`).join(' · ')
+}
+
+// --------------------------------------------------------------------------
+// Per-session cost and the daily digest
+// --------------------------------------------------------------------------
+
+function startOfDay(now: number): number {
+  const t = new Date(now)
+  t.setHours(0, 0, 0, 0)
+  return t.getTime()
+}
+
+/** "💸 сегодня $1.23 · 4.5 млн ток." for a session card; null before its first reply today. */
+export function sessionCostLine(s: Session, now = Date.now()): string | null {
+  const since = startOfDay(now)
+  const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  for (const e of collectEntries(now, 1)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
+  return sum.tokens ? `💸 сегодня $${sum.cost.toFixed(2)} · ${fmtTok(sum.tokens)} ток.` : null
+}
+
+/** What happened today: spend by session and commits per project folder. */
+export async function digestReport(d: Daemon, now = Date.now()): Promise<string> {
+  const since = startOfDay(now)
+  const entries = collectEntries(now, 1).filter(e => e.ts >= since)
+  const total: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  const byFolder = new Map<string, Sum>()
+  for (const e of entries) {
+    add(total, e)
+    const sum = byFolder.get(e.cwd) ?? { tokens: 0, cost: 0, unpriced: 0 }
+    add(sum, e)
+    byFolder.set(e.cwd, sum)
+  }
+  const folders = new Set([...byFolder.keys(), ...d.activeSessions().map(s => s.projectKey)].filter(Boolean))
+  const date = new Date(now).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
+  const out = [`🌙 <b>Итоги дня</b> · ${date}`, `💸 ${fmtSum(total)} в ценах API`]
+  const rows: { cost: number; text: string }[] = []
+  for (const dir of folders) {
+    const sum = byFolder.get(dir)
+    const commits = await commitsSince(dir, new Date(since))
+    if (!sum && !commits?.length) continue
+    const lines = [`${ownerOf(d, dir)}${sum ? ` · $${sum.cost.toFixed(2)}` : ''}${commits?.length ? ` · коммитов ${commits.length}` : ''}`]
+    for (const c of (commits ?? []).slice(0, 3)) lines.push(`   • ${escapeHtml(c.length > 80 ? c.slice(0, 79) + '…' : c)}`)
+    if ((commits?.length ?? 0) > 3) lines.push(`   … ещё ${commits!.length - 3}`)
+    rows.push({ cost: sum?.cost ?? 0, text: lines.join('\n') })
+  }
+  rows.sort((a, b) => b.cost - a.cost)
+  out.push(rows.length ? rows.map(r => r.text).join('\n') : 'Сегодня сессии ничего не делали.')
+  const limits = limitsLine()
+  if (limits) out.push(limits)
+  return out.join('\n\n')
+}
+
+/** Send the digest once a day at DIGEST_AT (checked every minute). */
+export function startDigest(d: Daemon): void {
+  setInterval(() => {
+    const at = settings.digestAt
+    const to = owner()
+    if (!at || !to) return
+    const now = new Date()
+    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
+    const key = `digest:${now.toDateString()}`
+    if (hm < at || d.store.get(key)) return
+    d.store.set(key, '1')
+    void digestReport(d).then(text => d.bot.api.sendMessage(to, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }))
+      .catch(err => d.log(`digest failed: ${err}`))
+  }, 60_000).unref?.()
 }

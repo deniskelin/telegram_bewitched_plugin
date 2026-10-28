@@ -120,6 +120,8 @@ export const settings = {
     const v = process.env.LIMIT_ALERTS ?? '80,95'
     return v === 'off' ? [] : v.split(',').map(Number).filter(n => n > 0 && n <= 100).sort((a, b) => a - b)
   },
+  /** Daily digest to the owner at this local time ("HH:MM"), or "off". */
+  get digestAt() { const v = process.env.DIGEST_AT ?? '21:00'; return /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null },
   get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
   get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
