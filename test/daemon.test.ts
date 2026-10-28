@@ -302,7 +302,8 @@ describe('topics', () => {
     expect(text).toContain(`#${sessionId}`)
     expect(text).toContain('📂 <b>tmuxed</b> «my-box» · 🔵 работает')
     expect(text).toContain('🌿 feat · 💬 <a href=')
-    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>')
+    expect(text).toContain('<blockquote>🖥 <code>tmux attach -t work:2</code>\n🛡 plan · ⏹ стоп · 📱 <a href="https://claude.ai/code/session_X">RC вкл</a>\n📣 🔔1 · ✅ после долгих ходов\n🧠 opus-5-5 · 90k из 1M (9%)</blockquote>')
+    expect(text).not.toContain('🔧')
     expect(text).toContain('<blockquote expandable>🆔')
     expect(text).toContain('🖥 сессия work · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
@@ -311,6 +312,10 @@ describe('topics', () => {
     expect(text).toContain('💤 <b>Без сессии</b>')
     expect(text).toContain('/tmp/other')
     expect(JSON.stringify(r.body.reply_markup)).toContain('tp:')
+    // The last action is in the session's own card.
+    const tmuxed = [...d.sessions.values()].find(x => x.projectKey === '/tmp/tmuxed')!
+    tg.push(callbackQuery(`sm:s:${tmuxed.id}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('🧠 opus-5-5 · 90k из 1M (9%)\n🔧 💻 List files</blockquote>'))
     t.close()
   })
 

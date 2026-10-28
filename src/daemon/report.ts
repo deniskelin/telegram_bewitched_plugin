@@ -91,7 +91,7 @@ function transcriptOf(s: Session, argv: string[]): string | null {
  * topic), the essentials in a quote (how to attach, mode/stop/RC, model and
  * context, current action) and the rest in a collapsed quote.
  */
-export async function sessionCard(d: Daemon, s: Session): Promise<string> {
+export async function sessionCard(d: Daemon, s: Session, o: { lastTool?: boolean } = {}): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
   const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
@@ -135,7 +135,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     const fill = tr.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((tr.tokens / win) * 100)}%)` : ''
     main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
   }
-  if (s.lastTool) {
+  if (s.lastTool && o.lastTool !== false) {
     const tool = escapeHtml(s.lastTool.text.slice(0, 80))
     main.push(s.turn && s.lastTool.at >= s.turn.start ? `🔧 ${tool}` : `🔧 ${tool} · ${fmtDuration(now - s.lastTool.at)} назад`)
   }
@@ -186,7 +186,8 @@ export async function topicsReport(d: Daemon, chatId: string): Promise<string[]>
   const list = sortedSessions(d)
   const rows = d.store.topics(chatId)
   const blocks = [`📋 <b>Сессии и топики</b> · сессий ${list.length}, топиков ${rows.length}`]
-  for (const s of list) blocks.push(await sessionCard(d, s))
+  // The overview leaves out the last action: it is in the session's own card in /sessions.
+  for (const s of list) blocks.push(await sessionCard(d, s, { lastTool: false }))
 
   const served = new Set(list.map(s => s.topic && `${s.topic.chatId}:${s.topic.threadId}`).filter(Boolean))
   const idle = rows.filter(t => t.status !== 'archived' && !served.has(`${t.chat_id}:${t.thread_id}`)
