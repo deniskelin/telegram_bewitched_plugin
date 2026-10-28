@@ -96,6 +96,13 @@ export const settings = {
   get topicProjects() { return str('TOPIC_PROJECTS', 'auto', ['auto', 'ask', 'off'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
   /** Folder of the main session: DMs, General and topics without a session of their own. */
+  /** A session per allowlisted user for their DMs, in USERS_DIR/<user_id>. */
+  get userSessions() { return process.env.USER_SESSIONS !== 'off' },
+  get usersDir() { return resolve(process.env.USERS_DIR || join(homedir(), 'user')) },
+  /** Close an idle user session after this many minutes (0 = never). */
+  get userIdleMin() { return num('USER_IDLE_MIN', 0) },
+  /** A project topic without a running session: launch it, let the main session answer, or only queue. */
+  get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'main', 'queue'] as const) },
   /** Context window used for the fill percentage in session cards. */
   get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },

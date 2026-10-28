@@ -16,7 +16,7 @@ import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
-import { handleLaunchCallback } from './launch.ts'
+import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -57,25 +57,44 @@ export function enrichMeta(d: Daemon, msg: Message): Record<string, string> {
 }
 
 type Target =
-  /** fallback: a topic without its own session, handled by the main session. */
+  /** fallback: a topic without a project, handled by the main session. */
   | { kind: 'session'; session: Session; projectKey?: string; fallback?: boolean }
   | { kind: 'offline'; projectKey: string }
+  | { kind: 'launch'; projectKey: string; threadId: number }
+  | { kind: 'waiting'; projectKey: string }
+  | { kind: 'user_offline'; userId: string }
   | { kind: 'main_offline' }
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
 
-function resolveTarget(d: Daemon, chatId: string, threadId: number | undefined): Target {
+/** Pending queue of a user's DM session. */
+export function userPendingKey(userId: string): string {
+  return `user:${userId}`
+}
+
+function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
+  const { chatId, threadId } = chat
   if (chatId === d.topicsChatId && threadId != null) {
     const t = d.store.topic(chatId, threadId)
     if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
     if (s) return { kind: 'session', session: s, projectKey: t?.project_key ?? undefined }
-    if (main) return { kind: 'session', session: main, projectKey: t?.project_key ?? undefined, fallback: true }
-    if (t?.project_key) return { kind: 'offline', projectKey: t.project_key }
+    if (t?.project_key) {
+      if (t.status === 'waiting') return { kind: 'waiting', projectKey: t.project_key }
+      const mode = settings.topicNoSession
+      if (mode === 'launch') return { kind: 'launch', projectKey: t.project_key, threadId }
+      if (mode === 'main' && main) return { kind: 'session', session: main, projectKey: t.project_key, fallback: true }
+      return { kind: 'offline', projectKey: t.project_key }
+    }
+    if (main) return { kind: 'session', session: main, fallback: true }
     return { kind: 'unbound' }
   }
-  // DMs and the General topic belong to the main session.
+  // A user's DMs go to their own session; General (and DMs without user sessions) to the main one.
+  if (chat.isPrivate && settings.userSessions) {
+    const s = d.userSession(fromId)
+    return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId: fromId }
+  }
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
 }
 
@@ -126,7 +145,7 @@ async function handleInbound(
     return
   }
 
-  const target = resolveTarget(d, chatId, threadId)
+  const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
   // Unknown commands in General are not for Claude.
   if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
@@ -175,6 +194,21 @@ async function handleInbound(
     await reply(`💤 Главная сессия не запущена (папка ${d.mainKey()}). Сообщение доставлю, когда она подключится.`)
     return
   }
+  if (target.kind === 'user_offline') {
+    d.store.addPending(userPendingKey(target.userId), text, meta)
+    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name).catch(err => d.log(`user launch failed: ${err}`))
+    return
+  }
+  if (target.kind === 'launch') {
+    d.store.addPending(target.projectKey, text, meta)
+    void launchForTopic(d, chatId, target.threadId, target.projectKey).catch(err => d.log(`topic launch failed: ${err}`))
+    return
+  }
+  if (target.kind === 'waiting') {
+    d.store.addPending(target.projectKey, text, meta)
+    await reply('⏳ Сессия проекта ещё не подключилась — сообщение в очереди.')
+    return
+  }
   // The project session will see what the main session answered for it.
   if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
 
@@ -198,7 +232,7 @@ function flushBatch(d: Daemon, key: string): void {
   const b = batches.get(key)
   if (!b) return
   batches.delete(key)
-  const target = resolveTarget(d, b.chat.chatId, b.chat.threadId)
+  const target = resolveTarget(d, b.chat, String(b.ctx.from?.id ?? ''))
   if (target.kind !== 'session') return
   if (b.items.length === 1) return d.deliver(target.session, b.items[0].text, b.items[0].meta, b.chat)
   const content = `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) =>
@@ -235,7 +269,10 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
   if (toTopic) void d.bot.api.sendMessage(s.topic!.chatId, text, { message_thread_id: s.topic!.threadId, reply_markup: kb }).catch(err => d.log(`permission → topic failed: ${err}`))
-  if (toDm) for (const chat of loadAccess().allowFrom) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
+  // A user's session asks only that user.
+  const user = d.userIdOf(s)
+  const dmTo = user ? [user] : loadAccess().allowFrom
+  if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
