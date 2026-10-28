@@ -4,7 +4,7 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
@@ -899,6 +899,64 @@ describe('allowlist watcher', () => {
       a.allowFrom = a.allowFrom.filter(x => x !== '777')
       saveAccess(a)
     }
+  })
+})
+
+describe('remove user', () => {
+  test('from the session card: confirmation lists what goes; then access, session window, folder, transcripts and DM data are gone', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { projectTranscriptDir } = await import('../src/daemon/transcript.ts')
+    const { addReminder, listReminders } = await import('../src/daemon/reminders.ts')
+    const { userPendingKey } = await import('../src/daemon/daemon.ts')
+    const dir = `${process.env.USERS_DIR}/888`
+    const tr = projectTranscriptDir(dir)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, 'notes.txt'), 'x'.repeat(2000))
+    mkdirSync(tr, { recursive: true })
+    writeFileSync(join(tr, 's.jsonl'), '{}')
+    const a = loadAccess()
+    a.allowFrom.push('888')
+    saveAccess(a)
+    d.store.addMessage({ chat_id: '888', thread_id: null, message_id: 1, direction: 'in', from_id: '888', from_name: 'bob', date: 1, text: 'hi', kind: 'text', file_id: null, reply_to: null, quote: null, forward: null })
+    d.store.addPending(userPendingKey('888'), 'queued', {})
+    addReminder(d, { chatId: '888', text: 'r', at: Date.now() + 3600_000, daily: false, userId: '888' })
+    const killed: string[] = []
+    d.tmuxKillWindow = async t => { killed.push(t) }
+    process.env.USER_SESSIONS = 'on'
+    const c = new FakeClient()
+    await c.connect({ cwd: dir, projectRoot: dir, tmuxPane: '%31', claudePid: 8888 })
+    const s = d.userSession('888')!
+
+    tg.push(callbackQuery(`sm:s:${s.id}`))
+    await tg.waitFor('editMessageText', x => String(x.body.text).includes(`#${s.id}`) && JSON.stringify(x.body.reply_markup ?? '').includes('ur:ask:888'))
+    tg.push(callbackQuery('ur:ask:888'))
+    const conf = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 Удалить <b>bob (888)</b>?'))
+    expect(String(conf.body.text)).toContain(`папка <code>${dir}</code> (2 КБ)`)
+    expect(String(conf.body.text)).toContain(`транскрипты Claude Code <code>${tr}</code>`)
+    expect(String(conf.body.text)).toContain(`сессия #${s.id} и её окно tmux`)
+    expect(JSON.stringify(conf.body.reply_markup)).toContain('ur:kick:888')
+
+    tg.push(callbackQuery('ur:ok:888', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === 'Удалять пользователей может только владелец.')
+    expect(loadAccess().allowFrom).toContain('888')
+
+    tg.push(callbackQuery('ur:kick:888'))
+    const res = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 <b>bob (888)</b> удалён.'))
+    expect(String(res.body.text)).toContain('✅ исключён из группы')
+    expect(loadAccess().allowFrom).not.toContain('888')
+    expect(killed).toEqual(['%31'])
+    expect(existsSync(dir)).toBe(false)
+    expect(existsSync(tr)).toBe(false)
+    expect(d.store.history('888', null, 10).length).toBe(0)
+    expect(d.store.pendingCount(userPendingKey('888'), 1000)).toBe(0)
+    expect(listReminders(d).some(r => r.chatId === '888')).toBe(false)
+    expect(tg.callsOf('banChatMember').at(-1)!.body.user_id).toBe(888)
+    expect(tg.callsOf('unbanChatMember').at(-1)!.body.only_if_banned).toBe(true)
+
+    tg.push(callbackQuery('ur:ask:111'))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === 'Владельца удалить нельзя.')
+    c.close()
+    process.env.USER_SESSIONS = 'off'
   })
 })
 
