@@ -283,6 +283,8 @@ describe('topics', () => {
     writeFileSync(transcript, [
       JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 10, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0, output_tokens: 0 } } }),
       JSON.stringify({ type: 'assistant', isSidechain: true, message: { model: 'claude-haiku-5-5', usage: { input_tokens: 5 } } }),
+      JSON.stringify({ type: 'custom-title', customTitle: 'my-box' }),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'remote_session_change', url: 'https://claude.ai/code/session_X' } }),
     ].join('\n') + '\n')
     await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',
@@ -298,7 +300,8 @@ describe('topics', () => {
     expect(text).toContain('🖥 tmux: <b>work</b> · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('tmux attach -t work:2')
     expect(text).toContain('⏹ Стоп: доступен')
-    expect(text).toContain('📱 Remote Control: вкл (/rc active в терминале)')
+    expect(text).toContain('📱 Remote Control: вкл · <a href="https://claude.ai/code/session_X">claude.ai/code/session_X</a>')
+    expect(text).toContain('🏷 имя: <b>my-box</b>')
     expect(text).toContain('📱 Remote Control: выкл')
     expect(text).toContain('🌿 <code>feat</code>')
     expect(text).toContain('🧾 <code>claude --resume abc-123</code>')

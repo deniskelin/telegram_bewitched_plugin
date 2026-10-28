@@ -9,7 +9,7 @@ import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
-import { contextInfo } from './transcript.ts'
+import { transcriptInfo } from './transcript.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 const MAX_MESSAGE = 4000
@@ -59,12 +59,14 @@ export function sortedSessions(d: Daemon): Session[] {
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
+  const tr = s.claude.transcript ? await transcriptInfo(s.claude.transcript) : null
   const lines = [
     `${isMain ? '👑 <b>Главная</b>' : `📂 <b>${escapeHtml(s.projectName)}</b>`} · ${statusLabel(s)}`,
     `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${isMain ? 'главная' : 'проектная'}`,
     `📁 <code>${escapeHtml(s.cwd)}</code>`,
   ]
   if (s.branch) lines.push(`🌿 <code>${escapeHtml(s.branch)}</code>`)
+  if (tr?.title) lines.push(`🏷 имя: <b>${escapeHtml(tr.title)}</b>`)
   if (s.topic) {
     const link = topicLink(s.topic.chatId, s.topic.threadId)
     const name = escapeHtml(s.topic.name)
@@ -79,9 +81,10 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     )
   } else lines.push(s.tmuxPane ? `🖥 tmux: панель ${escapeHtml(s.tmuxPane)} не найдена` : '🖥 не в tmux')
 
-  const rc = remoteControl(s.claudePid ? cmdlineOf(s.claudePid) : [], s.cwd, loc?.tail ?? null)
-  const rcVia = { flag: 'флаг запуска', settings: 'автоподключение в настройках', pane: '/rc active в терминале' }
-  lines.push(rc.on ? `📱 Remote Control: вкл (${rcVia[rc.via!]})` : `📱 Remote Control: выкл${loc ? '' : ' (без tmux видно только флаг и настройки)'}`)
+  const rc = remoteControl(s.claudePid ? cmdlineOf(s.claudePid) : [], s.cwd, loc?.tail ?? null, tr?.remoteUrl)
+  const rcVia = { transcript: '', flag: ' (флаг запуска)', settings: ' (автоподключение в настройках)', pane: ' (/rc active в терминале)' }
+  if (rc.url) lines.push(`📱 Remote Control: вкл · <a href="${escapeHtml(rc.url)}">${escapeHtml(rc.url.replace(/^https:\/\//, ''))}</a>`)
+  else lines.push(rc.on ? `📱 Remote Control: вкл${rcVia[rc.via!]}` : '📱 Remote Control: выкл')
 
   const perm = permissionMode(loc?.tail ?? null, s.claude.permissionMode)
   if (perm) lines.push(`🛡 Разрешения: ${escapeHtml(perm)}`)
@@ -90,7 +93,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   else if (s.tmuxPane && settings.stopMode === 'interrupt') lines.push('⏹ Стоп: доступен')
   else lines.push('⏹ Стоп: только пометка для модели')
 
-  const ctx = s.claude.transcript ? await contextInfo(s.claude.transcript) : null
+  const ctx = tr?.model && tr.tokens != null ? { model: tr.model, tokens: tr.tokens } : null
   if (ctx) {
     // Over the configured window means the real one is bigger: show the size only.
     const win = settings.contextWindow

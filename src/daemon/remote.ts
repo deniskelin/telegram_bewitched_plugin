@@ -1,7 +1,8 @@
 /**
  * Best-effort Remote Control detection from outside the Claude process.
- * Claude Code exposes no state for it, so we look at the launch flags, the
- * auto-connect setting and the "/rc active" indicator in the tmux pane.
+ * The transcript records each connect/disconnect; before the first record we
+ * fall back to the launch flags, the auto-connect setting and the "/rc active"
+ * indicator in the tmux pane.
  */
 
 import { readFileSync } from 'fs'
@@ -9,7 +10,7 @@ import { homedir } from 'os'
 import { join } from 'path'
 import { CONFIG_DIR } from '../config.ts'
 
-export type RemoteControl = { on: boolean; via: 'flag' | 'settings' | 'pane' | null }
+export type RemoteControl = { on: boolean; via: 'transcript' | 'flag' | 'settings' | 'pane' | null; url?: string }
 
 const MANAGED_SETTINGS = '/etc/claude-code/managed-settings.json'
 
@@ -45,7 +46,14 @@ export function rcFromPane(tail: string): boolean {
   return lines.some(l => /(^|\s)\/rc active\b/.test(l))
 }
 
-export function remoteControl(argv: string[], cwd: string, paneTail: string | null): RemoteControl {
+/**
+ * transcriptUrl: the last remote_session_change in the transcript — the URL
+ * while connected, null after disconnect, undefined when never recorded.
+ * It is the only signal that also covers /remote-control typed mid-session.
+ */
+export function remoteControl(argv: string[], cwd: string, paneTail: string | null, transcriptUrl?: string | null): RemoteControl {
+  if (transcriptUrl) return { on: true, via: 'transcript', url: transcriptUrl }
+  if (transcriptUrl === null) return { on: false, via: null }
   if (rcFromArgv(argv)) return { on: true, via: 'flag' }
   if (rcFromSettings(cwd)) return { on: true, via: 'settings' }
   if (paneTail != null && rcFromPane(paneTail)) return { on: true, via: 'pane' }

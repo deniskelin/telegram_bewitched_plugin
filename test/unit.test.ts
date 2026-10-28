@@ -149,3 +149,32 @@ describe('session card details', async () => {
     expect(permissionMode(null, null)).toBeNull()
   })
 })
+
+describe('transcript', async () => {
+  const { transcriptInfo } = await import('../src/daemon/transcript.ts')
+  const { remoteControl } = await import('../src/daemon/remote.ts')
+  const { mkdtempSync, writeFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('reads the latest records across chunk boundaries', async () => {
+    const f = join(mkdtempSync(join(tmpdir(), 'tr-')), 't.jsonl')
+    const filler = JSON.stringify({ type: 'user', message: { content: 'x'.repeat(4000) } })
+    writeFileSync(f, [
+      JSON.stringify({ type: 'attachment', attachment: { type: 'remote_session_change', url: 'https://claude.ai/code/old' } }),
+      JSON.stringify({ type: 'custom-title', customTitle: 'srv' }),
+      ...Array(600).fill(filler),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'remote_session_change', url: null } }),
+      JSON.stringify({ type: 'assistant', message: { model: 'm', usage: { input_tokens: 1, output_tokens: 2 } } }),
+      ...Array(300).fill(filler),
+    ].join('\n') + '\n')
+    const info = await transcriptInfo(f)
+    expect(info).toEqual({ model: 'm', tokens: 3, remoteUrl: null, title: 'srv' })
+  })
+
+  test('transcript wins over other signals; nothing recorded falls back to flags', () => {
+    expect(remoteControl(['claude', '--rc'], '/', null, null)).toEqual({ on: false, via: null })
+    expect(remoteControl(['claude'], '/', null, 'https://claude.ai/code/s')).toEqual({ on: true, via: 'transcript', url: 'https://claude.ai/code/s' })
+    expect(remoteControl(['claude', '--rc'], '/', null, undefined)).toEqual({ on: true, via: 'flag' })
+  })
+})
