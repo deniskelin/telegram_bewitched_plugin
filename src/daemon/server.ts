@@ -138,7 +138,7 @@ export async function serverReport(d: Daemon): Promise<string> {
   return lines.join('\n')
 }
 
-const KB = () => new InlineKeyboard([[button('🔄 Обновить', 'srv:refresh')]])
+const KB = () => new InlineKeyboard([[button('🔄 Обновить', 'srv:refresh'), button('« Статистика', 'hub:stats')]])
 
 export function registerServerCommands(d: Daemon, bot: Bot): void {
   bot.command('server', async ctx => {

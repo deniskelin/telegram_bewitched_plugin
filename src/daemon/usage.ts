@@ -449,10 +449,9 @@ function rescheduleRequested(d: Daemon): void {
 }
 
 /** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
-export function usageKeyboard(d: Daemon): InlineKeyboard | undefined {
+export function usageKeyboard(d: Daemon): InlineKeyboard {
   const l = lastLimits()
-  if (!l) return undefined
-  const rows = l.limits.items.flatMap((it, i) => {
+  const rows: ReturnType<typeof button>[][] = (l?.limits.items ?? []).flatMap((it, i) => {
     if (!it.resetsAt) return []
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req?.at === it.resetsAt.toISOString() ? req : null
@@ -461,7 +460,8 @@ export function usageKeyboard(d: Daemon): InlineKeyboard | undefined {
       button(`${asked?.silent ? '✅' : '🔕'} Тихо`, `lr:${i}:s`),
     ]]
   })
-  return rows.length ? new InlineKeyboard(rows) : undefined
+  rows.push([button('« Статистика', 'hub:stats')])
+  return new InlineKeyboard(rows)
 }
 
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
