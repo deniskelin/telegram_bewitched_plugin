@@ -4,7 +4,7 @@
  * (detached), or by hand: `bewitched daemon start`.
  */
 
-import { closeSync, openSync, readFileSync, rmSync, writeSync } from 'fs'
+import { linkSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { LOCK_FILE, SOCK_FILE, ensureStateDir, loadEnv, migrateLegacy, settings } from '../config.ts'
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { startQuestionExpiry } from './buttons.ts'
@@ -23,21 +23,41 @@ function log(m: string): void {
   process.stderr.write(`${new Date().toISOString()} ${m}\n`)
 }
 
-/** One daemon per state dir. A stale pid file (dead or recycled pid) is taken over. */
+/**
+ * One daemon per state dir. The pid file appears atomically, already holding
+ * the pid (written to a temp file, then hard-linked into place: link fails if
+ * the file exists), so a racing starter never sees it empty. A stale file
+ * (dead or recycled pid) is taken over; a fresh one never is.
+ */
 function acquireLock(): boolean {
-  for (let i = 0; i < 2; i++) {
-    try {
-      const fd = openSync(LOCK_FILE, 'wx', 0o600)
-      writeSync(fd, String(process.pid))
-      closeSync(fd)
-      return true
-    } catch {
-      const pid = parseInt(readFileSync(LOCK_FILE, 'utf8'), 10)
-      if (pid > 1 && pid !== process.pid && isAlive(pid) && cmdlineOf(pid).join(' ').includes('daemon/main.ts')) return false
-      rmSync(LOCK_FILE, { force: true })
+  const tmp = `${LOCK_FILE}.${process.pid}`
+  writeFileSync(tmp, String(process.pid), { mode: 0o600 })
+  try {
+    for (let i = 0; i < 3; i++) {
+      try {
+        linkSync(tmp, LOCK_FILE)
+        return true
+      } catch {}
+      let raw = ''
+      let age = 0
+      try {
+        raw = readFileSync(LOCK_FILE, 'utf8')
+        age = Date.now() - statSync(LOCK_FILE).mtimeMs
+      } catch {
+        continue // removed meanwhile: try again
+      }
+      const pid = parseInt(raw, 10)
+      const alive = pid > 1 && isAlive(pid) && cmdlineOf(pid).join(' ').includes('daemon/main.ts')
+      if (alive || (Number.isNaN(pid) && age < 10_000)) return false
+      // Still the same stale file? (Another starter may have replaced it.)
+      try {
+        if (readFileSync(LOCK_FILE, 'utf8') === raw) rmSync(LOCK_FILE, { force: true })
+      } catch {}
     }
+    return false
+  } finally {
+    rmSync(tmp, { force: true })
   }
-  return false
 }
 
 ensureStateDir()
