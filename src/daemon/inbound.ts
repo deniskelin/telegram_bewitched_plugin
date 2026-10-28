@@ -13,10 +13,11 @@ import { dmCommandGate, gate, isOwner, loadAccess } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { safeMeta } from '../format.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
-import { MAIN_PENDING_KEY, type ChatRef, type Daemon, type Session } from './daemon.ts'
+import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
+import { handleWatchdogCallback } from './watchdog.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -67,11 +68,6 @@ type Target =
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
 
-/** Pending queue of a user's DM session. */
-export function userPendingKey(userId: string): string {
-  return `user:${userId}`
-}
-
 function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
   const { chatId, threadId } = chat
@@ -87,15 +83,19 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
       if (mode === 'main' && main) return { kind: 'session', session: main, projectKey: t.project_key, fallback: true }
       return { kind: 'offline', projectKey: t.project_key }
     }
+    // A topic without a project: the author's own session (or the main one without user sessions).
+    if (settings.userSessions) return userTarget(d, fromId)
     if (main) return { kind: 'session', session: main, fallback: true }
     return { kind: 'unbound' }
   }
-  // A user's DMs go to their own session; General (and DMs without user sessions) to the main one.
-  if (chat.isPrivate && settings.userSessions) {
-    const s = d.userSession(fromId)
-    return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId: fromId }
-  }
+  // DMs and General: the author's own session; without user sessions, the main one.
+  if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
+}
+
+function userTarget(d: Daemon, userId: string): Target {
+  const s = d.userSession(userId)
+  return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId }
 }
 
 // --- forward batching: several forwards within 3 s become one event ---
@@ -196,7 +196,7 @@ async function handleInbound(
   }
   if (target.kind === 'user_offline') {
     d.store.addPending(userPendingKey(target.userId), text, meta)
-    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name).catch(err => d.log(`user launch failed: ${err}`))
+    void launchUserSession(d, target.userId, from.username ? `@${from.username}` : from.first_name, { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
     return
   }
   if (target.kind === 'launch') {
@@ -206,7 +206,7 @@ async function handleInbound(
   }
   if (target.kind === 'waiting') {
     d.store.addPending(target.projectKey, text, meta)
-    await reply('⏳ Сессия проекта ещё не подключилась — сообщение в очереди.')
+    await reply('⏳ Сессия проекта не подключена — сообщение в очереди.', new InlineKeyboard([[button('🚀 Запустить', `wd:topic:${threadId}`, 'success')]]))
     return
   }
   // The project session will see what the main session answered for it.
@@ -403,6 +403,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
+    if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
     await ctx.answerCallbackQuery().catch(() => {})
   })

@@ -103,6 +103,8 @@ export const settings = {
   get userIdleMin() { return num('USER_IDLE_MIN', 0) },
   /** Close an idle project session after this many minutes (0 = never). */
   get projectIdleMin() { return num('PROJECT_IDLE_MIN', 0) },
+  /** Wait this long after a session stops before reporting it (it may be restarted by hand). */
+  get watchdogGraceSec() { return num('WATCHDOG_GRACE_SEC', 60) },
   /** A project topic without a running session: launch it, let the main session answer, or only queue. */
   get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'main', 'queue'] as const) },
   /** Context window used for the fill percentage in session cards. */

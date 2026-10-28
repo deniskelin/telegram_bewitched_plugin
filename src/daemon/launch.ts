@@ -49,10 +49,18 @@ function run(args: string[]): Promise<string> {
  * missing). Returns the window index. The command line comes from settings,
  * never from chat input; the dir is passed as an argument, not through a shell.
  */
-export async function tmuxLaunch(dir: string, o: { continue?: boolean; name?: string } = {}): Promise<string> {
+export type LaunchOptions = { continue?: boolean; resume?: string; name?: string }
+
+/** CLAUDE_LAUNCH_CMD plus --resume <id> (ids are checked) or --continue. */
+export function launchCommand(o: LaunchOptions = {}): string {
+  if (o.resume && /^[\w-]+$/.test(o.resume)) return `${settings.launchCmd} --resume ${o.resume}`
+  return o.continue ? `${settings.launchCmd} --continue` : settings.launchCmd
+}
+
+export async function tmuxLaunch(dir: string, o: LaunchOptions = {}): Promise<string> {
   const sess = settings.tmuxSession
   const name = o.name ?? (slugify(basename(dir)) || 'claude')
-  const cmd = o.continue ? `${settings.launchCmd} --continue` : settings.launchCmd
+  const cmd = launchCommand(o)
   const hasSession = await run(['has-session', '-t', sess]).then(() => true, () => false)
   if (!hasSession) {
     await run(['new-session', '-d', '-s', sess, '-n', name, '-c', dir, cmd])
@@ -87,6 +95,7 @@ async function say(d: Daemon, chatId: string, threadId: number | undefined, html
  */
 export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null }): boolean {
   if (!s.tmuxPane) return false
+  d.ending.add(s.id) // planned: the watchdog stays quiet
   const pane = s.tmuxPane
   execFile('tmux', ['send-keys', '-t', pane, 'Escape'], () => {
     setTimeout(() => {
@@ -107,7 +116,7 @@ const RELAUNCH_MS = 10 * 60_000
 type Launch = { ok: true; window: string } | { ok: false; skipped: boolean; error: string }
 
 /** Launch once per dir until that session connects (or RELAUNCH_MS passes). */
-async function launchOnce(d: Daemon, dir: string, o: { continue?: boolean; name?: string }): Promise<Launch> {
+async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Launch> {
   const at = d.launching.get(dir)
   if (at && Date.now() - at < RELAUNCH_MS) return { ok: false, skipped: true, error: '' }
   d.launching.set(dir, Date.now())
@@ -131,31 +140,31 @@ function confirmHint(win: string): string {
   return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов.`
 }
 
-function manualCmd(dir: string, cont: boolean): string {
-  return `<pre>cd ${escapeHtml(dir)} &amp;&amp; ${escapeHtml(settings.launchCmd)}${cont ? ' --continue' : ''}</pre>`
+export function manualCmd(dir: string, o: LaunchOptions = {}): string {
+  return `<pre>cd ${escapeHtml(dir)} &amp;&amp; ${escapeHtml(launchCommand(o))}</pre>`
 }
 
 /**
  * A DM from a user whose session is not running: start it in USERS_DIR/<id>
  * (continuing the last conversation there). The message is already queued.
  */
-export async function launchUserSession(d: Daemon, userId: string, name: string): Promise<void> {
+export async function launchUserSession(d: Daemon, userId: string, name: string, where: { chatId: string; threadId?: number } = { chatId: userId }): Promise<void> {
   const dir = join(settings.usersDir, userId)
   mkdirSync(dir, { recursive: true })
   const cont = hasTranscripts(dir)
   const r = await launchOnce(d, dir, { continue: cont, name: `user-${userId}` })
   const o = owner()
   if (!r.ok && r.skipped) {
-    await say(d, userId, undefined, '⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.')
+    await say(d, where.chatId, where.threadId, '⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.')
     return
   }
   if (!r.ok) {
-    await say(d, userId, undefined, `❌ Не удалось запустить вашу сессию: ${escapeHtml(r.error)}\nСообщение сохранено. Запустить вручную:${manualCmd(dir, cont)}`)
-    if (o && o !== userId) await say(d, o, undefined, `❌ Не удалось запустить сессию пользователя ${escapeHtml(name)} (${userId}): ${escapeHtml(r.error)}${manualCmd(dir, cont)}`)
+    await say(d, where.chatId, where.threadId, `❌ Не удалось запустить вашу сессию: ${escapeHtml(r.error)}\nСообщение сохранено. Запустить вручную:${manualCmd(dir, { continue: cont })}`)
+    if (o && o !== userId) await say(d, o, undefined, `❌ Не удалось запустить сессию пользователя ${escapeHtml(name)} (${userId}): ${escapeHtml(r.error)}${manualCmd(dir, { continue: cont })}`)
     return
   }
   const self = o === userId
-  await say(d, userId, undefined, self
+  await say(d, where.chatId, where.threadId, self
     ? `🚀 Запускаю вашу сессию в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`
     : '🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.')
   if (o && !self) {
@@ -180,7 +189,7 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
     return
   }
   const dir = projectKey.replace(/#.*$/, '')
-  await say(d, chatId, threadId, `❌ Не удалось запустить сессию проекта: ${escapeHtml(r.error)}\nСообщение сохранено. Запустите вручную:${manualCmd(dir, false)}Топик закрыт, пока сессия не подключится.`)
+  await say(d, chatId, threadId, `❌ Не удалось запустить сессию проекта: ${escapeHtml(r.error)}\nСообщение сохранено. Запустите вручную:${manualCmd(dir)}Топик закрыт, пока сессия не подключится.`)
   d.store.setTopicStatus(chatId, threadId, 'waiting')
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }

@@ -16,10 +16,15 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
-import { tmuxLaunch, tmuxLocation, type TmuxLocation } from './launch.ts'
+import { tmuxLaunch, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
+
+/** Pending queue of a user's session. */
+export function userPendingKey(userId: string): string {
+  return `user:${userId}`
+}
 
 export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 
@@ -45,6 +50,8 @@ export type Session = {
   /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
   claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
   lastTool: { text: string; at: number } | null
+  /** Command line of the Claude process, read at connect (it is gone once the process exits). */
+  argv: string[]
 }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
@@ -149,6 +156,9 @@ export class Daemon {
     return this.isMain(s) ? 'main' : 'project'
   }
 
+  /** Sessions ended on purpose (archive, idle timeout): the watchdog stays quiet for them. */
+  readonly ending = new Set<string>()
+
   /** Launches not yet connected, by dir: no second tmux window while the first waits for confirmation. */
   readonly launching = new Map<string, number>()
 
@@ -191,7 +201,7 @@ export class Daemon {
   handleCall: (s: Session, name: string, args: Record<string, unknown>) => Promise<string> = async () => 'not ready'
   handlePermissionRequest: (s: Session, p: Omit<PendingPermission, 'sessionId'> & { request_id: string }) => void = () => {}
   /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
-  launchSession: (dir: string, o?: { continue?: boolean; name?: string }) => Promise<string> = tmuxLaunch
+  launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = tmuxLaunch
   /** Where a tmux pane lives. Replaced in tests. */
   tmuxLocation: (pane: string) => Promise<TmuxLocation | null> = tmuxLocation
 
@@ -219,6 +229,7 @@ export class Daemon {
       notes: [],
       claude: { sessionId: null, transcript: null, permissionMode: null },
       lastTool: null,
+      argv: h.claudePid ? cmdlineOf(h.claudePid) : [],
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.
       reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),
