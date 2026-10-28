@@ -87,6 +87,8 @@ bun bin/bewitched.ts notify --topic myproj "сборка упала"
 
 Писать в сессии и управлять ими (кнопки, пульт, архив, разрешения) могут все пользователи из allowlist бота — у всех сопряжённых одинаковые полные права. Остальные участники группы игнорируются. Нативные черновики Telegram работают только в личке, поэтому в топиках прогресс показывается обновляемым сообщением.
 
+`/sessions` и `/topics` показывают карточку на каждую сессию: тип (👑 главная или проектная), статус, `#id` и pid, рабочая папка, ветка, топик, где она в tmux (сессия, окно, панель) с готовой командой `tmux attach -t <сессия>:<окно>`, доступность «⏹ Стоп», режим разрешений, модель и размер контекста, текущий ход и последнее действие, команда `claude --resume <id>`, имя из `/rename`, включён ли 📱 Remote Control со ссылкой на сессию в claude.ai (по событию `remote_session_change` в транскрипте; до первого такого события — по флагу `--remote-control`/`--rc` или `remoteControlAtStartup`) и время с запуска и последней активности. В `/topics` ниже идут топики без сессии (с числом сообщений в очереди) и архив.
+
 Команды пульта (личка или General): `/sessions`, `/topics`, `/send <топик> <текст>`, `/broadcast <текст>`, `/rename <топик> | <имя>`, `/archive <топик>`, `/delete <топик>`, `/new_session <имя|путь>`. В любом чате: `/verbose 0|1|2`, `/notify_done off|long|always`, `/remember`, `/forget`. В личке: `/main [id|reset]`, `/group`, `/disconnect_group`, `/status`.
 
 ## Главная сессия
@@ -118,6 +120,7 @@ cd ~ && claude --dangerously-load-development-channels plugin:telegram-bewitched
 | `TOPIC_PROJECTS` | `auto` | Топик, созданный владельцем, → проект и сессия: `auto`, `ask` (кнопка), `off` |
 | `PROJECTS_DIR` | `~/projects` | Где создавать папки проектов |
 | `MAIN_DIR` | `~` | Папка главной сессии (личка, General, топики без сессии) |
+| `CONTEXT_WINDOW` | `1000000` | Размер окна контекста для процента заполнения в карточках сессий |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии |
 

@@ -106,3 +106,75 @@ describe('launch', async () => {
     expect(projectPath('  ')).toBeNull()
   })
 })
+
+describe('remote control detection', async () => {
+  const { rcFromArgv, rcFromPane, rcFromSettings } = await import('../src/daemon/remote.ts')
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('launch flags', () => {
+    expect(rcFromArgv(['claude', '--rc'])).toBe(true)
+    expect(rcFromArgv(['claude', '--remote-control', 'My Project'])).toBe(true)
+    expect(rcFromArgv(['claude', 'remote-control', '--name', 'x'])).toBe(true)
+    expect(rcFromArgv(['claude', '--continue', 'remote-control'])).toBe(false)
+    expect(rcFromArgv(['claude', '--dangerously-load-development-channels', 'plugin:telegram-bewitched@bewitched'])).toBe(false)
+  })
+
+  test('status line of the pane, not the conversation above it', () => {
+    expect(rcFromPane('…\n> \n  ⏵⏵ auto mode on · /rc active\n')).toBe(true)
+    expect(rcFromPane('we talked about /rc active here\n' + 'x\n'.repeat(10))).toBe(false)
+  })
+
+  test('auto-connect setting; project false wins', () => {
+    const conf = mkdtempSync(join(tmpdir(), 'rc-conf-'))
+    const proj = mkdtempSync(join(tmpdir(), 'rc-proj-'))
+    expect(rcFromSettings(proj, conf)).toBe(false)
+    writeFileSync(join(conf, 'settings.json'), JSON.stringify({ remoteControlAtStartup: true }))
+    expect(rcFromSettings(proj, conf)).toBe(true)
+    mkdirSync(join(proj, '.claude'))
+    writeFileSync(join(proj, '.claude', 'settings.local.json'), JSON.stringify({ remoteControlAtStartup: false }))
+    expect(rcFromSettings(proj, conf)).toBe(false)
+  })
+})
+
+describe('session card details', async () => {
+  const { permissionMode } = await import('../src/daemon/report.ts')
+  test('permission mode: live status line first, then the hook value', () => {
+    expect(permissionMode('> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n', 'default')).toBe('auto')
+    expect(permissionMode('  ⏸ plan mode on\n', null)).toBe('plan')
+    expect(permissionMode('  ⏵⏵ accept edits on\n', null)).toBe('accept edits')
+    expect(permissionMode(null, 'bypassPermissions')).toBe('bypass permissions')
+    expect(permissionMode('> \n  ? for shortcuts\n', null)).toBe('обычный')
+    expect(permissionMode(null, null)).toBeNull()
+  })
+})
+
+describe('transcript', async () => {
+  const { transcriptInfo } = await import('../src/daemon/transcript.ts')
+  const { remoteControl } = await import('../src/daemon/remote.ts')
+  const { mkdtempSync, writeFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('reads the latest records across chunk boundaries', async () => {
+    const f = join(mkdtempSync(join(tmpdir(), 'tr-')), 't.jsonl')
+    const filler = JSON.stringify({ type: 'user', message: { content: 'x'.repeat(4000) } })
+    writeFileSync(f, [
+      JSON.stringify({ type: 'attachment', attachment: { type: 'remote_session_change', url: 'https://claude.ai/code/old' } }),
+      JSON.stringify({ type: 'custom-title', customTitle: 'srv' }),
+      ...Array(600).fill(filler),
+      JSON.stringify({ type: 'attachment', attachment: { type: 'remote_session_change', url: null } }),
+      JSON.stringify({ type: 'assistant', message: { model: 'm', usage: { input_tokens: 1, output_tokens: 2 } } }),
+      ...Array(300).fill(filler),
+    ].join('\n') + '\n')
+    const info = await transcriptInfo(f)
+    expect(info).toEqual({ model: 'm', tokens: 3, remoteUrl: null, title: 'srv' })
+  })
+
+  test('transcript wins over other signals; nothing recorded falls back to flags', () => {
+    expect(remoteControl(['claude', '--rc'], '/', null, null)).toEqual({ on: false, via: null })
+    expect(remoteControl(['claude'], '/', null, 'https://claude.ai/code/s')).toEqual({ on: true, via: 'transcript', url: 'https://claude.ai/code/s' })
+    expect(remoteControl(['claude', '--rc'], '/', null, undefined)).toEqual({ on: true, via: 'flag' })
+  })
+})
