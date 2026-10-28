@@ -14,6 +14,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, wri
 import { join } from 'path'
 import { TTS_CACHE_DIR, settings } from '../config.ts'
 import { toOggOpus, wavDuration } from './audio.ts'
+import { normalizeForSpeech } from './normalize.ts'
 
 export type Voice = { ogg: string; duration: number }
 type Provider = 'silero' | 'piper' | 'http'
@@ -34,6 +35,12 @@ export function speakable(md: string): string {
     .replace(/[ \t]+/g, ' ')
     .replace(/\n{3,}/g, '\n\n')
     .trim()
+}
+
+/** speakable + numbers and Latin in words, for Silero (reads Cyrillic only). Other providers get speakable text as is. */
+export function forVoice(md: string): string {
+  const text = speakable(md)
+  return settings.ttsProvider === 'silero' || settings.ttsProvider === 'piper' ? normalizeForSpeech(text) : text
 }
 
 export function ttsEnabled(): boolean {
