@@ -9,7 +9,7 @@ import { homedir } from 'os'
 import { join, resolve } from 'path'
 import { randomBytes } from 'crypto'
 
-const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
+export const CONFIG_DIR = process.env.CLAUDE_CONFIG_DIR ?? join(homedir(), '.claude')
 
 export const STATE_DIR = process.env.TELEGRAM_BEWITCHED_STATE_DIR
   ?? join(CONFIG_DIR, 'channels', 'telegram-bewitched')

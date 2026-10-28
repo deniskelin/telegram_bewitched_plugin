@@ -59,14 +59,17 @@ export async function tmuxLaunch(dir: string): Promise<string> {
   return run(['new-window', '-d', '-P', '-F', '#{window_index}', '-t', `${sess}:`, '-n', name, '-c', dir, settings.launchCmd])
 }
 
-export type TmuxLocation = { session: string; window: string; windowName: string; pane: string }
+/** tail: the last visible lines of the pane (Claude's status line is there). */
+export type TmuxLocation = { session: string; window: string; windowName: string; pane: string; tail: string }
 
 /** Session, window and pane of a tmux pane id — what you need to attach from a terminal. */
 export async function tmuxLocation(pane: string): Promise<TmuxLocation | null> {
   try {
     const out = await run(['display-message', '-p', '-t', pane, '#{session_name}\t#{window_index}\t#{window_name}\t#{pane_index}'])
     const [session, window, windowName, idx] = out.split('\t')
-    return session ? { session, window, windowName, pane: idx } : null
+    if (!session) return null
+    const tail = await run(['capture-pane', '-p', '-t', pane]).catch(() => '')
+    return { session, window, windowName, pane: idx, tail }
   } catch {
     return null
   }

@@ -6,7 +6,9 @@
 import { settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
+import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { remoteControl } from './remote.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 const MAX_MESSAGE = 4000
@@ -50,6 +52,10 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
       `    <code>tmux attach -t ${escapeHtml(shellArg(`${loc.session}:${loc.window}`))}</code>`,
     )
   } else lines.push(s.tmuxPane ? `🖥 tmux: панель ${escapeHtml(s.tmuxPane)} не найдена` : '🖥 не в tmux')
+
+  const rc = remoteControl(s.claudePid ? cmdlineOf(s.claudePid) : [], s.cwd, loc?.tail ?? null)
+  const rcVia = { flag: 'флаг запуска', settings: 'автоподключение в настройках', pane: '/rc active в терминале' }
+  lines.push(rc.on ? `📱 Remote Control: вкл (${rcVia[rc.via!]})` : `📱 Remote Control: выкл${loc ? '' : ' (без tmux видно только флаг и настройки)'}`)
 
   if (settings.stopMode === 'off') lines.push('⏹ Стоп: выключен (STOP_MODE=off)')
   else if (s.tmuxPane && settings.stopMode === 'interrupt') lines.push('⏹ Стоп: доступен')

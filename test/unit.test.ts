@@ -106,3 +106,34 @@ describe('launch', async () => {
     expect(projectPath('  ')).toBeNull()
   })
 })
+
+describe('remote control detection', async () => {
+  const { rcFromArgv, rcFromPane, rcFromSettings } = await import('../src/daemon/remote.ts')
+  const { mkdtempSync, mkdirSync, writeFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('launch flags', () => {
+    expect(rcFromArgv(['claude', '--rc'])).toBe(true)
+    expect(rcFromArgv(['claude', '--remote-control', 'My Project'])).toBe(true)
+    expect(rcFromArgv(['claude', 'remote-control', '--name', 'x'])).toBe(true)
+    expect(rcFromArgv(['claude', '--continue', 'remote-control'])).toBe(false)
+    expect(rcFromArgv(['claude', '--dangerously-load-development-channels', 'plugin:telegram-bewitched@bewitched'])).toBe(false)
+  })
+
+  test('status line of the pane, not the conversation above it', () => {
+    expect(rcFromPane('…\n> \n  ⏵⏵ auto mode on · /rc active\n')).toBe(true)
+    expect(rcFromPane('we talked about /rc active here\n' + 'x\n'.repeat(10))).toBe(false)
+  })
+
+  test('auto-connect setting; project false wins', () => {
+    const conf = mkdtempSync(join(tmpdir(), 'rc-conf-'))
+    const proj = mkdtempSync(join(tmpdir(), 'rc-proj-'))
+    expect(rcFromSettings(proj, conf)).toBe(false)
+    writeFileSync(join(conf, 'settings.json'), JSON.stringify({ remoteControlAtStartup: true }))
+    expect(rcFromSettings(proj, conf)).toBe(true)
+    mkdirSync(join(proj, '.claude'))
+    writeFileSync(join(proj, '.claude', 'settings.local.json'), JSON.stringify({ remoteControlAtStartup: false }))
+    expect(rcFromSettings(proj, conf)).toBe(false)
+  })
+})

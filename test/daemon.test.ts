@@ -273,7 +273,7 @@ describe('topics', () => {
   })
 
   test('/topics shows a card per session with its tmux target, plus topics without a session', async () => {
-    d.tmuxLocation = async p => (p === '%9' ? { session: 'work', window: '2', windowName: 'tmuxed', pane: '0' } : null)
+    d.tmuxLocation = async p => (p === '%9' ? { session: 'work', window: '2', windowName: 'tmuxed', pane: '0', tail: '> \n  ? for shortcuts   /rc active\n' } : null)
     const t = new FakeClient()
     await t.connect({ cwd: '/tmp/tmuxed', projectRoot: '/tmp/tmuxed', tmuxPane: '%9', branch: 'feat', claudePid: 99 })
     await tg.waitFor('createForumTopic', c => c.body.name === 'tmuxed')
@@ -286,6 +286,8 @@ describe('topics', () => {
     expect(text).toContain('🖥 tmux: <b>work</b> · окно 2 «tmuxed» · панель 0')
     expect(text).toContain('tmux attach -t work:2')
     expect(text).toContain('⏹ Стоп: доступен')
+    expect(text).toContain('📱 Remote Control: вкл (/rc active в терминале)')
+    expect(text).toContain('📱 Remote Control: выкл')
     expect(text).toContain('🌿 <code>feat</code>')
     expect(text).toContain('🖥 не в tmux')
     expect(text).toContain('💤 <b>Без сессии</b>')
