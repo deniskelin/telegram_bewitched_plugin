@@ -52,10 +52,18 @@ function shellArg(s: string): string {
   return /^[\w.:%@\/=+,-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-/** Main session first, then by project name. */
+/** Main session first, then users, then projects by name. */
 export function sortedSessions(d: Daemon): Session[] {
   const main = d.mainSession()
-  return d.activeSessions().sort((a, b) => Number(b === main) - Number(a === main) || a.projectName.localeCompare(b.projectName))
+  const rank = (s: Session) => (s === main ? 0 : d.userIdOf(s) ? 1 : 2)
+  return d.activeSessions().sort((a, b) => rank(a) - rank(b) || a.projectName.localeCompare(b.projectName))
+}
+
+/** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
+export function sessionLabel(d: Daemon, s: Session): string {
+  const user = d.userIdOf(s)
+  if (user) return `👤 ${d.store.lastSenderName(user) ?? user}`
+  return s === d.mainSession() ? '👑 Главная' : `📂 ${s.projectName}`
 }
 
 /**
@@ -74,20 +82,24 @@ function transcriptOf(s: Session, argv: string[]): string | null {
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
-  const argv = s.claudePid ? cmdlineOf(s.claudePid) : []
+  const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
   const transcript = transcriptOf(s, argv)
   const tr = transcript ? await transcriptInfo(transcript) : null
   const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
 
   const status = s.turn ? `${statusLabel(s)} ${fmtDuration(now - s.turn.start)}` : statusLabel(s)
-  const head = [`${isMain ? '👑 <b>Главная</b>' : `📂 <b>${escapeHtml(s.projectName)}</b>`}${tr?.title ? ` «${escapeHtml(tr.title)}»` : ''} · ${status}`]
+  const user = d.userIdOf(s)
+  const label = sessionLabel(d, s)
+  const icon = label.slice(0, label.indexOf(' '))
+  const head = [`${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b>${tr?.title ? ` «${escapeHtml(tr.title)}»` : ''} · ${status}`]
   const where: string[] = []
-  if (s.branch) where.push(`🌿 ${escapeHtml(s.branch)}`)
+  if (s.branch && !user) where.push(`🌿 ${escapeHtml(s.branch)}`)
   if (s.topic) {
     const link = topicLink(s.topic.chatId, s.topic.threadId)
     const name = escapeHtml(s.topic.name)
     where.push(`💬 ${link ? `<a href="${link}">${name}</a>` : name}`)
-  } else if (isMain) where.push('💬 личка и General')
+  } else if (user) where.push('💬 личка и свои сообщения в General')
+  else if (isMain) where.push(settings.userSessions ? '💬 запасная: топики при TOPIC_NO_SESSION=main' : '💬 личка и General')
   if (where.length) head.push(where.join(' · '))
 
   const main: string[] = []
@@ -116,7 +128,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   }
 
   const more = [
-    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${isMain ? 'главная' : 'проектная'}`,
+    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${user ? `пользователь ${user}` : isMain ? 'главная' : 'проектная'}`,
     `📁 <code>${escapeHtml(s.cwd)}</code>`,
   ]
   if (loc) more.push(`🖥 сессия ${escapeHtml(loc.session)} · окно ${escapeHtml(loc.window)} «${escapeHtml(loc.windowName)}» · панель ${escapeHtml(loc.pane)}`)
@@ -137,7 +149,7 @@ async function passiveBlock(d: Daemon): Promise<string | null> {
   if (!list.length) return null
   const items: string[] = []
   for (const s of list) {
-    const argv = s.claudePid ? cmdlineOf(s.claudePid) : []
+    const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
     const print = argv.includes('-p') || argv.includes('--print')
     const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
     const lines = [`• <b>${escapeHtml(s.projectName)}</b> · <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${print ? 'claude -p' : 'без канала'}`, `   📁 <code>${escapeHtml(s.cwd)}</code>`]

@@ -494,3 +494,117 @@ describe('reconnects', () => {
     b.close()
   })
 })
+
+describe('session types', () => {
+  const group = '-100500'
+  const usersDir = process.env.USERS_DIR!
+  const calls: { dir: string; o?: Record<string, unknown> }[] = []
+  let u: FakeClient
+
+  beforeAll(() => {
+    process.env.USER_SESSIONS = 'on'
+    process.env.TOPIC_NO_SESSION = 'launch'
+    d.launchSession = async (dir, o) => { calls.push({ dir, o }); return '7' }
+  })
+  afterAll(() => {
+    process.env.USER_SESSIONS = 'off'
+    process.env.TOPIC_NO_SESSION = 'main'
+    process.env.WATCHDOG_GRACE_SEC = '3600'
+  })
+
+  test('a DM without a user session launches it in USERS_DIR/<id>; the message arrives on connect', async () => {
+    tg.push(textMessage({ text: 'привет, это я' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
+    u = new FakeClient()
+    await u.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 1111 })
+    const resume = await u.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('привет, это я')
+    expect(d.store.topicForProject(group, `${usersDir}/111`)).toBeFalsy()
+    tg.push(textMessage({ text: 'второе' }))
+    await u.inbound(x => x.content === 'второе')
+    expect(main.msgs.some(x => x.t === 'inbound' && ['привет, это я', 'второе'].includes((x as Inbound).content))).toBe(false)
+  })
+
+  test("General text goes to the author's user session, and the reply lands in General", async () => {
+    tg.push(textMessage({ chat: Number(group), text: 'вопрос в общий' }))
+    const m = await u.inbound(x => x.content === 'вопрос в общий')
+    expect(m.meta.chat_id).toBe(group)
+    expect(m.meta.thread_id).toBeUndefined()
+    const r = await u.call('reply', { text: 'ответ в general' })
+    expect(r.ok).toBe(true)
+    const sent = await tg.waitFor('sendMessage', c => c.body.text === 'ответ в general')
+    expect(String(sent.body.chat_id)).toBe(group)
+    expect(sent.body.message_thread_id).toBeUndefined()
+  })
+
+  test('another user gets their own session; the owner is asked to confirm the launch', async () => {
+    tg.push(textMessage({ from: 333, text: 'я второй пользователь' }))
+    await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
+    await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('(333)'))
+    expect(calls.at(-1)!.dir).toBe(`${usersDir}/333`)
+    expect(u.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === 'я второй пользователь')).toBe(false)
+  })
+
+  test('permission requests of a user session go only to that user', async () => {
+    u.sock.write(encode({ t: 'perm_req', request_id: 'uvwxy', tool_name: 'Write', description: 'write', input_preview: '{}' }))
+    await tg.waitFor('sendMessage', c => c.body.text === '🔐 111: Write' && String(c.body.chat_id) === '111')
+    await Bun.sleep(200)
+    expect(tg.callsOf('sendMessage').some(c => c.body.text === '🔐 111: Write' && String(c.body.chat_id) === '333')).toBe(false)
+  })
+
+  test('a project topic without a session launches it; a failed launch closes the topic until the session connects', async () => {
+    const { mkdirSync } = await import('fs')
+    mkdirSync('/tmp/other', { recursive: true })
+    const thread = d.store.topicForProject(group, '/tmp/other')!.thread_id
+    d.launching.clear()
+    tg.push(textMessage({ chat: Number(group), text: 'запустись', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю сессию проекта') && c.body.message_thread_id === thread)
+    expect(calls.at(-1)!.dir).toBe('/tmp/other')
+
+    d.launching.clear()
+    const ok = d.launchSession
+    d.launchSession = async () => { throw new Error('no tmux') }
+    tg.push(textMessage({ chat: Number(group), text: 'ещё раз', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
+    await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
+    expect(d.store.topic(group, thread)?.status).toBe('waiting')
+    tg.push(textMessage({ chat: Number(group), text: 'и ещё', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏳ Сессия проекта не подключена'))
+    d.launchSession = ok
+
+    const p = new FakeClient()
+    await p.connect({ cwd: '/tmp/other', projectRoot: '/tmp/other', claudePid: 2222 })
+    const resume = await p.inbound(x => x.meta.event === 'session_resume')
+    expect(resume.content).toContain('запустись')
+    expect(resume.content).toContain('и ещё')
+    await tg.waitFor('reopenForumTopic', c => c.body.message_thread_id === thread)
+    expect(d.store.topic(group, thread)?.status).toBe('active')
+
+    // Watchdog: the session goes away on its own → notice with commands, topic closed, 🚀 restarts it.
+    process.env.WATCHDOG_GRACE_SEC = '0'
+    const closes = tg.callsOf('closeForumTopic').length
+    p.close()
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('остановилась') && c.body.message_thread_id === thread)
+    expect(String(notice.body.text)).toContain('--continue')
+    await tg.waitFor('closeForumTopic', () => tg.callsOf('closeForumTopic').length > closes)
+    expect(d.store.topic(group, thread)?.status).toBe('waiting')
+    const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
+    tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true } })
+  })
+
+  test('a stopped user session is reported in its DM; a planned end is not', async () => {
+    u.close()
+    await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('👤') && String(c.body.text).includes('остановилась'))
+    const v = new FakeClient()
+    await v.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 3333 })
+    const s = [...d.sessions.values()].find(x => x.claudePid === 3333)!
+    d.ending.add(s.id)
+    const before = tg.callsOf('sendMessage').filter(c => String(c.body.text).includes('остановилась')).length
+    v.close()
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).includes('остановилась')).length).toBe(before)
+  })
+})
