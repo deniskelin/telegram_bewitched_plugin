@@ -306,3 +306,11 @@ describe('period reports', async () => {
     expect(columnChartSvg({ title: 'T', subtitle: 'S', columns: [{ label: 'a', value: 0 }] })).toContain('Нет активности')
   })
 })
+
+describe('voice text', async () => {
+  const { speakable } = await import('../src/voice/tts.ts')
+  test('markdown, code and links are not read aloud', () => {
+    expect(speakable('# Итог\n**Готово**: см. [PR](https://x.y/1) и `npm test`.\n```\ncode\n```\n- пункт')).toBe('Итог\nГотово: см. PR и npm test.\n (код в сообщении) \nпункт')
+    expect(speakable('смотри https://example.com/a?b=1 тут')).toBe('смотри ссылка тут')
+  })
+})

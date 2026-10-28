@@ -987,6 +987,75 @@ describe('user labels', () => {
   })
 })
 
+describe('voice', () => {
+  const hasFfmpeg = Bun.spawnSync(['ffmpeg', '-version']).exitCode === 0
+  const group = '-100500'
+  test.skipIf(!hasFfmpeg)('a voice message is transcribed before the session sees it; replies are voiced in mirror mode; reply_voice', async () => {
+    const { mkdtempSync, readFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const dir = mkdtempSync(`${tmpdir()}/voice-`)
+    // A real Opus voice note and a real WAV for the fake TTS to return.
+    Bun.spawnSync(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=440:duration=1', '-c:a', 'libopus', `${dir}/in.ogg`])
+    Bun.spawnSync(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'sine=frequency=300:duration=2', '-ac', '1', '-ar', '24000', `${dir}/out.wav`])
+    tg.files.set('voice1', readFileSync(`${dir}/in.ogg`))
+    let sttForm: FormData | null = null
+    let ttsBody: Record<string, unknown> | null = null
+    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: 'привет из голоса', language: 'ru', duration: 1 }) } })
+    const tts = Bun.serve({ port: 0, fetch: async req => { ttsBody = await req.json() as Record<string, unknown>; return new Response(readFileSync(`${dir}/out.wav`)) } })
+    Object.assign(process.env, {
+      STT_PROVIDER: 'openai-compatible', STT_URL: `http://127.0.0.1:${stt.port}/v1/audio/transcriptions`,
+      TTS_PROVIDER: 'http', TTS_URL: `http://127.0.0.1:${tts.port}/v1/audio/speech`,
+    })
+    try {
+      const thread = d.sessions.get(sessionId)!.topic!.threadId
+      tg.push({ message: { message_id: 91001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice1', file_unique_id: 'v1', duration: 1, mime_type: 'audio/ogg' } } })
+      const m = await client.inbound(x => x.content.includes('привет из голоса'))
+      expect(m.content).toBe('🎤 привет из голоса')
+      expect(m.meta).toMatchObject({ voice_transcribed: 'true', voice_language: 'ru', voice_duration: '1', attachment_kind: 'voice', attachment_file_id: 'voice1' })
+      const file = sttForm!.get('file') as File
+      expect(new TextDecoder().decode((await file.arrayBuffer()).slice(0, 4))).toBe('RIFF') // converted to WAV by ffmpeg
+      expect(d.store.getMessage(group, 91001)?.text).toBe('🎤 привет из голоса')
+
+      // mirror (the default): the answer to a spoken message is voiced, with the text as caption.
+      const r = await client.call('reply', { text: 'Ответ **голосом**, подробности в `коде`' })
+      expect(r.ok).toBe(true)
+      const v = await tg.waitFor('sendVoice', c => String(c.body.chat_id) === group)
+      expect(v.body.caption).toBe('Ответ **голосом**, подробности в `коде`')
+      expect(Number(v.body.duration)).toBe(2)
+      expect(ttsBody!.input).toBe('Ответ голосом, подробности в коде')
+      // Same text again comes from the cache: no second synthesis.
+      ttsBody = null
+      await client.call('reply_voice', { text: 'Ответ **голосом**, подробности в `коде`' })
+      await tg.waitFor('sendVoice', () => tg.callsOf('sendVoice').length >= 2)
+      expect(ttsBody).toBeNull()
+
+      // A text message: back to text answers.
+      tg.push(textMessage({ chat: Number(group), thread, text: 'а теперь текстом' }))
+      await client.inbound(x => x.content === 'а теперь текстом')
+      const voices = tg.callsOf('sendVoice').length
+      await client.call('reply', { text: 'текстовый ответ' })
+      await tg.waitFor('sendMessage', c => c.body.text === 'текстовый ответ')
+      expect(tg.callsOf('sendVoice').length).toBe(voices)
+
+      // STT down: the message still arrives, as before, with stt_error.
+      stt.stop(true)
+      tg.files.set('voice2', readFileSync(`${dir}/in.ogg`))
+      tg.push({ message: { message_id: 91002, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice2', file_unique_id: 'v2', duration: 1, mime_type: 'audio/ogg' } } })
+      const failed = await client.inbound(x => x.meta.attachment_file_id === 'voice2')
+      expect(failed.content).toBe('(voice message)')
+      expect(failed.meta.stt_error).toBeTruthy()
+    } finally {
+      stt.stop(true)
+      tts.stop(true)
+      for (const k of ['STT_PROVIDER', 'STT_URL', 'TTS_PROVIDER', 'TTS_URL']) delete process.env[k]
+    }
+  }, 20_000)
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

@@ -156,6 +156,7 @@ bun bin/bewitched.ts notify --topic myproj "сборка упала"
 | `LIMIT_CHECK_MIN` | `10` | Как часто проверять лимиты (минуты, 0 — никогда) |
 | `USAGE_LIMITS` | `on` | `/usage`: запрашивать проценты лимитов у незадокументированного эндпоинта Anthropic (`off` — только локальные данные) |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
+| `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Голос: расшифровка входящих и ответы голосом — см. [docs/voice.md](docs/voice.md), установка `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<telegram id>` (сессия пользователя) или `-n claude-topic-<топик>` (проект); так же называется окно tmux |
 
 Доступ (pairing, allowlist, группы) — как у официального плагина, см. [ACCESS.md](ACCESS.md) и `/telegram-bewitched:access`.
