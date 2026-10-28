@@ -389,6 +389,36 @@ describe('topics', () => {
     expect(tg.callsOf('sendMessage').length).toBe(before)
   })
 
+  test('limit alerts: one notice per threshold crossed, a notice when the window resets; dashboard line', async () => {
+    const { checkLimits, resetLimitsCache } = await import('../src/daemon/usage.ts')
+    const { renderDashboard } = await import('../src/daemon/topics.ts')
+    let percent = 50
+    let resets = Date.now() + 3600_000
+    const api = Bun.serve({ port: 0, fetch: () => Response.json({ limits: [{ kind: 'session', percent, resets_at: new Date(resets).toISOString() }] }) })
+    process.env.USAGE_API_URL = `http://127.0.0.1:${api.port}/`
+    const notices = () => tg.callsOf('sendMessage').filter(c => /Лимит «5 часов»/.test(String(c.body.text))).map(c => String(c.body.text).split('\n')[0])
+    const check = async (p: number) => { percent = p; resetLimitsCache(); await checkLimits(d) }
+    try {
+      await check(50)
+      await check(85)
+      await check(87)
+      await check(96)
+      resets += 5 * 3600_000
+      await check(4)
+      await check(3)
+      expect(notices()).toEqual([
+        '⚠️ Лимит «5 часов»: <b>85%</b> ▰▰▰▰▰▰▰▰▰▱',
+        '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰',
+        '✅ Лимит «5 часов» восстановился: 4% ▱▱▱▱▱▱▱▱▱▱',
+      ])
+      expect(renderDashboard(d)).toContain('📊 5 часов 3%')
+    } finally {
+      api.stop()
+      delete process.env.USAGE_API_URL
+      resetLimitsCache()
+    }
+  })
+
   test('/verbose without an argument shows the level; with one sets it', async () => {
     tg.push(textMessage({ text: '/verbose' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Здесь: 🔔1 · ✅ после долгих ходов'))

@@ -9,6 +9,7 @@ import { readdirSync, readFileSync, statSync } from 'fs'
 import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
+import { owner } from '../access.ts'
 import type { Daemon } from './daemon.ts'
 
 // --------------------------------------------------------------------------
@@ -82,8 +83,18 @@ export function parseLimits(r: UsageResponse): Limits {
 
 let limitsCache: { at: number; value: Limits | string } | null = null
 
+/** The last limits fetched, however old (for the dashboard: it never fetches itself). */
+export function lastLimits(): { at: number; limits: Limits } | null {
+  return limitsCache && typeof limitsCache.value !== 'string' ? { at: limitsCache.at, limits: limitsCache.value } : null
+}
+
+/** Forget the cached answer (tests, and the watcher wants a fresh one). */
+export function resetLimitsCache(): void {
+  limitsCache = null
+}
+
 /** Limits, or why they are missing. Cached for a minute: /usage pressed twice is one request. */
-export async function fetchLimits(o: OAuth | null): Promise<Limits | string> {
+export async function fetchLimits(o: OAuth | null = readOAuth()): Promise<Limits | string> {
   if (!settings.usageLimits) return 'отключены (USAGE_LIMITS=off)'
   if (!o?.accessToken) return 'нет OAuth-токена подписки в .credentials.json'
   if (o.expiresAt && o.expiresAt < Date.now()) return 'токен истёк, Claude Code обновит его при следующем запросе'
@@ -270,7 +281,7 @@ function fmtSum(s: Sum): string {
   return `${fmtTok(s.tokens)} ток. · $${s.cost.toFixed(2)}${s.unpriced ? ` (+${s.unpriced} без цены)` : ''}`
 }
 
-function fmtReset(at: Date, now: number): string {
+export function fmtReset(at: Date, now: number): string {
   const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
   const sameDay = new Date(now).toDateString() === at.toDateString()
   const when = sameDay ? `в ${time}` : `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${time}`
@@ -279,7 +290,7 @@ function fmtReset(at: Date, now: number): string {
   return `сброс ${when} (через ${days ? `${days} д ${Math.floor((left % 86_400_000) / 3600_000)} ч` : fmtDuration(left)})`
 }
 
-function bar(percent: number): string {
+export function bar(percent: number): string {
   const n = Math.max(0, Math.min(10, Math.round(percent / 10)))
   return '▰'.repeat(n) + '▱'.repeat(10 - n)
 }
@@ -333,4 +344,55 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   out.push(`🗂 <b>По сессиям</b>, 7 дней\n<blockquote expandable>${owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n')}</blockquote>`)
   out.push('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>')
   return out.join('\n\n')
+}
+
+// --------------------------------------------------------------------------
+// Limit alerts
+// --------------------------------------------------------------------------
+
+type LimitState = { level: number; resetsAt: string | null }
+
+/**
+ * Tell the owner when a limit crosses an alert threshold, and when a window
+ * that was over the first threshold resets. One message per crossing: the
+ * reached level is remembered per limit in the store.
+ */
+export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
+  const thresholds = settings.limitAlerts
+  const to = owner()
+  if (!thresholds.length || !to || !settings.usageLimits) return
+  if (limitsCache && now - limitsCache.at >= 60_000) limitsCache = null
+  const limits = await fetchLimits()
+  if (typeof limits === 'string') return
+  for (const l of limits.items) {
+    const key = `limit:${l.label}`
+    const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
+    const resetsAt = l.resetsAt?.toISOString() ?? null
+    const level = thresholds.filter(t => l.percent >= t).at(-1) ?? 0
+    const reset = l.resetsAt ? `\n${fmtReset(l.resetsAt, now)}` : ''
+    const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
+    if (prev.level > 0 && level === 0) {
+      await d.bot.api.sendMessage(to, `✅ Лимит «${escapeHtml(l.label)}» восстановился: ${Math.round(l.percent)}% ${bar(l.percent)}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+    } else if (level > (newWindow ? 0 : prev.level)) {
+      const icon = level >= thresholds.at(-1)! ? '🚨' : '⚠️'
+      await d.bot.api.sendMessage(to, `${icon} Лимит «${escapeHtml(l.label)}»: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${reset}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+    }
+    d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
+  }
+  d.onSessionsChanged()
+}
+
+export function startLimitWatch(d: Daemon): void {
+  const min = settings.limitCheckMin
+  if (min <= 0) return
+  const tick = () => void checkLimits(d).catch(err => d.log(`limit check failed: ${err}`))
+  setTimeout(tick, 15_000).unref?.()
+  setInterval(tick, min * 60_000).unref?.()
+}
+
+/** "📊 5 часов 42% · Неделя 31%" for the pinned dashboard; null before the first fetch. */
+export function limitsLine(): string | null {
+  const l = lastLimits()
+  if (!l || !l.limits.items.length) return null
+  return '📊 ' + l.limits.items.map(i => `${i.label} ${Math.round(i.percent)}%`).join(' · ')
 }

@@ -150,6 +150,8 @@ bun bin/bewitched.ts notify --topic myproj "сборка упала"
 | `WATCHDOG_GRACE_SEC` | `60` | Через сколько секунд после остановки сессии сообщать о ней |
 | `MAIN_DIR` | `~` | Папка главной сессии (при `USER_SESSIONS=off` — личка и General) |
 | `CONTEXT_WINDOW` | `1000000` | Размер окна контекста для процента заполнения в карточках сессий |
+| `LIMIT_ALERTS` | `80,95` | Пороги уведомлений о лимитах подписки в процентах; `off` — не уведомлять. После сброса окна приходит «✅ восстановился» |
+| `LIMIT_CHECK_MIN` | `10` | Как часто проверять лимиты (минуты, 0 — никогда) |
 | `USAGE_LIMITS` | `on` | `/usage`: запрашивать проценты лимитов у незадокументированного эндпоинта Anthropic (`off` — только локальные данные) |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<username>` (сессия пользователя) или `-n claude-topic-<топик>` (проект); так же называется окно tmux |
