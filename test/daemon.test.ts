@@ -316,6 +316,19 @@ describe('topics', () => {
     t.close()
   })
 
+  test('/sessions lists sessions without the channel and how to restart them', async () => {
+    const p = new FakeClient()
+    await p.connect({ cwd: '/tmp/nochan', projectRoot: '/tmp/nochan', passive: true, claudePid: process.ppid })
+    tg.push(textMessage({ text: '/sessions' }))
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('nochan'))
+    const text = String(r.body.text)
+    expect(text).toContain('👻 <b>Без канала</b> (1)')
+    expect(text).toContain('без канала')
+    expect(text).toContain(`<code>${settings.launchCmd} `)
+    expect(text.indexOf('👻')).toBeGreaterThan(text.indexOf('👑 <b>Главная</b>'))
+    p.close()
+  })
+
   test('notify over HTTP reaches a topic by name; bad token is rejected', async () => {
     const url = `http://127.0.0.1:${settings.httpPort}/notify`
     const bad = await fetch(url, { method: 'POST', headers: { authorization: 'Bearer nope' }, body: '{}' })

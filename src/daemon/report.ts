@@ -48,7 +48,7 @@ function fmtTokens(n: number): string {
 
 /** tmux target as typed in a shell: quoted when it has anything but word characters. */
 function shellArg(s: string): string {
-  return /^[\w.:%-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`
+  return /^[\w.:%@\/=+,-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`
 }
 
 /** Main session first, then by project name. */
@@ -109,13 +109,34 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   return lines.join('\n')
 }
 
+/**
+ * Sessions without the Telegram channel: `claude -p` runs, or a session
+ * started without the channels flag — the usual reason "my session is not
+ * in /sessions". For the latter, show how to restart it with the channel.
+ */
+async function passiveBlock(d: Daemon): Promise<string | null> {
+  const list = [...d.sessions.values()].filter(s => s.passive)
+  if (!list.length) return null
+  const items: string[] = []
+  for (const s of list) {
+    const argv = s.claudePid ? cmdlineOf(s.claudePid) : []
+    const print = argv.includes('-p') || argv.includes('--print')
+    const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
+    const lines = [`• <b>${escapeHtml(s.projectName)}</b> · <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${print ? 'claude -p' : 'без канала'}`, `   📁 <code>${escapeHtml(s.cwd)}</code>`]
+    if (loc) lines.push(`   🖥 <code>tmux attach -t ${escapeHtml(shellArg(`${loc.session}:${loc.window}`))}</code>`)
+    if (!print) {
+      // Same arguments (e.g. --resume <id>) plus the channel flag from CLAUDE_LAUNCH_CMD.
+      const fix = [settings.launchCmd, ...argv.slice(1).map(shellArg)].join(' ')
+      lines.push(`   ⚠️ Telegram не подключён. Выйдите (/exit) и запустите:`, `   <code>${escapeHtml(fix)}</code>`)
+    }
+    items.push(lines.join('\n'))
+  }
+  return `👻 <b>Без канала</b> (${list.length}) — сообщений не получают\n` + items.join('\n')
+}
+
 /** Footer shared by both reports. */
 function footer(d: Daemon): string {
-  const passive = [...d.sessions.values()].filter(s => s.passive).length
-  return [
-    `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() ? '' : ' · главная не запущена'}`,
-    passive ? `👻 пассивных сессий (claude -p): ${passive}` : null,
-  ].filter(Boolean).join('\n')
+  return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() ? '' : ' · главная не запущена'}`
 }
 
 export async function sessionsReport(d: Daemon): Promise<string[]> {
@@ -123,6 +144,8 @@ export async function sessionsReport(d: Daemon): Promise<string[]> {
   const blocks = [`📋 <b>Сессии</b> (${list.length})`]
   for (const s of list) blocks.push(await sessionCard(d, s))
   if (!list.length) blocks.push('Нет запущенных сессий.')
+  const passive = await passiveBlock(d)
+  if (passive) blocks.push(passive)
   blocks.push(footer(d))
   return pack(blocks)
 }
@@ -148,6 +171,8 @@ export async function topicsReport(d: Daemon, chatId: string): Promise<string[]>
   }
   const archived = rows.filter(t => t.status === 'archived')
   if (archived.length) blocks.push(`🗄 <b>Архив</b>: ${archived.map(t => escapeHtml(t.name.replace(ARCHIVE_PREFIX, ''))).join(', ')}`)
+  const passive = await passiveBlock(d)
+  if (passive) blocks.push(passive)
   blocks.push(footer(d))
   return pack(blocks)
 }
