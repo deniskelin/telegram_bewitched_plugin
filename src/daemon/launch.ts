@@ -111,6 +111,12 @@ export function tmuxCapture(target: string): Promise<string | null> {
   return run(['capture-pane', '-p', '-t', target]).catch(() => null)
 }
 
+/** Type text literally into a pane, then Enter. */
+export async function tmuxType(target: string, text: string): Promise<void> {
+  await run(['send-keys', '-t', target, '-l', text])
+  await run(['send-keys', '-t', target, 'Enter'])
+}
+
 /** Press keys in a pane or window (tmux key names, e.g. Enter, Escape, 1). */
 export async function tmuxKeys(target: string, keys: string[]): Promise<void> {
   for (const k of keys) await run(['send-keys', '-t', target, k])

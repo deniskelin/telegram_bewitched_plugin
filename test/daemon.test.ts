@@ -389,6 +389,57 @@ describe('topics', () => {
     expect(tg.callsOf('sendMessage').length).toBe(before)
   })
 
+  test('session control: /compact, /clear after confirmation, /model typed into the pane; context notice once', async () => {
+    const { checkContext } = await import('../src/daemon/menu.ts')
+    const { mkdtempSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/ctl', projectRoot: '/tmp/ctl', tmuxPane: '%11', claudePid: 1212 })
+    await tg.waitFor('createForumTopic', x => x.body.name === 'ctl')
+    const s = [...d.sessions.values()].find(x => x.projectKey === '/tmp/ctl')!
+    const typed: string[] = []
+    d.tmuxType = async (t, text) => { typed.push(`${t} ${text}`) }
+
+    tg.push(callbackQuery(`sm:cmp:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /compact')
+    tg.push(callbackQuery(`sm:clr:${s.id}`))
+    await tg.waitFor('editMessageText', x => String(x.body.text).startsWith(`Очистить разговор сессии #${s.id}`))
+    expect(typed).toEqual(['%11 /compact'])
+    tg.push(callbackQuery(`sm:clrok:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /clear')
+    tg.push(callbackQuery(`sm:mdl:${s.id}`))
+    const models = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🧠 Модель'))
+    expect(JSON.stringify(models.body.reply_markup)).toContain(`sm:model:${s.id}:sonnet`)
+    tg.push(callbackQuery(`sm:model:${s.id}:sonnet`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /model claude-sonnet-5-5')
+    s.status = 'working'
+    tg.push(callbackQuery(`sm:cmp:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => String(x.body.text).startsWith('Сессия работает'))
+    s.status = 'idle'
+    expect(typed).toEqual(['%11 /compact', '%11 /clear', '%11 /model claude-sonnet-5-5'])
+
+    // 90k of a 100k window: one notice with a /compact button.
+    const tr = `${mkdtempSync(`${tmpdir()}/ctx-`)}/t.jsonl`
+    writeFileSync(tr, JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 0, cache_read_input_tokens: 90_000, output_tokens: 0 } } }) + '\n')
+    s.claude.transcript = tr
+    process.env.CONTEXT_WINDOW = '100000'
+    try {
+      await checkContext(d, s)
+      await checkContext(d, s)
+      const notes = tg.callsOf('sendMessage').filter(x => String(x.body.text).includes('Контекст сессии') && String(x.body.text).includes(`#${s.id}`))
+      expect(notes.length).toBe(1)
+      expect(String(notes[0].body.text)).toContain('заполнен на <b>90%</b>')
+      expect(notes[0].body.message_thread_id).toBe(s.topic!.threadId)
+      const edits = tg.callsOf('editMessageReplyMarkup').length
+      tg.push(callbackQuery(`sm:cmpn:${s.id}`))
+      await tg.waitFor('editMessageReplyMarkup', () => tg.callsOf('editMessageReplyMarkup').length > edits)
+      expect(typed.at(-1)).toBe('%11 /compact')
+    } finally {
+      delete process.env.CONTEXT_WINDOW
+      c.close()
+    }
+  })
+
   test('limit alerts: one notice per threshold crossed, a notice when the window resets; dashboard line', async () => {
     const { checkLimits, resetLimitsCache } = await import('../src/daemon/usage.ts')
     const { renderDashboard } = await import('../src/daemon/topics.ts')

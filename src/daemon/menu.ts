@@ -6,13 +6,15 @@
 
 import { InlineKeyboard, type Context } from 'grammy'
 import { isOwner, NOTIFY_DONE_INFO, prefsFor, setPref, verboseBadge } from '../access.ts'
+import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { stopSession } from './inbound.ts'
 import { footer, passiveBlock, sessionCard, sessionChat, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
-import { archiveTopic } from './topics.ts'
+import { archiveTopic, sessionTarget } from './topics.ts'
+import { transcriptInfo } from './transcript.ts'
 
 const MAX_MESSAGE = 4000
 type Screen = { text: string; kb: InlineKeyboard }
@@ -53,6 +55,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s.topic) actions.push(button('🗄 В архив', `sm:ar:${s.id}`))
   if (actions.length) rows.push(actions)
   if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) rows.push([button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`)])
+  if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button('🧠 Модель', `sm:mdl:${s.id}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
   if (link) rows.push([InlineKeyboard.url(`💬 Открыть топик «${s.topic!.name}»`.slice(0, 40), link)])
 
@@ -66,12 +69,38 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
+/** Claude Code models offered in 🧠 Модель: /model takes the id. */
+const MODELS: [string, string][] = [['opus', 'claude-opus-5-5'], ['sonnet', 'claude-sonnet-5-5'], ['haiku', 'claude-haiku-5-5'], ['fable', 'claude-fable-5-1']]
+
+/**
+ * /compact, /clear (asked first) and /model typed into the session's pane.
+ * Only between turns: typed mid-turn they would land in the prompt queue.
+ */
+async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
+  if (!s.tmuxPane) return { toast: 'Сессия не в tmux — команды не отправить.' }
+  if (action === 'mdl') {
+    const rows = MODELS.map(([alias, id]) => [button(`🧠 ${id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${alias}`)])
+    rows.push([button('« Назад', `sm:s:${s.id}`)])
+    return { screen: { text: `🧠 Модель для сессии #${s.id} (${escapeHtml(s.projectName)}). Команда <code>/model</code> уйдёт в её окно tmux.`, kb: new InlineKeyboard(rows) } }
+  }
+  if (action === 'clr') {
+    const kb = new InlineKeyboard([[button('✅ Да, /clear', `sm:clrok:${s.id}`, 'danger'), button('Отмена', `sm:s:${s.id}`)]])
+    return { screen: { text: `Очистить разговор сессии #${s.id} (${escapeHtml(s.projectName)})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.`, kb } }
+  }
+  if (s.turn || s.status !== 'idle') return { toast: 'Сессия работает — дождитесь конца хода или нажмите ⏹.' }
+  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
+  if (line === '/model ') return { toast: 'Неизвестная модель.' }
+  await d.tmuxType(s.tmuxPane, line)
+  if (action === 'clrok') s.contextWarned = false
+  return { toast: `➡️ ${line}`, sent: true }
+}
+
 async function show(ctx: Context, sc: Screen): Promise<void> {
   await ctx.editMessageText(sc.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: sc.kb })
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:stop|main|ar|arok:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl:<id>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -93,7 +122,22 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   let toast: string | undefined
-  if (action === 'stop') {
+  if (action === 'cmpn') {
+    // The button under a "context is filling up" notice: keep the notice, drop the button.
+    const r = await controlAction(d, s, 'cmp', undefined)
+    await answer(r.toast)
+    if (r.sent) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+    return true
+  }
+  if (['cmp', 'clr', 'clrok', 'mdl', 'model'].includes(action)) {
+    const r = await controlAction(d, s, action, value)
+    if (r.screen) {
+      await answer()
+      await show(ctx, r.screen)
+      return true
+    }
+    toast = r.toast
+  } else if (action === 'stop') {
     toast = stopSession(d, s) === 'interrupted' ? '⏹ Остановлено' : 'Сейчас нечего останавливать.'
   } else if (action === 'main') {
     d.store.set('main_dir', s.projectKey)
@@ -122,4 +166,28 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   await show(ctx, await sessionScreen(d, s))
   await answer(toast)
   return true
+}
+
+/**
+ * After a turn: once the context passes CONTEXT_WARN_PCT, offer /compact in
+ * the session's chat. Once per filling; the flag resets when it shrinks.
+ */
+export async function checkContext(d: Daemon, s: Session): Promise<void> {
+  const pct = settings.contextWarnPct
+  if (pct <= 0 || !s.tmuxPane) return
+  const transcript = s.claude.transcript
+  const tr = transcript ? await transcriptInfo(transcript) : null
+  if (tr?.tokens == null) return
+  const fill = (tr.tokens / settings.contextWindow) * 100
+  if (fill < pct) { s.contextWarned = false; return }
+  if (s.contextWarned || fill > 100) return
+  const target = sessionTarget(d, s)
+  if (!target) return
+  s.contextWarned = true
+  const text = `🧠 Контекст сессии ${escapeHtml(sessionLabel(d, s))} (#${s.id}) заполнен на <b>${Math.round(fill)}%</b>. Сжать разговор?`
+  await d.bot.api.sendMessage(target.chatId, text, {
+    parse_mode: 'HTML',
+    ...(target.threadId != null ? { message_thread_id: target.threadId } : {}),
+    reply_markup: new InlineKeyboard([[button('🧹 /compact', `sm:cmpn:${s.id}`, 'primary')]]),
+  }).catch(err => d.log(`context notice failed: ${err}`))
 }

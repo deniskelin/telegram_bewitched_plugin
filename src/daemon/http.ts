@@ -11,6 +11,7 @@ import { fmtDuration, isOwnTool, maskSecrets, summarizeTool } from '../format.ts
 import type { Daemon, Session } from './daemon.ts'
 import { notify } from './tools.ts'
 import { scheduleDashboard, sessionTarget } from './topics.ts'
+import { checkContext } from './menu.ts'
 
 const MAX_BODY = 1024 * 1024
 
@@ -71,6 +72,7 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string): vo
   s.turn = null
   s.status = 'idle'
   d.streams.close(s, 'stop')
+  void checkContext(d, s).catch(err => d.log(`context check failed: ${err}`))
   if (!turn || turn.replied) return
   const target = sessionTarget(d, s)
   if (!target) return
