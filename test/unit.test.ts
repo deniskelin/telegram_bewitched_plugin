@@ -137,3 +137,15 @@ describe('remote control detection', async () => {
     expect(rcFromSettings(proj, conf)).toBe(false)
   })
 })
+
+describe('session card details', async () => {
+  const { permissionMode } = await import('../src/daemon/report.ts')
+  test('permission mode: live status line first, then the hook value', () => {
+    expect(permissionMode('> \n  ⏵⏵ auto mode on (shift+tab to cycle)\n', 'default')).toBe('auto')
+    expect(permissionMode('  ⏸ plan mode on\n', null)).toBe('plan')
+    expect(permissionMode('  ⏵⏵ accept edits on\n', null)).toBe('accept edits')
+    expect(permissionMode(null, 'bypassPermissions')).toBe('bypass permissions')
+    expect(permissionMode('> \n  ? for shortcuts\n', null)).toBe('обычный')
+    expect(permissionMode(null, null)).toBeNull()
+  })
+})

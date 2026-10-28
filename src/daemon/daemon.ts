@@ -42,6 +42,9 @@ export type Session = {
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
   reconnect: boolean
+  /** From hooks: Claude's own session id (for --resume), transcript, permission mode. */
+  claude: { sessionId: string | null; transcript: string | null; permissionMode: string | null }
+  lastTool: { text: string; at: number } | null
 }
 
 export type SockData = { decoder: LineDecoder; session: Session | null }
@@ -192,6 +195,8 @@ export class Daemon {
       lastChat: null,
       turn: null,
       notes: [],
+      claude: { sessionId: null, transcript: null, permissionMode: null },
+      lastTool: null,
       // The daemon may have restarted (and lost its memory) while this Claude
       // process kept running: remember greeted processes in the store.
       reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),

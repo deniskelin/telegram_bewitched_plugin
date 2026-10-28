@@ -9,6 +9,7 @@ import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
+import { contextInfo } from './transcript.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 const MAX_MESSAGE = 4000
@@ -17,6 +18,31 @@ export function statusLabel(s: Session): string {
   if (s.status === 'waiting') return '🟡 ждёт разрешения'
   if (s.status === 'working') return '🔵 работает'
   return '🟢 свободна'
+}
+
+const PERMISSION_MODES: Record<string, string> = {
+  default: 'обычный',
+  plan: 'plan',
+  acceptEdits: 'accept edits',
+  auto: 'auto',
+  bypassPermissions: 'bypass permissions',
+  dontAsk: "don't ask",
+}
+
+/**
+ * Current permission mode: the tmux status line shows it live ("auto mode on"),
+ * hooks only report it on the next event.
+ */
+export function permissionMode(paneTail: string | null, fromHook: string | null): string | null {
+  const status = paneTail?.split('\n').map(l => l.trim()).filter(Boolean).slice(-4).join(' ') ?? ''
+  const m = /(auto mode|plan mode|accept edits|bypass permissions|don't ask) on/i.exec(status)
+  if (m) return m[1].replace(/ mode$/i, '').toLowerCase()
+  if (fromHook) return PERMISSION_MODES[fromHook] ?? fromHook
+  return paneTail != null ? PERMISSION_MODES.default : null
+}
+
+function fmtTokens(n: number): string {
+  return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n)
 }
 
 /** tmux target as typed in a shell: quoted when it has anything but word characters. */
@@ -57,10 +83,24 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const rcVia = { flag: 'флаг запуска', settings: 'автоподключение в настройках', pane: '/rc active в терминале' }
   lines.push(rc.on ? `📱 Remote Control: вкл (${rcVia[rc.via!]})` : `📱 Remote Control: выкл${loc ? '' : ' (без tmux видно только флаг и настройки)'}`)
 
+  const perm = permissionMode(loc?.tail ?? null, s.claude.permissionMode)
+  if (perm) lines.push(`🛡 Разрешения: ${escapeHtml(perm)}`)
+
   if (settings.stopMode === 'off') lines.push('⏹ Стоп: выключен (STOP_MODE=off)')
   else if (s.tmuxPane && settings.stopMode === 'interrupt') lines.push('⏹ Стоп: доступен')
   else lines.push('⏹ Стоп: только пометка для модели')
 
+  const ctx = s.claude.transcript ? await contextInfo(s.claude.transcript) : null
+  if (ctx) {
+    // Over the configured window means the real one is bigger: show the size only.
+    const win = settings.contextWindow
+    const fill = ctx.tokens <= win ? ` из ${fmtTokens(win)} (${Math.round((ctx.tokens / win) * 100)}%)` : ''
+    lines.push(`🧠 <code>${escapeHtml(ctx.model)}</code> · контекст ${fmtTokens(ctx.tokens)}${fill}`)
+  }
+  const tool = s.lastTool ? escapeHtml(s.lastTool.text.slice(0, 120)) : ''
+  if (s.turn) lines.push(`⏳ ход идёт ${fmtDuration(now - s.turn.start)}${s.lastTool && s.lastTool.at >= s.turn.start ? ` · сейчас: ${tool}` : ''}`)
+  else if (s.lastTool) lines.push(`🔧 последнее действие: ${tool}, ${fmtDuration(now - s.lastTool.at)} назад`)
+  if (s.claude.sessionId) lines.push(`🧾 <code>claude --resume ${escapeHtml(s.claude.sessionId)}</code>`)
   lines.push(`⏱ запущена ${fmtDuration(now - s.connectedAt)} назад · активность ${fmtDuration(now - s.lastActivity)} назад`)
   return lines.join('\n')
 }

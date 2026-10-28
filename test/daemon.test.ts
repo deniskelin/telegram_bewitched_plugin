@@ -277,6 +277,18 @@ describe('topics', () => {
     const t = new FakeClient()
     await t.connect({ cwd: '/tmp/tmuxed', projectRoot: '/tmp/tmuxed', tmuxPane: '%9', branch: 'feat', claudePid: 99 })
     await tg.waitFor('createForumTopic', c => c.body.name === 'tmuxed')
+    const { mkdtempSync, writeFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const transcript = `${mkdtempSync(`${tmpdir()}/tr-`)}/abc.jsonl`
+    writeFileSync(transcript, [
+      JSON.stringify({ type: 'assistant', message: { model: 'claude-opus-5-5', usage: { input_tokens: 10, cache_read_input_tokens: 90_000, cache_creation_input_tokens: 0, output_tokens: 0 } } }),
+      JSON.stringify({ type: 'assistant', isSidechain: true, message: { model: 'claude-haiku-5-5', usage: { input_tokens: 5 } } }),
+    ].join('\n') + '\n')
+    await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event: 'PreToolUse', claudePid: 99, data: { session_id: 'abc-123', transcript_path: transcript, permission_mode: 'plan', tool_name: 'Bash', tool_input: { command: 'ls', description: 'List files' } } }),
+    })
     tg.push(textMessage({ text: '/topics' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии и топики'))
     const text = String(r.body.text)
@@ -289,6 +301,11 @@ describe('topics', () => {
     expect(text).toContain('📱 Remote Control: вкл (/rc active в терминале)')
     expect(text).toContain('📱 Remote Control: выкл')
     expect(text).toContain('🌿 <code>feat</code>')
+    expect(text).toContain('🧾 <code>claude --resume abc-123</code>')
+    expect(text).toContain('🧠 <code>claude-opus-5-5</code> · контекст 90k из 200k (45%)')
+    expect(text).toContain('⏳ ход идёт')
+    expect(text).toContain('List files')
+    expect(text).toContain('🛡 Разрешения: plan')
     expect(text).toContain('🖥 не в tmux')
     expect(text).toContain('💤 <b>Без сессии</b>')
     expect(text).toContain('/tmp/other')

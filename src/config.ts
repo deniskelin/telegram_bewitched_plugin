@@ -96,6 +96,8 @@ export const settings = {
   get topicProjects() { return str('TOPIC_PROJECTS', 'auto', ['auto', 'ask', 'off'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
   /** Folder of the main session: DMs, General and topics without a session of their own. */
+  /** Context window used for the fill percentage in session cards. */
+  get contextWindow() { return num('CONTEXT_WINDOW', 200_000) },
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },

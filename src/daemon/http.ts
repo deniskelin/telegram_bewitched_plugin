@@ -32,6 +32,9 @@ export function handleHook(d: Daemon, h: HookEvent): void {
   const s = d.sessionByClaudePid(h.claudePid)
   if (!s || s.passive) return
   const data = h.data
+  if (typeof data.session_id === 'string') s.claude.sessionId = data.session_id
+  if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
+  if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
   switch (h.event) {
     case 'UserPromptSubmit':
       touchTurn(s)
@@ -39,7 +42,9 @@ export function handleHook(d: Daemon, h: HookEvent): void {
     case 'PreToolUse': {
       touchTurn(s)
       const name = String(data.tool_name ?? '')
-      if (name && !isOwnTool(name)) d.streams.onTool(s, summarizeTool(name, data.tool_input as Record<string, unknown>))
+      const summary = name ? summarizeTool(name, data.tool_input as Record<string, unknown>) : ''
+      if (summary) s.lastTool = { text: summary, at: Date.now() }
+      if (name && !isOwnTool(name)) d.streams.onTool(s, summary)
       break
     }
     case 'PostToolUseFailure': {
