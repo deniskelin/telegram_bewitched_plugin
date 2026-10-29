@@ -556,8 +556,15 @@ describe('topics', () => {
 
       // On the minute: a window over a threshold gets a "tokens are back" at its reset (here: already due).
       const { scheduleResetNotice, usageKeyboard } = await import('../src/daemon/usage.ts')
-      scheduleResetNotice(d, 'Тест', new Date(Date.now() - 29_900))
-      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест» сброшен'))
+      // resets_at jitters between calls: three schedules of one window → one notice.
+      let at0 = Date.now() - 31_000
+      if (Math.abs((at0 % 60_000) - 30_000) < 1_000) at0 -= 1_500
+      scheduleResetNotice(d, 'Тест', new Date(at0 - 400))
+      scheduleResetNotice(d, 'Тест', new Date(at0 + 300))
+      scheduleResetNotice(d, 'Тест', new Date(at0))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест» сброшен'), 3_000)
+      await Bun.sleep(400)
+      expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест»')).length).toBe(1)
       expect(JSON.parse(d.store.get('limit:Тест')!)).toMatchObject({ level: 0, notified: true })
 
       // /usage offers 🔔 per limit; pressing it remembers the request.
@@ -1644,7 +1651,7 @@ describe('several topic groups (FR-3)', () => {
 
 describe('limit warmup', () => {
   test('⚡ on: a tiny request right after the 5-hour reset, once per window; limit notices refresh and delete', async () => {
-    const { scheduleWarmup, setRunWarmup, warmupOn, fireWarmup } = await import('../src/daemon/usage.ts')
+    const { scheduleWarmup, setRunWarmup, warmupOn, fireWarmup, windowKey } = await import('../src/daemon/usage.ts')
     let runs = 0
     setRunWarmup(async () => { runs++ })
     expect(warmupOn(d)).toBe(false)
@@ -1653,11 +1660,18 @@ describe('limit warmup', () => {
     tg.push(callbackQuery('us:w:on'))
     await tg.waitFor('answerCallbackQuery', c => c.body.text === '⚡ Окно будет запускаться сразу после сброса')
     expect(warmupOn(d)).toBe(true)
-    const at = new Date(Date.now() - 59_990)
+    // resets_at jitters between API calls by a fraction of a second: still one window, one run.
+    // Away from the :30 rounding edge, so the jitter stays in one minute.
+    let base = Date.now() - 59_000
+    if (Math.abs((base % 60_000) - 30_000) < 1_000) base += 1_500
+    const at = new Date(base - 300)
     scheduleWarmup(d, at)
-    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚡ Новое окно «5 часов» запущено'))
+    scheduleWarmup(d, new Date(base + 200))
+    scheduleWarmup(d, new Date(base - 100))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚡ Новое окно «5 часов» запущено'), 4_000)
+    await Bun.sleep(300)
     expect(runs).toBe(1)
-    await fireWarmup(d, at.toISOString())
+    await fireWarmup(d, windowKey(at))
     expect(runs).toBe(1)
     tg.push(callbackQuery('la:x', { messageId: 4242 }))
     await tg.waitFor('deleteMessage', c => c.body.message_id === 4242)
