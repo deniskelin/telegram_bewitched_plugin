@@ -226,6 +226,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `CONTEXT_WARN_PCT` | `80` | Bei dieser Kontextfüllung `/compact` im Chat der Sitzung anbieten (0 – nie) |
 | `DIGEST_AT` | `21:00` | Wann der Besitzer die „🌙 Tagesbilanz“ (Verbrauch, Commits, Limits) erhält; `off` – nie. Auf Anfrage: `/digest` |
 | `LIMIT_ALERTS` | `80,95` | Meldeschwellen der Abo-Limits in Prozent; `off` – keine Meldungen. Ein Fenster, das eine Schwelle überschritten hat, erhält genau bei der Zurücksetzung „✅ Token wieder da“; in `/usage` lässt sich dasselbe mit 🔔 für jedes Fenster bestellen |
+| `LIMIT_WARMUP` | `off` | `on`: eine Minute nach der Zurücksetzung des 5-Stunden-Fensters eine winzige `claude -p`-Anfrage (haiku) schicken, damit das nächste Fenster sofort beginnt. Auch der ⚡-Knopf in `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | Wie oft die Limits geprüft werden (Minuten, 0 – nie) |
 | `USAGE_LIMITS` | `on` | `/usage`: Limit-Prozente beim nicht dokumentierten Anthropic-Endpunkt abfragen (`off` – nur lokale Daten) |
 | `USER_SHARE_ALERT` | `40` | Den Besitzer benachrichtigen, wenn ein anderer Nutzer so viel Prozent des 5-Stunden-Fensters belegt hat (einmal pro Fenster; 0 – nie). Wirkt zusammen mit `LIMIT_ALERTS` |

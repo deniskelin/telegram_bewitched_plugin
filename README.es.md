@@ -226,6 +226,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `CONTEXT_WARN_PCT` | `80` | Con este llenado del contexto, ofrecer `/compact` en el chat de la sesión (0: nunca) |
 | `DIGEST_AT` | `21:00` | A qué hora enviar al propietario el «🌙 Resumen del día» (gasto, commits, límites); `off`: nunca. A petición: `/digest` |
 | `LIMIT_ALERTS` | `80,95` | Umbrales de aviso de los límites de la suscripción en %; `off`: sin avisos. Una ventana que cruzó un umbral recibe «✅ Los tokens se renovaron» justo al restablecerse; en `/usage` se puede pedir lo mismo con 🔔 para cualquier ventana |
+| `LIMIT_WARMUP` | `off` | `on`: un minuto después del restablecimiento de la ventana de 5 horas, enviar una petición mínima `claude -p` (haiku) para que la siguiente ventana empiece ya. También el botón ⚡ en `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | Cada cuánto comprobar los límites (minutos, 0: nunca) |
 | `USAGE_LIMITS` | `on` | `/usage`: pedir los porcentajes al endpoint no documentado de Anthropic (`off`: solo datos locales) |
 | `USER_SHARE_ALERT` | `40` | Avisar al propietario cuando otro usuario ocupe este porcentaje de la ventana de 5 horas (una vez por ventana; 0: nunca). Funciona junto con `LIMIT_ALERTS` |

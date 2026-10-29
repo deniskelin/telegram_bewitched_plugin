@@ -226,6 +226,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 | `CONTEXT_WARN_PCT` | `80` | À ce remplissage du contexte, proposer `/compact` dans le chat de la session (0 — jamais) |
 | `DIGEST_AT` | `21:00` | Quand envoyer au propriétaire le « 🌙 Bilan du jour » (dépenses, commits, limites) ; `off` — jamais. À la demande : `/digest` |
 | `LIMIT_ALERTS` | `80,95` | Seuils d'alerte des limites de l'abonnement en % ; `off` — aucune alerte. Une fenêtre qui a franchi un seuil reçoit « ✅ Jetons rétablis » au moment exact de la réinitialisation ; dans `/usage`, on peut demander la même chose avec 🔔 pour n'importe quelle fenêtre |
+| `LIMIT_WARMUP` | `off` | `on` : une minute après la réinitialisation de la fenêtre de 5 heures, envoyer une toute petite requête `claude -p` (haiku) pour que la fenêtre suivante démarre aussitôt. Aussi le bouton ⚡ dans `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | Fréquence de vérification des limites (minutes, 0 — jamais) |
 | `USAGE_LIMITS` | `on` | `/usage` : demander les pourcentages au point d'accès non documenté d'Anthropic (`off` — données locales seulement) |
 | `USER_SHARE_ALERT` | `40` | Prévenir le propriétaire quand un autre utilisateur occupe ce pourcentage de la fenêtre de 5 heures (une fois par fenêtre ; 0 — jamais). Fonctionne avec `LIMIT_ALERTS` |

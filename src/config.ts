@@ -130,6 +130,10 @@ export const settings = {
   /** Daily digest to the owner at this local time ("HH:MM"), or "off". */
   get digestAt() { const v = process.env.DIGEST_AT ?? '21:00'; return /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null },
   get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
+  /** ⚡ Start the next 5-hour window right at its reset with a tiny request (on/off; the /usage button wins). */
+  get limitWarmup() { return process.env.LIMIT_WARMUP === 'on' },
+  /** The Claude Code binary for that request. */
+  get claudeBin() { return process.env.CLAUDE_BIN || 'claude' },
   /** Tell the owner when another user took this much of the 5-hour window (percent, 0 = never). */
   get userShareAlert() { return num('USER_SHARE_ALERT', 40) },
   /** Messages without sound in this local time range ("23:00-08:00"), or "off". /menu → ⚙️ overrides it. */

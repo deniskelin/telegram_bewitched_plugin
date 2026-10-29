@@ -710,6 +710,14 @@ const dict: Dict = {
   "🔌 Отключена": "🔌 Getrennt",
   "⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.": "⚠️ Der Bot wurde aus der Themengruppe „{title}“ entfernt. Ihre Projekte gehen in die Hauptgruppe.",
   "✅ Группа «{title}» подключена как дополнительная группа топиков. Укажите её папки проектов: /topics → «🗂 Группы топиков»; топики, созданные в ней, сразу станут её проектами.": "✅ Die Gruppe „{title}“ ist als zusätzliche Themengruppe verbunden. Legen Sie ihre Projektordner fest: /topics → „🗂 Themengruppen“; dort angelegte Themen werden sofort ihre Projekte.",
+  "✖️ Удалить": "✖️ Löschen",
+  "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ Ein neues 5-Stunden-Fenster startete direkt nach der Zurücksetzung – die nächste gegen {time}.",
+  "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ Fenster nach der Zurücksetzung konnte nicht gestartet werden: {err}",
+  "⚡ Окно сразу после сброса: вкл": "⚡ Fenster nach Reset: an",
+  "⚡ Окно сразу после сброса: выкл": "⚡ Fenster nach Reset: aus",
+  "🔄 Обновлено": "🔄 Aktualisiert",
+  "⚡ Окно будет запускаться сразу после сброса": "⚡ Das Fenster startet direkt nach jeder Zurücksetzung",
+  "Окно запускается как обычно": "Das Fenster startet wie gewohnt",
 }
 
 export default dict
