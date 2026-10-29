@@ -2,14 +2,18 @@
  * /server in the owner's DM: the machine the bot and the Claude Code
  * sessions run on — CPU, load, memory, swap, disks, what eats them, and how
  * much the sessions and voice services take. All from /proc, no extra tools.
+ * Also the daemon's own log and a restart button (the new daemon reports
+ * back by editing the same message).
  */
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
-import { execFile } from 'child_process'
-import { readdirSync, readFileSync, statfsSync } from 'fs'
+import { execFile, spawn } from 'child_process'
+import { existsSync, openSync, readdirSync, readFileSync, statfsSync } from 'fs'
 import { cpus, hostname, homedir } from 'os'
+import { join } from 'path'
 import { owner } from '../access.ts'
-import { escapeHtml, fmtDuration } from '../format.ts'
+import { DAEMON_LOG, ENV_FILE, PLUGIN_ROOT } from '../config.ts'
+import { escapeHtml, fmtDuration, maskSecrets } from '../format.ts'
 import type { Daemon } from './daemon.ts'
 import { show } from './menu.ts'
 import { button } from './stream.ts'
@@ -138,7 +142,53 @@ export async function serverReport(d: Daemon): Promise<string> {
   return lines.join('\n')
 }
 
-const KB = () => new InlineKeyboard([[button('🔄 Обновить', 'srv:refresh'), button('« Статистика', 'hub:stats')]])
+const KB = () => new InlineKeyboard([
+  [button('🔄 Обновить', 'srv:refresh'), button('📜 Логи демона', 'srv:logs')],
+  [button('♻️ Перезапустить демон', 'srv:rs'), button('« Статистика', 'hub:stats')],
+])
+
+const LOG_LINES = 40
+
+/** The tail of the daemon log, secrets masked, at most ~3500 characters. */
+export function logTail(file = DAEMON_LOG, lines = LOG_LINES): string {
+  if (!existsSync(file)) return ''
+  let text = maskSecrets(readFileSync(file, 'utf8').trimEnd().split('\n').slice(-lines).join('\n'))
+  if (text.length > 3500) text = '…' + text.slice(-3500)
+  return text
+}
+
+/**
+ * `bewitched daemon restart` in its own process group: it stops this daemon
+ * and starts a new one. Keys from .env are left out of its environment so the
+ * new daemon reads the file afresh (a restart is how .env changes apply).
+ * Replaced in tests.
+ */
+export let restartDaemon = (): void => {
+  const env: Record<string, string | undefined> = { ...process.env, TMUX_PANE: '' }
+  try {
+    for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
+      const m = /^(\w+)=/.exec(line)
+      if (m) delete env[m[1]]
+    }
+  } catch {}
+  const out = openSync(DAEMON_LOG, 'a', 0o600)
+  spawn(process.execPath, [join(PLUGIN_ROOT, 'bin', 'bewitched.ts'), 'daemon', 'restart'], { cwd: PLUGIN_ROOT, detached: true, stdio: ['ignore', out, out], env }).unref()
+}
+export function setRestartDaemon(f: () => void): void {
+  restartDaemon = f
+}
+
+/** After a restart from Telegram: the new daemon edits the "restarting" message. */
+export async function reportRestart(d: Daemon, delayMs = 5000): Promise<void> {
+  const raw = d.store.get('restart_notice')
+  if (!raw) return
+  d.store.set('restart_notice', null)
+  const { chatId, messageId, at } = JSON.parse(raw) as { chatId: number; messageId: number; at: number }
+  // Sessions reconnect within a few seconds of the new daemon starting.
+  await Bun.sleep(delayMs)
+  const text = `✅ Демон перезапущен за ${fmtDuration(Date.now() - at)}: pid ${process.pid}, сессий подключилось ${d.activeSessions().length}.`
+  await d.bot.api.editMessageText(chatId, messageId, text, { reply_markup: KB() }).catch(err => d.log(`restart notice failed: ${err}`))
+}
 
 export function registerServerCommands(d: Daemon, bot: Bot): void {
   bot.command('server', async ctx => {
@@ -147,10 +197,37 @@ export function registerServerCommands(d: Daemon, bot: Bot): void {
   })
 }
 
+/** srv:refresh|logs|rs|rsok */
 export async function handleServerCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  if (data !== 'srv:refresh') return false
+  if (!/^srv:(refresh|logs|rs|rsok)$/.test(data)) return false
   if (String(ctx.from?.id) !== owner()) {
     await ctx.answerCallbackQuery({ text: 'Только для владельца.' }).catch(() => {})
+    return true
+  }
+  if (data === 'srv:logs') {
+    await ctx.answerCallbackQuery().catch(() => {})
+    const tail = logTail()
+    await show(ctx, {
+      text: `📜 <b>Лог демона</b> · последние ${LOG_LINES} строк\n<code>${escapeHtml(DAEMON_LOG)}</code>\n<pre>${escapeHtml(tail) || 'пусто'}</pre>`,
+      kb: new InlineKeyboard([[button('🔄', 'srv:logs'), button('« Сервер', 'srv:refresh')]]),
+    })
+    return true
+  }
+  if (data === 'srv:rs') {
+    await ctx.answerCallbackQuery().catch(() => {})
+    await show(ctx, {
+      text: `♻️ Перезапустить демон бота (pid ${process.pid})?\n\nСессии Claude Code продолжат работать и переподключатся сами, .env перечитается. Пара секунд бот не будет отвечать.`,
+      kb: new InlineKeyboard([[button('♻️ Да, перезапустить', 'srv:rsok', 'danger'), button('Отмена', 'srv:refresh')]]),
+    })
+    return true
+  }
+  if (data === 'srv:rsok') {
+    const msg = ctx.callbackQuery?.message
+    await ctx.answerCallbackQuery({ text: '♻️ Перезапускаю…' }).catch(() => {})
+    await show(ctx, { text: '♻️ Перезапускаю демон…', kb: new InlineKeyboard() })
+    if (msg) d.store.set('restart_notice', JSON.stringify({ chatId: msg.chat.id, messageId: msg.message_id, at: Date.now() }))
+    d.log('restart requested from Telegram')
+    restartDaemon()
     return true
   }
   await ctx.answerCallbackQuery({ text: '🔄' }).catch(() => {})

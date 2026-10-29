@@ -176,12 +176,12 @@ function hasTranscripts(dir: string): boolean {
 }
 
 function confirmHint(win: string): string {
-  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «👁 Экран» — прямо из Telegram.`
+  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «✅ Подтвердить запуск» — прямо из Telegram.`
 }
 
 /** "👁 Экран" for a freshly launched window: its screen with keys to accept the channels prompt. */
 export function screenKb(win: string): InlineKeyboard {
-  return new InlineKeyboard([[button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
+  return new InlineKeyboard([[button('✅ Подтвердить запуск', `tx:w${win}:c`, 'success'), button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
 }
 
 export function manualCmd(dir: string, o: LaunchOptions = {}): string {
@@ -288,7 +288,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
     '',
     'Подтвердите запуск каналов в терминале:',
     `<pre>tmux attach -t ${escapeHtml(sess)}</pre>`,
-    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «👁 Экран» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
+    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «✅ Подтвердить запуск» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
   ].join('\n'), screenKb(win))
 }
 

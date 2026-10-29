@@ -29,6 +29,9 @@ import { handleReportCallback, registerReportCommands } from './reports.ts'
 import { handleInviteCallback, registerInviteCommands } from './invite.ts'
 import { handleUserCallback, registerUserCommands } from './users.ts'
 import { handleTopicMenu } from './topicmenu.ts'
+import { handleCiCallback } from './events.ts'
+import { handleMacroCallback, registerMacroCommands } from './macros.ts'
+import { addProjectRule, projectRules } from './permrules.ts'
 import { handleServerCallback, registerServerCommands } from './server.ts'
 import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
 
@@ -349,8 +352,8 @@ export function resolvePermission(d: Daemon, request_id: string, behavior: 'allo
 
 export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: string; tool_name: string; description: string; input_preview: string }): void {
   d.permissions.set(p.request_id, { sessionId: s.id, tool_name: p.tool_name, description: p.description, input_preview: p.input_preview })
-  if (s.alwaysAllow.has(p.tool_name)) {
-    d.log(`session ${s.id}: ${p.tool_name} allowed (♾)`)
+  if (s.alwaysAllow.has(p.tool_name) || projectRules(d, s.projectKey).includes(p.tool_name)) {
+    d.log(`session ${s.id}: ${p.tool_name} allowed (♾/📌)`)
     resolvePermission(d, p.request_id, 'allow')
     return
   }
@@ -371,11 +374,11 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
 function permissionKb(requestId: string, tool: string, more: boolean): InlineKeyboard {
   const first = [button('✅ Разрешить', `perm:allow:${requestId}`, 'success'), button('❌ Запретить', `perm:deny:${requestId}`, 'danger')]
   if (more) first.unshift(button('Подробнее', `perm:more:${requestId}`))
-  return new InlineKeyboard([first, [button(clip(`♾ Всегда ${tool} в этой сессии`, 40), `perm:always:${requestId}`)]])
+  return new InlineKeyboard([first, [button(clip(`♾ Всегда ${tool} в этой сессии`, 40), `perm:always:${requestId}`)], [button(clip(`📌 Всегда ${tool} в проекте`, 40), `perm:proj:${requestId}`)]])
 }
 
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
-  const m = /^perm:(allow|deny|more|always):([a-km-z]{5})$/.exec(data)
+  const m = /^perm:(allow|deny|more|always|proj):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
   if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
   const [, behavior, request_id] = m
@@ -395,9 +398,11 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
   const p = d.permissions.get(request_id)
   const s = p ? d.sessions.get(p.sessionId) : undefined
   if (behavior === 'always' && p && s) s.alwaysAllow.add(p.tool_name)
+  if (behavior === 'proj' && p && s) addProjectRule(d, s.projectKey, p.tool_name)
   const ok = resolvePermission(d, request_id, behavior === 'deny' ? 'deny' : 'allow')
   const label = !ok ? '⌛ Запрос уже неактуален'
     : behavior === 'always' ? `♾ Разрешено; ${p!.tool_name} в этой сессии больше не спрашиваю`
+    : behavior === 'proj' ? `📌 Разрешено; ${p!.tool_name} в этом проекте больше не спрашиваю (снять — в карточке сессии)`
     : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
   await ctx.answerCallbackQuery({ text: label }).catch(() => {})
   const msg = ctx.callbackQuery?.message
@@ -443,6 +448,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   registerUserCommands(d, bot)
   registerServerCommands(d, bot)
   registerHubCommands(d, bot)
+  registerMacroCommands(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -517,6 +523,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleUserCallback(d, ctx, data)) return
     if (await handleServerCallback(d, ctx, data)) return
     if (await handleHubCallback(d, ctx, data)) return
+    if (await handleMacroCallback(d, ctx, data)) return
+    if (await handleCiCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return

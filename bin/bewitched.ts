@@ -4,6 +4,8 @@
  *
  *   bewitched daemon start|stop|restart|status|logs|install-cron
  *   bewitched notify [--topic <name>] [--silent] <text…>
+ *   bewitched event (--topic <name> | --project <dir>) [--source <name>] <text…>
+  bewitched event (--topic <name> | --project <dir>) [--source <name>] [--silent] [--no-deliver] <text…>
  *   bewitched status
  *   bewitched voice install [stt|tts]   # local faster-whisper / Silero in STATE_DIR/voice
  */
@@ -100,6 +102,24 @@ switch (cmd) {
     const text = words.join(' ') || (await Bun.stdin.text()).trim()
     if (!text) usage()
     console.log(JSON.stringify(await api('/notify', { text, topic, silent })))
+    break
+  }
+  case 'event': {
+    // An external event for a project: posted to its topic and handed to its session.
+    const args = [sub, ...rest].filter(a => a != null)
+    const e: Record<string, unknown> = {}
+    const words: string[] = []
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === '--topic') e.topic = args[++i]
+      else if (args[i] === '--project') e.project = args[++i]
+      else if (args[i] === '--source') e.source = args[++i]
+      else if (args[i] === '--silent') e.silent = true
+      else if (args[i] === '--no-deliver') e.deliver = false
+      else words.push(args[i])
+    }
+    e.text = words.join(' ') || (await Bun.stdin.text()).trim()
+    if (!e.text || (!e.topic && !e.project)) usage()
+    console.log(JSON.stringify(await api('/event', e)))
     break
   }
   case 'status':

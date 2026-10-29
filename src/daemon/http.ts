@@ -2,6 +2,7 @@
  * Local HTTP endpoint on 127.0.0.1 (bearer token from STATE_DIR/http.token):
  *   POST /hook    — Claude Code hook events (progress, text, stop)
  *   POST /notify  — send to a topic from scripts/cron/CI
+ *   POST /event   — an external event: posted to a project's topic and handed to its session
  *   GET  /status  — daemon state for the CLI
  */
 
@@ -9,6 +10,7 @@ import { prefsFor } from '../access.ts'
 import { httpToken, settings } from '../config.ts'
 import { fmtDuration, isOwnTool, maskSecrets, summarizeTool } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { handleEvent, type ExternalEvent } from './events.ts'
 import { notify } from './tools.ts'
 import { scheduleDashboard, sessionTarget } from './topics.ts'
 import { checkContext } from './menu.ts'
@@ -118,6 +120,10 @@ function serve(d: Daemon, token: string, json: (status: number, body: unknown) =
         if (req.method === 'POST' && url.pathname === '/notify') {
           const body = (await req.json()) as Record<string, unknown>
           const result = await notify(d, null, body)
+          return json(200, { ok: true, result })
+        }
+        if (req.method === 'POST' && url.pathname === '/event') {
+          const result = await handleEvent(d, (await req.json()) as ExternalEvent)
           return json(200, { ok: true, result })
         }
         if (req.method === 'GET' && url.pathname === '/status') {

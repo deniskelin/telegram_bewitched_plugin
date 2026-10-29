@@ -11,6 +11,7 @@ import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
+import { projectRules } from './permrules.ts'
 import { sessionCostLine } from './usage.ts'
 import { guessTranscript, transcriptInfo } from './transcript.ts'
 
@@ -135,6 +136,8 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
   }
   if (s.alwaysAllow.size) main.push(`♾ без вопросов: ${[...s.alwaysAllow].map(escapeHtml).join(', ')}`)
+  const rules = projectRules(d, s.projectKey)
+  if (rules.length) main.push(`📌 без вопросов в проекте: ${rules.map(escapeHtml).join(', ')}`)
   const cost = sessionCostLine(s)
   if (cost) main.push(cost)
   if (s.lastTool) {

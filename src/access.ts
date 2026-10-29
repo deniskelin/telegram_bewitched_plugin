@@ -34,6 +34,10 @@ export type Prefs = {
   transcript?: boolean
   /** Answer by voice: never, when the user spoke, or always. */
   voice?: 'off' | 'mirror' | 'always'
+  /** Voice of the TTS provider for this chat ("" = TTS_VOICE). */
+  ttsVoice?: string
+  /** Speech rate, 0.5–2 (1 = as synthesized). */
+  ttsSpeed?: number
 }
 
 export type Access = {
@@ -116,7 +120,7 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror' }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1 }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const

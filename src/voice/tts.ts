@@ -17,6 +17,12 @@ import { toOggOpus, wavDuration } from './audio.ts'
 import { normalizeForSpeech } from './normalize.ts'
 
 export type Voice = { ogg: string; duration: number }
+/** Per-chat choice: a voice of the provider ("" = TTS_VOICE) and the speech rate. */
+export type VoiceOptions = { voice?: string; speed?: number }
+
+/** Silero v4_ru speakers, offered in /menu → ⚙️. */
+export const SILERO_VOICES = ['xenia', 'baya', 'kseniya', 'aidar', 'eugene'] as const
+export const SPEEDS = [0.8, 1, 1.25, 1.5] as const
 type Provider = 'silero' | 'piper' | 'http'
 
 /**
@@ -77,18 +83,19 @@ export function setSileroStarter(f: () => Promise<void>): void {
   ensureSilero = f
 }
 
-async function synthWav(provider: Provider, text: string, out: string): Promise<void> {
+async function synthWav(provider: Provider, text: string, voice: string, out: string): Promise<void> {
   if (provider === 'piper') return viaPiper(text, out)
   if (provider === 'silero') {
     if (!settings.ttsUrl) await ensureSilero()
-    return viaHttp(settings.ttsUrl || sileroUrl(), '', text, settings.ttsVoice, out)
+    // A chat's choice is a Silero speaker; anything else falls back to TTS_VOICE.
+    return viaHttp(settings.ttsUrl || sileroUrl(), '', text, (SILERO_VOICES as readonly string[]).includes(voice) ? voice : settings.ttsVoice, out)
   }
   if (!settings.ttsUrl) throw new Error('TTS_URL is not set')
-  return viaHttp(settings.ttsUrl, settings.ttsApiKey, text, settings.ttsVoice, out)
+  return viaHttp(settings.ttsUrl, settings.ttsApiKey, text, voice, out)
 }
 
-function cacheKey(text: string): string {
-  return createHash('sha256').update(`${settings.ttsProvider}|${settings.ttsVoice}|${text}`).digest('hex').slice(0, 32)
+function cacheKey(text: string, voice: string, speed: number): string {
+  return createHash('sha256').update(`${settings.ttsProvider}|${voice}|${speed}|${text}`).digest('hex').slice(0, 32)
 }
 
 /** Oldest files go first once the cache is over TTS_CACHE_MB. */
@@ -106,9 +113,11 @@ function trimCache(): void {
  * OGG/Opus voice for the text (already speakable), from the cache or the
  * provider, then the fallback. Throws when every provider failed.
  */
-export async function synthesize(text: string): Promise<Voice> {
+export async function synthesize(text: string, o: VoiceOptions = {}): Promise<Voice> {
   mkdirSync(TTS_CACHE_DIR, { recursive: true })
-  const key = cacheKey(text)
+  const voice = o.voice || settings.ttsVoice
+  const speed = Math.min(2, Math.max(0.5, o.speed ?? 1))
+  const key = cacheKey(text, voice, speed)
   const ogg = join(TTS_CACHE_DIR, `${key}.ogg`)
   const meta = join(TTS_CACHE_DIR, `${key}.json`)
   if (existsSync(ogg) && existsSync(meta)) return { ogg, duration: JSON.parse(readFileSync(meta, 'utf8')).duration }
@@ -117,9 +126,9 @@ export async function synthesize(text: string): Promise<Voice> {
   for (const provider of chain) {
     const wav = join(TTS_CACHE_DIR, `${key}.${provider}.wav`)
     try {
-      await synthWav(provider, text, wav)
-      const duration = Math.max(1, Math.round(wavDuration(wav)))
-      await toOggOpus(wav, ogg)
+      await synthWav(provider, text, voice, wav)
+      const duration = Math.max(1, Math.round(wavDuration(wav) / speed))
+      await toOggOpus(wav, ogg, speed)
       writeFileSync(meta, JSON.stringify({ duration, provider }))
       trimCache()
       return { ogg, duration }

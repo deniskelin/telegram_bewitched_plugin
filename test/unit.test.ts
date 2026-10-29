@@ -333,3 +333,56 @@ describe('speech normalization', async () => {
     expect(/[A-Za-z0-9]/.test(n('Random English words like Kubernetes and Postgres 15'))).toBe(false)
   })
 })
+
+describe('dates and quiet hours', async () => {
+  const { normalizeForSpeech: n, dateWords } = await import('../src/voice/normalize.ts')
+  const { isQuiet, parseQuiet } = await import('../src/daemon/quiet.ts')
+  test('dates are read as dates; fractions and versions as before', () => {
+    expect(n('29.10.2026')).toBe('двадцать девятое октября две тысячи двадцать шестого года')
+    expect(n('01.01.2000')).toBe('первое января двухтысячного года')
+    expect(n('23.02')).toBe('двадцать третье февраля')
+    expect(dateWords(3, 3, 1903)).toBe('третье марта тысяча девятьсот третьего года')
+    expect(dateWords(32, 1)).toBeNull()
+    expect(n('3.5')).toBe('три целых пять')
+    expect(n('1.2.0')).toBe('один точка два точка ноль')
+    expect(n('в 18:30')).toBe('в восемнадцать тридцать')
+  })
+  test('quiet hours, also across midnight', () => {
+    const at = (h: number, m = 0) => new Date(2026, 9, 29, h, m)
+    expect(parseQuiet('off')).toBeNull()
+    expect(parseQuiet('23:00-08:00')).toEqual([1380, 480])
+    expect(isQuiet(parseQuiet('23:00-08:00'), at(23, 30))).toBe(true)
+    expect(isQuiet(parseQuiet('23:00-08:00'), at(7, 59))).toBe(true)
+    expect(isQuiet(parseQuiet('23:00-08:00'), at(8))).toBe(false)
+    expect(isQuiet(parseQuiet('13:00-14:00'), at(13, 15))).toBe(true)
+    expect(isQuiet(null, at(3))).toBe(false)
+  })
+})
+
+describe('quick commands', async () => {
+  const { parseMacro } = await import('../src/daemon/macros.ts')
+  test('label | text', () => {
+    expect(parseMacro(' 🧪 Тесты | прогони тесты ')).toEqual({ label: '🧪 Тесты', text: 'прогони тесты' })
+    expect(parseMacro('без разделителя')).toBeNull()
+    expect(parseMacro(' | текст')).toBeNull()
+  })
+})
+
+describe('conversations', async () => {
+  const { firstPrompt } = await import('../src/daemon/transcript.ts')
+  const { mkdtempSync, writeFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  test('the first thing said, without channel tags, resume digests and command wrappers', async () => {
+    const f = `${mkdtempSync(`${tmpdir()}/conv-`)}/a.jsonl`
+    const u = (content: unknown, extra = {}) => JSON.stringify({ type: 'user', message: { role: 'user', content }, ...extra })
+    writeFileSync(f, [
+      JSON.stringify({ type: 'mode', mode: 'normal' }),
+      u('<channel source="t" event="session_resume">Последние сообщения…</channel>'),
+      u('<command-name>/compact</command-name>'),
+      u('meta', { isMeta: true }),
+      u('<channel source="t" chat_id="1">\nпочини   тесты\n</channel>'),
+      u('second'),
+    ].join('\n'))
+    expect(await firstPrompt(f)).toBe('почини тесты')
+  })
+})

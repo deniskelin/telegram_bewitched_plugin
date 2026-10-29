@@ -314,6 +314,35 @@ export function ownerOf(d: Daemon, cwd: string): string {
   return `📂 ${basename(cwd) || cwd}`
 }
 
+export type Share = { who: string; userId: string | null; cost: number; percent: number }
+
+/**
+ * Who spent the 5-hour window: API-price cost since the window began, by
+ * person (a user's session) or 📂 projects together, and each one's part of
+ * the window's percentage — utilization × their share of the cost. An
+ * estimate: the limit itself is not counted in dollars.
+ */
+export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = Date.now()): { limit: Limit; shares: Share[] } | null {
+  const limit = limits.items.find(l => l.label === LIMIT_LABELS.session)
+  if (!limit) return null
+  const start = limit.resetsAt ? limit.resetsAt.getTime() - 5 * 3600_000 : now - 5 * 3600_000
+  const by = new Map<string, Share>()
+  let total = 0
+  for (const e of entries) {
+    if (e.ts < start) continue
+    const cost = costOf(e) ?? 0
+    const userId = /^(\d+)(\/|$)/.exec(relative(settings.usersDir, e.cwd))?.[1] ?? null
+    const key = userId ?? 'projects'
+    const sh = by.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : '📂 проекты и главная', userId, cost: 0, percent: 0 }
+    sh.cost += cost
+    total += cost
+    by.set(key, sh)
+  }
+  if (total <= 0) return { limit, shares: [] }
+  const shares = [...by.values()].map(sh => ({ ...sh, percent: limit.percent * sh.cost / total })).sort((a, b) => b.cost - a.cost)
+  return { limit, shares }
+}
+
 export async function usageReport(d: Daemon, now = Date.now()): Promise<string> {
   const oauth = readOAuth()
   const plan = planName(oauth)
@@ -336,6 +365,11 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   })
   out.push(`💸 <b>Потребление</b>, в ценах API\n<blockquote>${sums.join('\n')}</blockquote>`)
   if (!entries.length) return out.join('\n\n')
+  const ws = typeof limits === 'string' ? null : windowShares(d, limits, entries, now)
+  if (ws?.shares.length) {
+    out.push(`👥 <b>Кто тратит окно «${escapeHtml(ws.limit.label)}»</b> (${Math.round(ws.limit.percent)}%)\n<blockquote>${ws.shares.map(sh =>
+      `${escapeHtml(sh.who)}: ≈${Math.round(sh.percent)}% · $${sh.cost.toFixed(2)}`).join('\n')}</blockquote>`)
+  }
 
   const group = (key: (e: Entry) => string) => {
     const m = new Map<string, Sum>()
@@ -391,8 +425,27 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
     // Over a threshold: say "tokens are back" exactly when the window resets.
     if (level > 0 && l.resetsAt) scheduleResetNotice(d, l.label, l.resetsAt)
   }
+  await checkShares(d, to, limits, now)
   rescheduleRequested(d)
   d.onSessionsChanged()
+}
+
+/** USER_SHARE_ALERT: tell the owner once per window when someone else took that much of the 5-hour window. */
+async function checkShares(d: Daemon, to: string, limits: Limits, now: number): Promise<void> {
+  const pct = settings.userShareAlert
+  if (pct <= 0) return
+  const ws = windowShares(d, limits, collectEntries(now, 1), now)
+  if (!ws) return
+  const windowKey = ws.limit.resetsAt?.toISOString() ?? ''
+  for (const sh of ws.shares) {
+    if (!sh.userId || sh.userId === to || sh.percent < pct) continue
+    const key = `share_alert:${sh.userId}`
+    if (d.store.get(key) === windowKey) continue
+    d.store.set(key, windowKey)
+    const reset = ws.limit.resetsAt ? `\n${fmtReset(ws.limit.resetsAt, now)}` : ''
+    await d.bot.api.sendMessage(to, `👥 ${escapeHtml(sh.who)} израсходовал(а) ≈<b>${Math.round(sh.percent)}%</b> окна «${escapeHtml(ws.limit.label)}» (всего занято ${Math.round(ws.limit.percent)}%).${reset}`, { parse_mode: 'HTML' })
+      .catch(err => d.log(`share notice failed: ${err}`))
+  }
 }
 
 // --------------------------------------------------------------------------
