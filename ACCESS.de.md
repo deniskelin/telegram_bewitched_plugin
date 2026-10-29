@@ -20,9 +20,13 @@ Der gesamte Zustand liegt in `~/.claude/channels/telegram-bewitched/access.json`
 
 ## Einladen aus dem Bot
 
-Der Besitzer (der erste Eintrag in `allowFrom`) kann Personen auch ohne Code hinzufügen: `/invite` im Privatchat mit dem Bot oder „👥 Einladen“ in `/sessions`. Die Kontaktauswahl von Telegram liefert die Nutzer-ID; nach einer Bestätigung trägt der Bot sie in `allowFrom` ein, legt `USERS_DIR/<id>` an und startet die Sitzung, erstellt einen Einmal-Link zur Themengruppe (der Bot braucht das Recht „Nutzer einladen“) und schickt dem Besitzer eine Nachricht zum Weiterleiten. Alle in `allowFrom` haben dieselben vollen Rechte. Im Modus `static` funktioniert das erst nach einem Neustart (die Datei wird geschrieben, der Schnappschuss nicht).
+Der Besitzer (der erste Eintrag in `allowFrom`) kann Personen auch ohne Code hinzufügen: `/invite` im Privatchat mit dem Bot oder „👥 Einladen“ in `/sessions`. Die Kontaktauswahl von Telegram liefert die Nutzer-ID; nach einer Bestätigung trägt der Bot sie in `allowFrom` ein, legt `USERS_DIR/<id>` an und startet die Sitzung, erstellt einen Einmal-Link zur Themengruppe (der Bot braucht das Recht „Nutzer einladen“) und schickt dem Besitzer eine Nachricht zum Weiterleiten. Ihre Rechte hängen von der Rolle ab (siehe unten). Im Modus `static` funktioniert das erst nach einem Neustart (die Datei wird geschrieben, der Schnappschuss nicht).
 
 Entfernen funktioniert genauso: „🚫 Nutzer löschen“ auf der Karte seiner Sitzung in `/sessions` oder `/users`. Nach einer Bestätigung, die auflistet, was gelöscht wird, entfernt der Bot die Person aus `allowFrom` (und den Gruppenlisten), schließt ihr tmux-Fenster, löscht `USERS_DIR/<id>` und ihre Claude-Code-Transkripte und vergisst Privatchat-Verlauf, Warteschlange, Gedächtnis, Erinnerungen und Einstellungen; auf Wunsch entfernt er sie auch aus der Themengruppe (Ban + Unban).
+
+## Rollen
+
+Gekoppelte Nutzer haben Rollen. 👑 **Besitzer** – der erste Eintrag in `allowFrom` – darf alles. 👤 **Mitglied** (Standard) schreibt in Sitzungen, beantwortet `ask_user`-Knöpfe und stoppt einen Durchgang mit ⏹. 👁 **Beobachter** liest nur: Nachrichten und Tipps werden ignoriert. Berechtigungen erteilen (Anfragen gehen nur in den Privatchat des Besitzers), Steuerpult, Archiv, Einstellungen sowie Personen einladen und entfernen sind dem Besitzer vorbehalten. Der Besitzer stellt Rollen in `/users` um; sie stehen in `access.json` als `"roles": { "<id>": "member" | "viewer" }`. Sitzungen sehen die Rolle des Autors (`user_role`) und lassen einen Nicht-Besitzer die Anweisungen des Besitzers nicht aushebeln.
 
 ## Richtlinien für Privatnachrichten
 

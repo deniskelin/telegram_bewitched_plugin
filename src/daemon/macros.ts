@@ -12,7 +12,7 @@
  */
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import { clip, escapeHtml } from '../format.ts'
 import type { ChatRef, Daemon } from './daemon.ts'
 import { show, type Screen } from './menu.ts'
@@ -84,7 +84,7 @@ function whereOf(ctx: Context): Where {
 
 export function registerMacroCommands(d: Daemon, bot: Bot): void {
   bot.command('macro', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id) || !ctx.chat) return
+    if (!ctx.from || !can(ctx.from.id, 'control') || !ctx.chat) return
     const w = whereOf(ctx)
     const thread = w.threadId != null ? { message_thread_id: w.threadId } : {}
     const arg = String(ctx.match ?? '').trim()
@@ -108,7 +108,7 @@ export async function handleMacroCallback(d: Daemon, ctx: Context, data: string)
   const m = /^mc:(?:(l):(-?\d+):(\d+)|(r):(-?\d+):(\d+):(\d+)|list:([0-9a-f]+))$/.exec(data)
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'write')) {
     await answer(t('Нет доступа.'))
     return true
   }

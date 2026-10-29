@@ -5,7 +5,7 @@
  */
 
 import { InlineKeyboard, type Context } from 'grammy'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import { settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { clip, escapeHtml } from '../format.ts'
@@ -81,7 +81,7 @@ export async function handleTopicMenu(d: Daemon, ctx: Context, data: string): Pr
   if (!m) return false
   const [, action, arg] = m
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(tr('Нет доступа.'))
     return true
   }

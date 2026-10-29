@@ -8,7 +8,7 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
+import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { clip, fmtDuration, safeMeta } from '../format.ts'
@@ -367,7 +367,7 @@ export function disconnectGroup(d: Daemon): void {
 // --------------------------------------------------------------------------
 
 function isControlChat(d: Daemon, ctx: Context): boolean {
-  if (!ctx.from || !isOwner(ctx.from.id)) return false
+  if (!ctx.from || !can(ctx.from.id, 'control')) return false
   if (ctx.chat?.type === 'private') return true
   return String(ctx.chat?.id) === d.topicsChatId && !ctx.message?.is_topic_message
 }
@@ -542,7 +542,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   const mainCommand = async (ctx: Context) => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const arg = String(ctx.match ?? '').trim().replace(/^#/, '')
     if (arg === 'reset') {
       d.store.set('main_dir', null)
@@ -561,7 +561,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.command('use', mainCommand)
 
   bot.command('verbose', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const arg = (ctx.match ?? '').trim()
     const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${tr(VERBOSE_INFO[l])}`).join('\n')
     if (!arg) {
@@ -575,7 +575,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('notify_done', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const help = '/notify_done off|long|always\n' + tr('long — если ход дольше {sec} с и без ответа', { sec: settings.notifyLongSec })
     if (!v) return void ctx.reply(tr('Здесь: {badge}\n\n', { badge: `✅ ${tr(NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone])}` }) + help, { message_thread_id: threadOf(ctx) })
@@ -585,7 +585,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('voice', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const info = { off: tr('только текст'), mirror: tr('голосом на голосовое'), always: tr('всегда голосом') } as const
     const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n' + tr('⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install')}`
@@ -596,7 +596,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('transcript', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const help = tr('/transcript on|off — показывать расшифровку голосовых в чате') + (sttEnabled() ? '' : '\n' + tr('⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'))
     const shown = (on: boolean) => (on ? tr('показывается') : tr('не показывается'))
@@ -607,7 +607,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('forget', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const thread = threadOf(ctx) ?? 0
     await ctx.reply(tr('Удалить историю этого чата/топика из памяти бота? Сообщения в Telegram останутся.'), {
       message_thread_id: threadOf(ctx),
@@ -616,7 +616,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('remember', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'write')) return
     const chat = String(ctx.chat!.id)
     const thread = threadOf(ctx)
     const own = settings.userSessions ? d.userSession(String(ctx.from.id)) : null
@@ -631,7 +631,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   // --- group connection (DM only) ---
 
   bot.command('connect_group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const code = randomBytes(4).toString('hex')
     d.store.set(`connect:${code}`, JSON.stringify({ owner: String(ctx.from!.id), exp: Date.now() + 15 * 60_000 } satisfies ConnectState))
     const url = `https://t.me/${d.botUsername}?startgroup=${code}&admin=manage_topics+delete_messages+pin_messages`
@@ -642,7 +642,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const chat = topicsChat()
     if (!chat) return void ctx.reply(tr('Группа не подключена. /connect_group'))
     try {
@@ -656,7 +656,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('disconnect_group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     if (!topicsChat()) return void ctx.reply(tr('Группа не подключена.'))
     await ctx.reply(tr('Отключить группу? Топики и история останутся, сессии вернутся в личку.'), { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
   })
@@ -693,14 +693,14 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
         chat_id: chat, thread_id: ctx.message.message_thread_id, name: ctx.message.forum_topic_created.name,
         kind: 'manual', project_key: null, status: 'active', created_at: Date.now(), last_activity_at: Date.now(),
       })
-      if (ctx.from && isOwner(ctx.from.id)) void onManualTopic(d, chat, ctx.message.message_thread_id, ctx.message.forum_topic_created.name)
+      if (ctx.from && can(ctx.from.id, 'control')) void onManualTopic(d, chat, ctx.message.message_thread_id, ctx.message.forum_topic_created.name)
     }
     return next()
   })
   bot.on('message:forum_topic_closed', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status !== 'archived') {
         const stuck = await archiveTopic(d, chat, thread, { alreadyClosed: true }).catch(() => [])
@@ -714,7 +714,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.on('message:forum_topic_reopened', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status === 'archived') await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off', alreadyOpen: true }).catch(err => d.log(`unarchive failed: ${err}`))
     }
@@ -741,7 +741,7 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
   if (!m) return false
   const [, ns, action, arg, arg2] = m
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(tr('Нет доступа.'))
     return true
   }

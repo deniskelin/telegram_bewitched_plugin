@@ -5,7 +5,7 @@
  */
 
 import { InlineKeyboard, InputFile, type Context } from 'grammy'
-import { isOwner, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
+import { can, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import { locale, t } from '../i18n/index.ts'
@@ -168,7 +168,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   if (!m) return false
   const [, action, id, value] = m
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(t('Нет доступа.'))
     return true
   }

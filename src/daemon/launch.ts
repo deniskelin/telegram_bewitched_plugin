@@ -10,7 +10,7 @@ import { execFile } from 'child_process'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
-import { isOwner, owner } from '../access.ts'
+import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
@@ -359,7 +359,7 @@ export async function onManualTopic(d: Daemon, chatId: string, threadId: number,
 export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^np:(ok|no):(\d+)$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
@@ -379,7 +379,7 @@ export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string
 
 export function registerLaunchCommands(d: Daemon, bot: Bot): void {
   bot.command('new_session', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const inControl = ctx.chat.type === 'private' || (String(ctx.chat.id) === d.topicsChatId && !ctx.message?.is_topic_message)
     if (!inControl) return
     const dir = projectPath(ctx.match ?? '')

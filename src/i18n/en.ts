@@ -681,6 +681,12 @@ const dict: Dict = {
   "🎤 (в записи нет речи)": "🎤 (no speech in the recording)",
   "🎤 В записи нет речи — похоже, микрофон был выключен. Запишите ещё раз или напишите текстом.": "🎤 There's no speech in the recording — the mic seems to have been off. Record again or write it as text.",
   "(в записи нет речи)": "(no speech in the recording)",
+  "наблюдатель": "viewer",
+  "участник": "member",
+  "👤 участник — пишет в сессии, отвечает на кнопки, жмёт ⏹; разрешения, архив, люди и настройки — только у владельца. 👁 наблюдатель только читает. Кнопка слева меняет роль.": "👤 member — writes to sessions, answers buttons, presses ⏹; permissions, archive, people and settings are the owner's only. 👁 viewer only reads. The left button changes the role.",
+  "👁 Теперь наблюдатель": "👁 Now a viewer",
+  "👤 Теперь участник": "👤 Now a member",
+  "Разрешения одобряет только владелец.": "Only the owner approves permissions.",
 }
 
 export default dict

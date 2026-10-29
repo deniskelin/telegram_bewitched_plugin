@@ -20,9 +20,13 @@ Todo el estado vive en `~/.claude/channels/telegram-bewitched/access.json`. Los 
 
 ## Invitar desde el bot
 
-El propietario (la primera entrada de `allowFrom`) también puede añadir personas sin códigos: `/invite` en el privado con el bot o «👥 Invitar» en `/sessions`. El selector de contactos de Telegram devuelve el ID de la persona; tras confirmar, el bot la añade a `allowFrom`, prepara `USERS_DIR/<id>` e inicia su sesión, crea un enlace de un solo uso al grupo de temas (requiere el permiso del bot «Invitar usuarios») y envía al propietario un mensaje para reenviar. Todos los de `allowFrom` tienen los mismos derechos completos. En modo `static` solo funciona tras reiniciar (el archivo se escribe, la instantánea no).
+El propietario (la primera entrada de `allowFrom`) también puede añadir personas sin códigos: `/invite` en el privado con el bot o «👥 Invitar» en `/sessions`. El selector de contactos de Telegram devuelve el ID de la persona; tras confirmar, el bot la añade a `allowFrom`, prepara `USERS_DIR/<id>` e inicia su sesión, crea un enlace de un solo uso al grupo de temas (requiere el permiso del bot «Invitar usuarios») y envía al propietario un mensaje para reenviar. Sus derechos dependen de su rol (ver abajo). En modo `static` solo funciona tras reiniciar (el archivo se escribe, la instantánea no).
 
 Eliminar funciona igual: «🚫 Eliminar usuario» en la ficha de su sesión en `/sessions`, o `/users`. Tras una confirmación que enumera lo que se borra, el bot lo quita de `allowFrom` (y de las listas de grupos), cierra su ventana de tmux, borra `USERS_DIR/<id>` y sus transcripciones de Claude Code y olvida su historial privado, cola, memoria, recordatorios y ajustes; opcionalmente lo expulsa del grupo de temas (ban + unban).
+
+## Roles
+
+Los usuarios emparejados tienen roles. 👑 **propietario** —la primera entrada de `allowFrom`— puede hacerlo todo. 👤 **participante** (por defecto) escribe a las sesiones, responde a los botones de `ask_user` y detiene un turno con ⏹. 👁 **observador** solo lee: sus mensajes y pulsaciones se ignoran. Aprobar permisos (las solicitudes van solo al privado del propietario), el panel, el archivo, los ajustes e invitar o eliminar personas son del propietario. El propietario cambia los roles en `/users`; se guardan en `access.json` como `"roles": { "<id>": "member" | "viewer" }`. Las sesiones ven el rol del autor (`user_role`) y no dejan que alguien que no es el propietario anule sus instrucciones.
 
 ## Políticas de mensajes privados
 
