@@ -1,10 +1,29 @@
 # telegram-bewitched
 
-🌍 [Русский](README.md) · [English](README.en.md) · [Español](README.es.md) · 中文 · [Français](README.fr.md) · [Deutsch](README.de.md)
+🌍 [English](README.md) · [Русский](README.ru.md) · [Español](README.es.md) · 中文 · [Français](README.fr.md) · [Deutsch](README.de.md)
 
-Claude Code 的 Telegram 频道——[官方插件](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram)的分支，提供共享守护进程、论坛超级群组中按项目划分的话题、实时进度、回答按钮，以及重启后依然保留的历史记录。
+**在 Telegram 中操控 Claude Code。** 您给机器人发消息——回复您的是运行在您自己服务器上、能访问您项目的 Claude Code。每个项目在群组中有自己的话题，每个人有自己的会话。可以实时看到 Claude 在做什么，用按钮批准权限，发送语音消息，并在 `/usage` 中查看额度与消耗。
 
-需求文档：[docs/TZ.md](docs/TZ.md)（俄文）。阶段 0–8 已完成，包括语音（自 1.2.0 起）。需求之外还有：`/menu` 控制面板、订阅额度与消耗、带图表的报告、提醒、在 Telegram 中控制 tmux 窗口和 git、邀请与移除成员、六种语言的界面。更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+从技术上讲，它是 Claude Code 的*频道*（channels）插件——频道让外部来源把消息推送到正在运行的会话中。它是[官方 telegram 插件](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram)的分支，提供共享守护进程、论坛超级群组中的项目话题、实时进度、回答按钮，以及重启后依然保留的历史记录。
+
+需求文档：[docs/TZ.md](docs/TZ.md)（俄文）。阶段 0–9 已完成，包括语音（自 1.2.0 起）。需求之外还有：`/menu` 控制面板、订阅额度与消耗、带图表的报告、提醒、在 Telegram 中控制 tmux 窗口和 git、邀请与移除成员、六种语言的界面。更新内容见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 工作原理
+
+```
+Telegram：私聊、群组话题
+        │ Bot API（一个机器人）
+        ▼
+bewitched 守护进程（每台服务器一个）：轮询、路由、队列、历史（SQLite）、
+                                      控制面板、提醒、额度、语音
+        │ unix socket                       ▲ Claude Code 钩子：进度、「完成」
+        ▼                                   │
+tmux 中的 Claude Code 会话：👤 每人一个（~/user/<id>）· 📂 每个项目一个（对应其话题）
+```
+
+- 消息会交给负责该聊天的会话：私聊交给发送者自己的会话，话题交给该项目的会话。如果会话未运行，守护进程会在 tmux 中启动它，并在其连接后送达消息。
+- 会话通过插件的工具（`reply`、`ask_user` 等）回复；工作期间守护进程会显示进度。
+- 会话以开发频道标志启动，因此每次启动需要确认一次——机器人会提供「✅ 确认启动」按钮。
 
 ## 与官方插件的区别
 

@@ -1,217 +1,235 @@
 # telegram-bewitched
 
-🌍 [English](README.en.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+🌍 English · [Русский](README.ru.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
-Telegram-канал для Claude Code — форк [официального плагина](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) с общим демоном, топиками проектов в форум-супергруппе, живым прогрессом, кнопками ответов и историей, которая переживает перезапуски.
+**Control Claude Code from Telegram.** You write to a bot — Claude Code running on your own server answers, with access to your projects. Each project gets its own topic in a group, each person their own session. You see what Claude is doing right now, approve permissions with buttons, send voice messages, and keep an eye on limits and spending in `/usage`.
 
-ТЗ: [docs/TZ.md](docs/TZ.md). Реализованы этапы 0–8, включая голос (с 1.2.0). Сверх ТЗ: пульт `/menu`, лимиты подписки и расход, отчёты с графиками, напоминания, управление окном tmux и git из Telegram, приглашение и удаление людей, интерфейс на шести языках. Что менялось — [CHANGELOG.md](CHANGELOG.md).
+Under the hood it is a Claude Code *channel* plugin (channels let an outside source push messages into a running session) — a fork of the [official telegram plugin](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) with a shared daemon, project topics in a forum supergroup, live progress, answer buttons and history that survives restarts.
 
-## Отличия от официального плагина
+Spec: [docs/TZ.md](docs/TZ.md) (in Russian). Stages 0–9 are done, including voice (since 1.2.0). Beyond the spec: the `/menu` control panel, subscription limits and spending, reports with charts, reminders, tmux window and git control from Telegram, inviting and removing people, an interface in six languages. What changed — [CHANGELOG.md](CHANGELOG.md).
 
-| Возможность | Официальный `telegram` 0.0.7 | `telegram-bewitched` |
+## How it works
+
+```
+Telegram: DMs, group topics
+        │ Bot API (one bot)
+        ▼
+bewitched daemon (one per server): polling, routing, queue, history (SQLite),
+                                   control panel, reminders, limits, voice
+        │ unix socket                       ▲ Claude Code hooks: progress, «done»
+        ▼                                   │
+Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per project (its topic)
+```
+
+- A message goes to the session that serves its chat: a DM — the sender's own session, a topic — that project's session. If the session isn't running, the daemon starts it in tmux and delivers the message once it connects.
+- The session answers with the plugin's tools (`reply`, `ask_user`, …); the daemon shows its progress while it works.
+- Sessions start with the development channels flag, so each start is confirmed once — the bot offers a «✅ Confirm launch» button.
+
+## Compared with the official plugin
+
+| Feature | Official `telegram` 0.0.7 | `telegram-bewitched` |
 |---|---|---|
-| Текст, фото, файлы, голосовые как вложения | ✅ | ✅ |
-| Pairing, allowlist, группы с упоминанием | ✅ | ✅ |
-| Разрешения инструментов кнопками | ✅ в личку | ✅ в топик проекта или личку (`PERMISSIONS_TO`); «♾ в этой сессии» и «📌 в проекте» навсегда |
-| Несколько сессий Claude на одном боте | ❌ 409 Conflict, вторая сессия «глохнет» | ✅ общий демон опроса, сессии регистрируются по сокету |
-| `claude -p` / субагенты рядом с каналом | ❌ запускают свой поллер и роняют канал | ✅ пассивные сессии не трогают входящие |
-| Конфликт с другим поллером | молча 409 | ✅ ждёт и пишет владельцу в личку |
-| Топики | ❌ | ✅ форум-супергруппа, топик на проект, подключение из лички `/connect_group` |
-| Пульт управления | ❌ | ✅ закреплённая сводка в General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
-| Новая сессия из Telegram | ❌ | ✅ создали топик → папка проекта + Claude в окне tmux; `/new_session` |
-| Архив сессии и топика | ❌ | ✅ «🗄 Архив» закрывает сессию и топик; переоткрытие топика запускает сессию снова |
-| Живой прогресс работы | ❌ только «typing» на 5 с | ✅ черновик с «размышлениями» в личке (Bot API 10.2), обновляемое «⏳ Работаю…» с действиями в топике, `/verbose 0\|1\|2` |
-| Остановить ход из Telegram | ❌ | ✅ кнопка «⏹ Стоп» (Escape в tmux) |
-| Кнопки с вариантами ответа | ❌ | ✅ `ask_user`, `reply(buttons)`, множественный выбор, таймаут |
-| Rich-сообщения (Markdown: таблицы, код, списки) | ❌ только MarkdownV2 с ручным экранированием | ✅ `format: "rich"` (Bot API 10.1) с откатом на текст |
-| Сообщение без входящего (о завершении, ошибке) | ❌ | ✅ `notify`, авто-«✅ Готово» после долгого хода, `bewitched notify`, HTTP `/notify` |
-| История переписки | ❌ Bot API не хранит историю | ✅ SQLite + полнотекстовый поиск: `get_history`, `search_messages`, `get_message` |
-| Контекст ответа, цитаты, пересылки | ❌ только текст сообщения | ✅ `reply_to_text`, `quote_text`, `forward_from`, пачки пересылок |
-| Память между перезапусками | ❌ | ✅ `save_memory`, сводка и недавняя история при подключении сессии |
-| Сообщения, пока сессия выключена | ❌ теряются | ✅ сохраняются и доставляются при запуске сессии |
-| Права пользователей | все из allowlist в личке | ✅ все из allowlist равны владельцу и в группе топиков; посторонние игнорируются |
-| Определение tmux у сессии | — | ✅ по окружению или терминалу процесса Claude |
-| Голосовые | вложение без текста | ✅ расшифровка локальным faster-whisper, ответы голосом (Silero/Piper/облако) — [docs/voice.md](docs/voice.md) |
-| Лимиты и расход | ❌ | ✅ `/usage`: проценты лимитов подписки, стоимость в ценах API, уведомления о порогах и сбросе, итоги дня, отчёты с графиком |
-| Окно сессии и git из Telegram | ❌ | ✅ «✅ Подтвердить запуск», «👁 Экран и клавиши» (и живой, ▶️), 🧹 `/compact`, 🆕 `/clear`, 🧠 модель, 🕘 прошлые разговоры, 🌿 статус, коммиты, PR и diff |
-| Внешние события и CI | ❌ | ✅ `/event` и `bewitched event` → топик и сессия проекта; упавший GitHub Actions с кнопкой «🛠 Починить» |
-| Быстрые команды | ❌ | ✅ `/macro`: свои кнопки с текстом для сессии чата |
-| Напоминания | ❌ | ✅ `/remind` и инструмент `remind`, разовые и повторяющиеся |
-| Люди | только pairing-код | ✅ `/invite` из контактов, `/users`, удаление со всеми данными |
-| Языки интерфейса | английский | ✅ русский, английский, испанский, китайский, французский, немецкий — `/lang`, по умолчанию язык Telegram |
-| Тесты | ❌ | ✅ юнит и интеграционные с фейковым Bot API |
+| Text, photos, files, voice messages as attachments | ✅ | ✅ |
+| Pairing, allowlist, groups with mentions | ✅ | ✅ |
+| Tool permissions with buttons | ✅ in DM | ✅ in the project topic or DM (`PERMISSIONS_TO`); «♾ in this session» and «📌 in the project» for good |
+| Several Claude sessions on one bot | ❌ 409 Conflict, the second session goes silent | ✅ a shared polling daemon, sessions register over a socket |
+| `claude -p` / subagents next to the channel | ❌ start their own poller and break the channel | ✅ passive sessions don't touch incoming messages |
+| Conflict with another poller | silent 409 | ✅ waits and tells the owner in DM |
+| Topics | ❌ | ✅ forum supergroup, a topic per project, connected from DM with `/connect_group` |
+| Control panel | ❌ | ✅ pinned summary in General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
+| New session from Telegram | ❌ | ✅ create a topic → a project folder + Claude in a tmux window; `/new_session` |
+| Session and topic archive | ❌ | ✅ «🗄 Archive» closes the session and the topic; reopening the topic starts the session again |
+| Live progress | ❌ only «typing» for 5 s | ✅ a draft with «thinking» in DM (Bot API 10.2), an updating «⏳ Working…» with actions in a topic, `/verbose 0\|1\|2` |
+| Stop a turn from Telegram | ❌ | ✅ the «⏹ Stop» button (Escape in tmux) |
+| Answer buttons | ❌ | ✅ `ask_user`, `reply(buttons)`, multiple choice, timeout |
+| Rich messages (Markdown: tables, code, lists) | ❌ only MarkdownV2 with manual escaping | ✅ `format: "rich"` (Bot API 10.1) with a fallback to text |
+| A message with no incoming one (done, error) | ❌ | ✅ `notify`, automatic «✅ Done» after a long turn, `bewitched notify`, HTTP `/notify` |
+| Chat history | ❌ the Bot API keeps no history | ✅ SQLite + full-text search: `get_history`, `search_messages`, `get_message` |
+| Reply context, quotes, forwards | ❌ only the message text | ✅ `reply_to_text`, `quote_text`, `forward_from`, batches of forwards |
+| Memory across restarts | ❌ | ✅ `save_memory`, a summary and recent history when a session connects |
+| Messages while the session is off | ❌ lost | ✅ stored and delivered when the session starts |
+| User rights | everyone in the allowlist, in DM | ✅ everyone in the allowlist equals the owner, in the topics group too; strangers are ignored |
+| Finding the session's tmux | — | ✅ from the environment or the Claude process's terminal |
+| Voice messages | an attachment without text | ✅ transcribed by local faster-whisper, spoken replies (Silero/Piper/cloud) — [docs/voice.md](docs/voice.md) |
+| Limits and spending | ❌ | ✅ `/usage`: subscription limit percentages, cost at API prices, threshold and reset notices, daily summary, reports with a chart |
+| Session window and git from Telegram | ❌ | ✅ «✅ Confirm launch», «👁 Screen and keys» (also live, ▶️), 🧹 `/compact`, 🆕 `/clear`, 🧠 model, 🕘 past conversations, 🌿 status, commits, PR and diff |
+| External events and CI | ❌ | ✅ `/event` and `bewitched event` → the project's topic and session; a failed GitHub Actions run with a «🛠 Fix it» button |
+| Quick commands | ❌ | ✅ `/macro`: your own buttons with text for the chat's session |
+| Reminders | ❌ | ✅ `/remind` and the `remind` tool, one-off and daily |
+| People | pairing code only | ✅ `/invite` from contacts, `/users`, removal with all their data |
+| Interface languages | English | ✅ Russian, English, Spanish, Chinese, French, German — `/lang`, defaults to the Telegram language |
+| Tests | ❌ | ✅ unit and integration tests with a fake Bot API |
 
-## Что умеет
+## What it does
 
 | | |
 |---|---|
-| **Общий демон** | Один процесс опрашивает Telegram за все сессии. Несколько сессий Claude Code и `claude -p` работают с одним ботом без 409 Conflict. |
-| **Топики** | Подключаете форум-супергруппу из лички (`/connect_group`), каждый проект получает свой топик. В General — закреплённый пульт и команды управления. |
-| **Типы сессий** | 👤 своя сессия каждому пользователю (личка и его сообщения в General), 📂 сессия на проект в топике. Сессии запускаются сами по первому сообщению, сторож сообщает об остановившихся и даёт кнопку перезапуска. |
-| **Живой прогресс** | Пока Claude работает: в личке — нативный черновик с блоком «размышления», в топике — обновляемое сообщение «⏳ Работаю…» с действиями и кнопкой **⏹ Стоп** (прерывает ход через tmux). |
-| **Кнопки ответов** | Инструмент `ask_user` и `reply(buttons)`: варианты нажатием, ответ возвращается в сессию. |
-| **Проекты из топиков** | Создали топик в группе → папка `~/projects/<имя>` и новая сессия Claude в окне tmux, привязанная к этому топику. Или `/new_session <имя\|путь>`. Запуск подтверждается кнопкой «✅ Подтвердить запуск». |
-| **Архив** | «🗄 В архив» в карточке проекта в `/sessions`: сессия закрывается, топик закрывается. Переоткрыли топик — запускается новая сессия. Закрыли топик в Telegram — то же, что архив. |
-| **Уведомления** | `notify` без входящего сообщения, авто-«✅ Готово» после долгого хода, `bewitched notify` и HTTP `/notify` для скриптов и CI. |
-| **Пульт `/menu`** | Одно сообщение с кнопками на всё: сессии, топики, статистика, люди, напоминания, настройки этого чата, помощь. В меню команд Telegram — только `/menu`, `/sessions`, `/usage`, `/help`. |
-| **Управление сессией** | «✅ Подтвердить запуск» в сообщении о запуске — без терминала. Карточка в `/sessions`: снимок окна tmux с клавишами (▶️ — обновляется сам минуту), 🧹 `/compact`, 🆕 `/clear`, 🧠 смена модели, 🕘 прошлые разговоры (`/resume` в той же сессии), ⚡ быстрые команды, 🌿 git (статус, коммиты, PR, diff файлом), «♾ Всегда в сессии» и «📌 Всегда в проекте» для инструмента, предупреждение о заполненном контексте. |
-| **Внешние события** | `bewitched event --topic <имя> "текст"` или `POST /event` — сообщение «📡» в топик проекта и его сессии. Раз в 5 минут бот смотрит последний прогон GitHub Actions ветки каждой проектной сессии: упал — «❌ CI упал» с кнопкой «🛠 Починить», позеленел — «✅». |
-| **Голос** | Голосовые и кружки расшифровываются локально, ответ на голосовое — голосом. Числа, время, даты и латиница читаются по-русски. Голос и скорость — в настройках чата. |
-| **Статистика** | `/usage` — проценты лимитов со временем сброса и шкалой, расход по моделям и сессиям; уведомления при 80/95% и в момент сброса (🔔/🔕); «🌙 Итоги дня»; `/reports` — сутки, неделя, месяц с графиком; стоимость сессии в её карточке; `/server` — нагрузка машины, лог демона и его перезапуск кнопкой; 👥 кто сколько съел из окна «5 часов» и уведомление, если кто-то взял больше `USER_SHARE_ALERT`. 🌙 Тихие часы — ночью без звука. |
-| **Напоминания** | `/remind 2h проверь CI`, «завтра 9:00», «каждый день 9:00»; в срок текст приходит в чат и в сессию, незапущенная сессия запускается. |
-| **Люди** | `/invite` — выбрать контакт, бот добавит в доступ, запустит сессию и даст ссылку в группу; `/users` и 🚫 — удалить человека с сессией, папкой, транскриптами и историей. Добавленных через `/telegram-bewitched:access` демон подхватывает сам. |
-| **Языки** | Интерфейс бота на 6 языках: ru, en, es, zh, fr, de. Язык чата — `/lang` или флаги в «/menu → ⚙️»; по умолчанию в личке — язык Telegram пользователя, иначе `BOT_LANGUAGE`. Меню команд Telegram — на языке приложения. |
-| **История и память** | SQLite с полнотекстовым поиском, контекст ответа/цитаты/пересылки в каждом сообщении, `get_history`, `search_messages`, память чата `save_memory`, сводка при подключении сессии, доставка сообщений, пришедших пока сессия была выключена. |
+| **Shared daemon** | One process polls Telegram for all sessions. Several Claude Code sessions and `claude -p` work with one bot without 409 Conflict. |
+| **Topics** | Connect a forum supergroup from DM (`/connect_group`); each project gets its own topic. General holds the pinned control panel and control commands. |
+| **Session types** | 👤 a session for each user (their DM and their messages in General), 📂 a session per project in its topic. Sessions start by themselves on the first message; a watchdog reports stopped ones and offers a restart button. |
+| **Live progress** | While Claude works: in DM — a native draft with a «thinking» block; in a topic — an updating «⏳ Working…» message with actions and a **⏹ Stop** button (interrupts the turn via tmux). |
+| **Answer buttons** | The `ask_user` tool and `reply(buttons)`: options by tap, the answer goes back to the session. |
+| **Projects from topics** | Create a topic in the group → a `~/projects/<name>` folder and a new Claude session in a tmux window bound to that topic. Or `/new_session <name\|path>`. The launch is confirmed with the «✅ Confirm launch» button. |
+| **Archive** | «🗄 Archive» on the project card in `/sessions`: the session ends, the topic closes. Reopen the topic — a new session starts. Closing the topic in Telegram is the same as archiving. |
+| **Notifications** | `notify` with no incoming message, automatic «✅ Done» after a long turn, `bewitched notify` and HTTP `/notify` for scripts and CI. |
+| **The `/menu` panel** | One message with buttons for everything: sessions, topics, statistics, people, reminders, this chat's settings, help. Telegram's command menu shows only `/menu`, `/sessions`, `/usage`, `/help`. |
+| **Session control** | «✅ Confirm launch» in the launch message — no terminal needed. The card in `/sessions`: a snapshot of the tmux window with keys (▶️ — refreshes itself for a minute), 🧹 `/compact`, 🆕 `/clear`, 🧠 switch model, 🕘 past conversations (`/resume` in the same session), ⚡ quick commands, 🌿 git (status, commits, PR, diff as a file), «♾ Always in the session» and «📌 Always in the project» for a tool, a warning when the context is filling up. |
+| **External events** | `bewitched event --topic <name> "text"` or `POST /event` — a «📡» message in the project's topic and to its session. Every 5 minutes the bot looks at the latest GitHub Actions run of each project session's branch: failed — «❌ CI failed» with «🛠 Fix it», green again — «✅». |
+| **Voice** | Voice messages and video notes are transcribed locally; a voice message gets a spoken reply. Numbers, times, dates and Latin words are read out in Russian by the Russian voice. Voice and speed are per-chat settings. |
+| **Statistics** | `/usage` — limit percentages with reset time and a bar, spending by model and session; notices at 80/95% and at the moment of reset (🔔/🔕); «🌙 Daily summary»; `/reports` — day, week, month with a chart; the session's cost on its card; `/server` — machine load, the daemon log and a restart button; 👥 who used how much of the 5-hour window, with a notice when someone takes more than `USER_SHARE_ALERT`. 🌙 Quiet hours — silent at night. |
+| **Reminders** | `/remind 2h check CI`, «tomorrow 9:00», «every day 9:00»; when due, the text arrives in the chat and to its session; a session that isn't running is started. |
+| **People** | `/invite` — pick a contact, the bot grants access, starts their session and gives a group link; `/users` and 🚫 — remove a person with their session, folder, transcripts and history. People added through `/telegram-bewitched:access` are picked up by the daemon automatically. |
+| **Languages** | The bot interface in 6 languages: ru, en, es, zh, fr, de. A chat's language — `/lang` or the flags in «/menu → ⚙️»; by default in DM — the user's Telegram language, otherwise `BOT_LANGUAGE`. Telegram's command menu follows the app language. |
+| **History and memory** | SQLite with full-text search, reply/quote/forward context in every message, `get_history`, `search_messages`, chat memory `save_memory`, a summary when a session connects, delivery of messages that came while the session was off. |
 
-## Требования
+## Requirements
 
 - [Bun](https://bun.sh) ≥ 1.2.
-- Claude Code с поддержкой channels и хука `MessageDisplay`.
-- tmux — для автозапуска сессий, кнопки «⏹ Стоп», «👁 Экран и клавиши» и команд в окне сессии (без tmux «Стоп» только сообщает модели об остановке).
-- Необязательно: `gh` (PR в «🌿 Git», слежение за CI), ffmpeg и Python 3 (голос, ставится `bewitched voice install`).
+- Claude Code with channels and the `MessageDisplay` hook.
+- tmux — for starting sessions automatically, the «⏹ Stop» button, «👁 Screen and keys» and commands in the session window (without tmux «Stop» only tells the model about the stop).
+- Optional: `gh` (PRs in «🌿 Git», CI watch), ffmpeg and Python 3 (voice, installed with `bewitched voice install`).
 
-## Установка
+## Installation
 
-1. Создайте бота у [@BotFather](https://t.me/BotFather) (`/newbot`) и скопируйте токен.
-2. В Claude Code:
+1. Create a bot with [@BotFather](https://t.me/BotFather) (`/newbot`) and copy the token.
+2. In Claude Code:
 
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
-/telegram-bewitched:configure <токен>
+/telegram-bewitched:configure <token>
 ```
 
-   Если раньше стоял официальный плагин, `.env` и `access.json` скопируются из `~/.claude/channels/telegram/` автоматически при первом запуске.
-3. Запустите сессию с каналом (см. «Запуск»), напишите боту в личку — он ответит 6-символьным кодом — и в Claude Code выполните `/telegram-bewitched:access pair <код>`. Первый сопряжённый становится владельцем. Подробнее — [ACCESS.md](ACCESS.md).
+   If the official plugin was installed before, `.env` and `access.json` are copied from `~/.claude/channels/telegram/` automatically on the first start.
+3. Start a session with the channel (see «Running»), write to the bot in DM — it answers with a 6-character code — and run `/telegram-bewitched:access pair <code>` in Claude Code. The first paired user becomes the owner. More in [ACCESS.md](ACCESS.md).
 
-**Официальный плагин и форк не должны опрашивать один токен одновременно.** Отключите официальный (`/plugin disable telegram@claude-plugins-official`) или запускайте Claude без его `--channels`. Если демон видит работающий официальный плагин с тем же токеном, он ждёт, а не дерётся за опрос.
+**The official plugin and the fork must not poll one token at the same time.** Disable the official one (`/plugin disable telegram@claude-plugins-official`) or run Claude without its `--channels`. If the daemon sees the official plugin running with the same token, it waits instead of fighting over polling.
 
-## Запуск
+## Running
 
-Во время research preview сторонние каналы запускаются флагом разработки (появится подтверждение, его нужно принять):
+During the research preview third-party channels are loaded with a development flag (a confirmation appears; accept it):
 
 ```
 tmux new -s claude
 claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched
 ```
 
-Первая сессия сама запускает демон. Он продолжает работать после закрытия сессий, чтобы пульт и `/notify` отвечали всегда.
+The first session starts the daemon. It keeps running after sessions close, so the control panel and `/notify` always answer.
 
-Команды CLI запускаются из папки плагина: после установки из маркетплейса это `~/.claude/plugins/cache/bewitched/telegram-bewitched/<версия>/` (или клон репозитория).
+CLI commands run from the plugin folder: after a marketplace install that is `~/.claude/plugins/cache/bewitched/telegram-bewitched/<version>/` (or a clone of the repository).
 
 ```
-cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<версия>
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<version>
 bun bin/bewitched.ts daemon status|stop|restart|logs
-bun bin/bewitched.ts daemon install-cron     # @reboot в crontab
-bun bin/bewitched.ts voice install           # голос, см. docs/voice.md
-bun bin/bewitched.ts notify --topic myproj "сборка упала"
-bun bin/bewitched.ts event --topic myproj --source ci "деплой упал: …"   # в топик и сессии проекта
+bun bin/bewitched.ts daemon install-cron     # @reboot in crontab
+bun bin/bewitched.ts voice install           # voice, see docs/voice.md
+bun bin/bewitched.ts notify --topic myproj "build failed"
+bun bin/bewitched.ts event --topic myproj --source ci "deploy failed: …"   # to the project's topic and session
 ```
 
-## Обновление
+## Updating
 
 ```
 claude plugin marketplace update bewitched
 claude plugin update telegram-bewitched@bewitched
 ```
 
-Затем перезапустите сессии Claude Code (клиент и хуки берутся из новой версии) и демон — командой из папки **новой** версии: `bun bin/bewitched.ts daemon restart`. Кнопка «♻️ Перезапустить демон» в `/server` перезапускает ту версию, что уже работает. Если ставили `install-cron`, повторите его из новой папки — запись заменится.
+Then restart the Claude Code sessions (the client and hooks come from the new version) and the daemon — with the command from the **new** version's folder: `bun bin/bewitched.ts daemon restart`. The «♻️ Restart the daemon» button in `/server` restarts the version that is already running. If you used `install-cron`, run it again from the new folder — the entry is replaced.
 
-## Топики в супергруппе
+## Topics in a supergroup
 
-1. В личке с ботом: `/connect_group`.
-2. Кнопка «➕ Добавить бота в группу» → выберите группу с включёнными «Темами» → подтвердите права администратора (управление темами, закрепление, удаление).
-3. Подтвердите подключение в личке.
+1. In the bot's DM: `/connect_group`.
+2. «➕ Add the bot to a group» → choose a group with «Topics» enabled → confirm the admin rights (manage topics, pin, delete).
+3. Confirm the connection in DM.
 
-Писать в сессии и управлять ими (кнопки, пульт, архив, разрешения) могут все пользователи из allowlist бота — у всех сопряжённых одинаковые полные права. Остальные участники группы игнорируются. Нативные черновики Telegram работают только в личке, поэтому в топиках прогресс показывается обновляемым сообщением.
+Everyone in the bot's allowlist can write to sessions and control them (buttons, panel, archive, permissions) — all paired users have the same full rights. Other group members are ignored. Telegram's native drafts work only in DMs, so in topics progress is shown as an updating message.
 
-`/sessions` — меню в одном сообщении, как у BotFather: список сессий с кнопкой на каждую; кнопка открывает карточку сессии с действиями (⏹ Стоп, 👑 Сделать главной, 🗄 В архив, 💬 Открыть топик) и настройками её чата (🔕0/🔔1/📢2 и «✅ готово»), «« К списку» возвращает назад. `/topics` — такое же меню топиков: состояние каждого (сессия, 💤 без сессии, очередь), экран топика с кнопками 💬 Открыть, 📋 карточка сессии, 🚀 Запустить сессию, 🗄 В архив / ↩️ Восстановить, 🗑 Удалить; архив отдельной страницей. «👁 Экран и клавиши» (в карточке и в сообщениях о запуске) присылает текущий вид окна tmux с кнопками 1/2/3, Enter, Esc, ↑/↓, Tab — так можно ответить на любой вопрос в окне без `tmux attach`. «🌿 Git» показывает статус, последние коммиты и PR ветки (через `gh`), «📄 diff файлом» присылает `git diff HEAD`. Под запросом разрешения есть «♾ Всегда <инструмент> в этой сессии» (до переподключения сессии; сброс — кнопкой в карточке) и «📌 Всегда <инструмент> в проекте» (бот хранит правило по папке проекта; снимается в карточке). Кнопки 🧹 `/compact`, 🆕 `/clear` и 🧠 Модель набирают команду в окне сессии (только между ходами). Карточка: тип (👑 главная или проектная), статус, `#id` и pid, рабочая папка, ветка, топик, где она в tmux (сессия, окно, панель) с готовой командой `tmux attach -t <сессия>:<окно>`, доступность «⏹ Стоп», режим разрешений, модель и размер контекста, текущий ход и последнее действие, команда `claude --resume <id>`, имя из `/rename`, включён ли 📱 Remote Control со ссылкой на сессию в claude.ai (по событию `remote_session_change` в транскрипте; до первого такого события — по флагу `--remote-control`/`--rc` или `remoteControlAtStartup`) и время с запуска и последней активности. Сессии, запущенные без флага каналов, идут отдельным блоком «👻 Без канала» с готовой командой перезапуска: они не получают сообщений и раньше были не видны.
+`/sessions` is a menu in one message, like BotFather: the list of sessions with a button each; a button opens the session card with actions (⏹ Stop, 👑 Make main, 🗄 Archive, 💬 Open topic) and its chat's settings (🔕0/🔔1/📢2 and «✅ done»); «« To the list» goes back. `/topics` is the same kind of menu for topics: the state of each (session, 💤 no session, queue), a topic screen with 💬 Open, 📋 session card, 🚀 Start session, 🗄 Archive / ↩️ Restore, 🗑 Delete; the archive on its own page. «👁 Screen and keys» (on the card and in launch messages) sends the current view of the tmux window with 1/2/3, Enter, Esc, ↑/↓, Tab buttons — enough to deal with a prompt without `tmux attach`. «🌿 Git» shows the status, latest commits and the branch's PR (via `gh`); «📄 diff as a file» sends `git diff HEAD`. Under a permission request there are «♾ Always <tool> in this session» (until the session reconnects; reset on the card) and «📌 Always <tool> in the project» (kept by the bot per project folder; removed on the card). The 🧹 `/compact`, 🆕 `/clear` and 🧠 Model buttons type the command into the session window (only between turns). The card shows: type (👑 main or project), status, `#id` and pid, working folder, branch, topic, where it is in tmux (session, window, pane) with a ready `tmux attach -t <session>:<window>`, whether «⏹ Stop» is available, permission mode, model and context size, the current turn and last action, the `claude --resume <id>` command, the `/rename` name, whether 📱 Remote Control is on with a link to the session on claude.ai (from the `remote_session_change` event in the transcript; before the first such event — from the `--remote-control`/`--rc` flag or `remoteControlAtStartup`), and the time since start and last activity. Sessions started without the channels flag are listed in a separate «👻 No channel» block with a ready restart command: they get no messages and used to be invisible.
 
-Всё ниже доступно кнопками из **`/menu`** (в меню команд Telegram — только `/menu`, `/sessions`, `/usage`, `/help`). Команды пульта (личка или General): `/sessions`, `/topics`, `/permissions` (ждущие запросы разрешений по всем сессиям), `/send <топик> <текст>`, `/broadcast <текст>`, `/rename <топик> | <имя>`, `/archive <топик>`, `/delete <топик>`, `/new_session <имя|путь>`. В любом чате: `/verbose [0|1|2]` (🔕0 только ответ, 🔔1 + действия, 📢2 + текст модели; без аргумента показывает текущий уровень), `/notify_done [off|long|always]`, `/lang ru|en|es|zh|fr|de|auto`, `/remember`, `/forget`, `/voice off|mirror|always`, `/transcript on|off`, `/macro add <кнопка> | <текст>` и `/macro del <n>` (быстрые команды чата), `/remind <когда> <текст>` (30m, 1h30m, «через 2 часа», 18:30, «завтра 9:00», «каждый день 9:00»; понимает и английские «in 2 hours», «tomorrow 9:00», «every day 9:00»; в срок текст приходит в чат и сессии этого чата, а незапущенную сессию запускает), `/reminders`. Уровень виден в карточках сессий (строка 📣), меняется там же кнопками и в шапке «⏳ Работаю… · 🔔1». В личке: `/server` (CPU, память, диски, процессы Claude Code и голоса; «📜 Логи демона», «♻️ Перезапустить демон»), `/users` (все из доступа; 🚫 удаляет пользователя: доступ, сессию и окно tmux, папку, транскрипты и историю лички — после подтверждения), `/invite` (пригласить пользователя: выбрать контакт → подтвердить → бот добавит его в доступ, запустит его сессию и пришлёт приглашение для пересылки), `/usage`, `/digest`, `/reports` (отчёты за сутки, неделю и месяц с графиком расхода по часам/дням/неделям и статистикой; каждый включается кнопкой, приходят по окончании периода), `/main [id|reset]`, `/group`, `/disconnect_group`, `/status`.
+Everything below is also available as buttons in **`/menu`** (Telegram's command menu has only `/menu`, `/sessions`, `/usage`, `/help`). Control commands (DM or General): `/sessions`, `/topics`, `/permissions` (waiting permission requests across sessions), `/send <topic> <text>`, `/broadcast <text>`, `/rename <topic> | <name>`, `/archive <topic>`, `/delete <topic>`, `/new_session <name|path>`. In any chat: `/verbose [0|1|2]` (🔕0 answer only, 🔔1 + actions, 📢2 + model text; without an argument shows the current level), `/notify_done [off|long|always]`, `/lang ru|en|es|zh|fr|de|auto`, `/remember`, `/forget`, `/voice off|mirror|always`, `/transcript on|off`, `/macro add <button> | <text>` and `/macro del <n>` (the chat's quick commands), `/remind <when> <text>` (30m, 1h30m, «in 2 hours», 18:30, «tomorrow 9:00», «every day 9:00»; Russian forms work too; when due, the text arrives in the chat and to the chat's session, and a session that isn't running is started), `/reminders`. The level is shown on session cards (the 📣 line), changed there with buttons and in the «⏳ Working… · 🔔1» header. In DM: `/server` (CPU, memory, disks, Claude Code and voice processes; «📜 Daemon logs», «♻️ Restart the daemon»), `/users` (everyone with access; 🚫 removes a user: access, session and tmux window, folder, transcripts and DM history — after a confirmation), `/invite` (invite a user: pick a contact → confirm → the bot grants access, starts their session and sends an invitation to forward), `/usage`, `/digest`, `/reports` (reports for a day, week and month with a spending chart by hour/day/week and statistics; each is switched on with a button and arrives when the period ends), `/main [id|reset]`, `/group`, `/disconnect_group`, `/status`.
 
-`/usage` (только владелец): план подписки из `~/.claude/.credentials.json`, проценты лимитов (5 часов, неделя) со временем сброса и расход токенов за 5 часов, сутки и 7 дней по всем транскриптам в ценах API, по моделям и сессиям. Проценты берутся из **незадокументированного** эндпоинта Anthropic `api/oauth/usage` (его же вызывает `/usage` в Claude Code) с OAuth-токеном подписки. Он может перестать работать с любым обновлением, тогда `/usage` покажет только локальные данные. `USAGE_LIMITS=off` отключает запрос. Разделы «Кто тратит», «По моделям» и «По сессиям» показываются за выбранный кнопками период: 5 часов, день, неделя или месяц (для 5 часов и недели «кто тратит» — доля окна подписки, иначе — доля расхода).
+`/usage` (owner only): the subscription plan from `~/.claude/.credentials.json`, limit percentages (5 hours, week) with reset times, and token spending for 5 hours, a day and 7 days across all transcripts at API prices, by model and session. The percentages come from Anthropic's **undocumented** `api/oauth/usage` endpoint (the one `/usage` in Claude Code calls) with the subscription's OAuth token. It may stop working with any update; then `/usage` shows local data only. `USAGE_LIMITS=off` turns the request off. The «Who spends», «By model» and «By session» sections cover the period chosen with buttons: 5 hours, day, week or month (for 5 hours and a week «who spends» is a share of the subscription window, otherwise a share of spending).
 
-## Типы сессий
+## Session types
 
-Бот рассчитан на небольшой круг своих людей (например, семью) в allowlist. У каждого своя сессия Claude, проекты — в топиках группы.
+The bot is meant for a small circle of your own people (a family, say) in the allowlist. Everyone has their own Claude session; projects live in the group's topics.
 
-| | Папка | Что получает |
+| | Folder | What it gets |
 |---|---|---|
-| 👤 **Сессия пользователя** | `~/user/<user_id>` (`USERS_DIR`) | Личку этого пользователя и его сообщения в General; отвечает туда же |
-| 📂 **Сессия проекта** | папка проекта | Свой топик |
-| 👑 **Главная** | `MAIN_DIR` (по умолчанию `~`) | Только при `USER_SESSIONS=off` (лички всех и General, как в 1.0) или как запасная для `TOPIC_NO_SESSION=main` |
+| 👤 **User session** | `~/user/<user_id>` (`USERS_DIR`) | This user's DM and their messages in General; answers there |
+| 📂 **Project session** | the project folder | Its topic |
+| 👑 **Main** | `MAIN_DIR` (default `~`) | Only with `USER_SESSIONS=off` (everyone's DMs and General, as in 1.0) or as a fallback for `TOPIC_NO_SESSION=main` |
 
-Служебную работу делает сам демон, без Claude: команды пульта, закрытие и открытие топиков, запуск сессий, сторож.
+The daemon itself does the housekeeping, without Claude: control commands, closing and opening topics, starting sessions, the watchdog.
 
-- **Сессия пользователя запускается сама.** Первое сообщение пользователя → демон создаёт `~/user/<id>`, запускает Claude в новом окне tmux (`TMUX_SESSION`, с `--continue`, если там уже были разговоры), сообщение ждёт в очереди и доходит после подключения.
-- **Топик проекта без сессии** (`TOPIC_NO_SESSION=launch`): сообщение запускает сессию проекта. Не получилось запустить — бот пишет команду для ручного запуска и закрывает топик, пока сессия не подключится.
-- **Сторож.** Сессия отключилась сама (не архив и не таймаут) → через минуту бот пишет в её чат «⚠️ Сессия остановилась», команды для перезапуска и кнопку «🚀 Запустить». Топик проекта закрывается до переподключения.
-- **Авто-закрытие простаивающих:** `USER_IDLE_MIN` и `PROJECT_IDLE_MIN`, по умолчанию `0` — не закрывать. Простаивающая сессия не тратит токены, только память.
+- **A user session starts by itself.** A user's first message → the daemon creates `~/user/<id>`, starts Claude in a new tmux window (`TMUX_SESSION`, with `--continue` if there were conversations already); the message waits in the queue and arrives after the session connects.
+- **A project topic without a session** (`TOPIC_NO_SESSION=launch`): a message starts the project session. If the start fails, the bot posts a command for a manual start and closes the topic until the session connects.
+- **Watchdog.** A session went away by itself (not archive, not timeout) → a minute later the bot writes «⚠️ Session … has stopped» to its chat, with restart commands and a «🚀 Start» button. A project topic is closed until the session reconnects.
+- **Closing idle sessions:** `USER_IDLE_MIN` and `PROJECT_IDLE_MIN`, default `0` — never. An idle session spends no tokens, only memory.
 
-### Что нужно делать руками
+### What you do by hand
 
-1. **Подтверждать каждый запуск сессии.** Пока каналы Claude Code в research preview, запуск с `--dangerously-load-development-channels` показывает экран предупреждения. Сам бот его не принимает: в сообщении о запуске есть кнопка «✅ Подтвердить запуск» — по нажатию бот по очереди отвечает на вопросы запуска (доверие папке «Yes, I trust this folder» для новой папки и «I am using this for local development»), ждёт, пока сессия подключится, и заменяет экран на «✅ Сессия подключилась». Любой другой вопрос остаётся вам — «👁 Экран и клавиши» (там же «✖️ Закрыть») или `tmux attach -t claude:<окно>`. Если запуск не подтвердили за 3 минуты, бот напомнит владельцу ещё раз. Нужно при первом сообщении нового пользователя, после перезагрузки сервера, после падения сессии и после каждого авто-закрытия (если включено).
-2. **Держать tmux на сервере.** Без него сессии не запускаются автоматически — бот пришлёт команду для ручного запуска.
-3. **Перезапускать остановившиеся сессии** — кнопкой «🚀 Запустить» из уведомления сторожа (и снова подтвердить в tmux) или командой из него.
+1. **Confirm each session start.** While Claude Code channels are in research preview, starting with `--dangerously-load-development-channels` shows a warning screen. The bot doesn't accept it on its own: the launch message has a «✅ Confirm launch» button — on a tap the bot answers the startup questions one by one (folder trust «Yes, I trust this folder» for a new folder, and «I am using this for local development»), waits until the session connects and replaces the screen with «✅ Session connected». Any other question is left to you — «👁 Screen and keys» (with «✖️ Close») or `tmux attach -t claude:<window>`. Needed on a new user's first message, after a server reboot, after a session crash and after each idle close (if enabled).
+2. **Keep tmux on the server.** Without it sessions don't start automatically — the bot sends a command for a manual start.
+3. **Restart stopped sessions** — with «🚀 Start» from the watchdog notice (and confirm again) or with the command from it.
 
-### Недостатки
+### Drawbacks
 
-- Каждый запуск подтверждается нажатием (см. выше); пока никто не нажал, пользователь ждёт ответа.
-- Каждая сессия — отдельный процесс Claude Code: ~350–450 МБ памяти, и все они расходуют лимиты одного аккаунта.
-- Изоляция только по контексту и памяти: все сессии работают под одним системным пользователем, видят всю машину, файлы друг друга и общий `~/.claude`. Для семьи это осознанный выбор, не граница безопасности.
-- Ответы в General видят все в группе; сессия пользователя может процитировать там что-то из его лички, если он сам попросит.
-- Уведомление сторожа приходит и после намеренного `/exit` в терминале — снаружи его не отличить от падения.
-- `--continue` продолжает последний разговор в папке, в том числе запущенный в ней вручную.
+- Every start is confirmed with a tap (see above); until someone taps, the user waits for an answer.
+- Every session is a separate Claude Code process: ~350–450 MB of memory, and they all spend the limits of one account.
+- Isolation is only by context and memory: all sessions run as one system user, see the whole machine, each other's files and the shared `~/.claude`. For a family that is a deliberate choice, not a security boundary.
+- Everyone in the group sees answers in General; a user's session may quote something from their DM there if the user asks.
+- The watchdog notice also comes after a deliberate `/exit` in the terminal — from outside it can't be told apart from a crash.
+- `--continue` continues the latest conversation in the folder, including one started there by hand.
 
-`USER_SESSIONS=off` возвращает поведение 1.0: лички всех и General получает главная сессия в `MAIN_DIR`; `/main <id>`, `/main reset` и кнопка «👑 Сделать главной» в карточке `/sessions` её переназначают.
+`USER_SESSIONS=off` brings back the 1.0 behaviour: everyone's DMs and General go to the main session in `MAIN_DIR`; `/main <id>`, `/main reset` and «👑 Make main» on the `/sessions` card reassign it.
 
-## Настройки (`~/.claude/channels/telegram-bewitched/.env`)
+## Settings (`~/.claude/channels/telegram-bewitched/.env`)
 
-| Переменная | По умолчанию | |
+| Variable | Default | |
 |---|---|---|
-| `TOPIC_MODE` | `project` | `project` — топик на проект, `session` — на сессию, `off` |
-| `PERMISSIONS_TO` | `topic` | Куда слать запросы разрешений: `topic`, `dm`, `both` |
-| `STOP_MODE` | `interrupt` | `interrupt` (Escape в tmux), `notify`, `off` |
-| `PROGRESS_FINAL` | `delete` | Что делать с сообщением прогресса после ответа: `delete`, `keep` |
-| `NOTIFY_LONG_SEC` | `60` | Порог «долгого хода» для авто-уведомления |
-| `DAEMON_IDLE_EXIT_MIN` | `0` | Остановить демон после N минут без сессий (0 — никогда) |
-| `BEWITCHED_HTTP_PORT` | `8797` | Локальный HTTP (хуки, `/notify`, `/event`), только 127.0.0.1, токен в `http.token` |
-| `HISTORY_MAX_DAYS` | `90` | Срок хранения истории |
-| `PASSIVE_TOOLS` | `false` | Разрешить инструменты в сессиях без канала (`claude -p`) |
-| `TOPIC_PROJECTS` | `auto` | Топик, созданный владельцем, → проект и сессия: `auto`, `ask` (кнопка), `off` |
-| `PROJECTS_DIR` | `~/projects` | Где создавать папки проектов |
-| `USER_SESSIONS` | `on` | Своя сессия каждому пользователю из allowlist; `off` — как в 1.0 (всё в главную) |
-| `USERS_DIR` | `~/user` | Где папки сессий пользователей (`<USERS_DIR>/<user_id>`) |
-| `USER_IDLE_MIN` | `0` | Закрывать сессию пользователя после N минут простоя (0 — никогда) |
-| `PROJECT_IDLE_MIN` | `0` | Закрывать сессию проекта после N минут простоя (0 — никогда) |
-| `TOPIC_NO_SESSION` | `launch` | Топик проекта без сессии: `launch` — запустить, `main` — отвечает главная, `queue` — только очередь |
-| `WATCHDOG_GRACE_SEC` | `60` | Через сколько секунд после остановки сессии сообщать о ней |
-| `MAIN_DIR` | `~` | Папка главной сессии (при `USER_SESSIONS=off` — личка и General) |
-| `CONTEXT_WINDOW` | `1000000` | Размер окна контекста для процента заполнения в карточках сессий |
-| `CONTEXT_WARN_PCT` | `80` | При таком заполнении контекста предложить `/compact` в чате сессии (0 — никогда) |
-| `DIGEST_AT` | `21:00` | Во сколько присылать владельцу «🌙 Итоги дня» (расход, коммиты, лимиты); `off` — не присылать. По запросу — `/digest` |
-| `LIMIT_ALERTS` | `80,95` | Пороги уведомлений о лимитах подписки в процентах; `off` — не уведомлять. Окно, перешедшее порог, получает уведомление «✅ Токены обновились» ровно в момент сброса; в `/usage` то же можно заказать кнопкой 🔔 для любого окна |
-| `LIMIT_CHECK_MIN` | `10` | Как часто проверять лимиты (минуты, 0 — никогда) |
-| `USAGE_LIMITS` | `on` | `/usage`: запрашивать проценты лимитов у незадокументированного эндпоинта Anthropic (`off` — только локальные данные) |
-| `USER_SHARE_ALERT` | `40` | Написать владельцу, когда другой пользователь занял столько процентов окна «5 часов» (раз за окно; 0 — никогда). Работает вместе с `LIMIT_ALERTS` |
-| `CI_WATCH_MIN` | `5` | Как часто смотреть последний прогон GitHub Actions ветки проектных сессий (через `gh`; 0 — никогда) |
-| `QUIET_HOURS` | `off` | Тихие часы, например `23:00-08:00`: всё, что шлёт бот, приходит без звука. Кнопки в «/menu → ⚙️» важнее `.env` |
-| `BOT_LANGUAGE` | `ru` | Язык интерфейса по умолчанию (`ru`, `en`, `es`, `zh`, `fr`, `de`), если ни чат, ни владелец его не выбрали и язык Telegram пользователя неизвестен |
-| `LAUNCH_REMIND_SEC` | `180` | Если запущенная сессия не подключилась за столько секунд (и ещё раз через 5×), владельцу приходит напоминание с «✅ Подтвердить запуск», пользователю — что его сессию подтверждают (0 — не напоминать) |
-| `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
-| `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Голос: расшифровка входящих и ответы голосом — см. [docs/voice.md](docs/voice.md), установка `bewitched voice install` |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<telegram id>` (сессия пользователя) или `-n claude-topic-<топик>` (проект); так же называется окно tmux |
+| `TOPIC_MODE` | `project` | `project` — a topic per project, `session` — per session, `off` |
+| `PERMISSIONS_TO` | `topic` | Where permission requests go: `topic`, `dm`, `both` |
+| `STOP_MODE` | `interrupt` | `interrupt` (Escape in tmux), `notify`, `off` |
+| `PROGRESS_FINAL` | `delete` | What happens to the progress message after the answer: `delete`, `keep` |
+| `NOTIFY_LONG_SEC` | `60` | The «long turn» threshold for the automatic notice |
+| `DAEMON_IDLE_EXIT_MIN` | `0` | Stop the daemon after N minutes without sessions (0 — never) |
+| `BEWITCHED_HTTP_PORT` | `8797` | Local HTTP (hooks, `/notify`, `/event`), 127.0.0.1 only, token in `http.token` |
+| `HISTORY_MAX_DAYS` | `90` | How long history is kept |
+| `PASSIVE_TOOLS` | `false` | Allow tools in sessions without the channel (`claude -p`) |
+| `TOPIC_PROJECTS` | `auto` | A topic created by the owner → a project and a session: `auto`, `ask` (button), `off` |
+| `PROJECTS_DIR` | `~/projects` | Where project folders are created |
+| `USER_SESSIONS` | `on` | A session for each user in the allowlist; `off` — as in 1.0 (everything to the main one) |
+| `USERS_DIR` | `~/user` | Where user session folders live (`<USERS_DIR>/<user_id>`) |
+| `USER_IDLE_MIN` | `0` | Close a user session after N idle minutes (0 — never) |
+| `PROJECT_IDLE_MIN` | `0` | Close a project session after N idle minutes (0 — never) |
+| `TOPIC_NO_SESSION` | `launch` | A project topic without a session: `launch` — start it, `main` — the main session answers, `queue` — only queue |
+| `WATCHDOG_GRACE_SEC` | `60` | How many seconds after a session stops to report it |
+| `MAIN_DIR` | `~` | The main session's folder (with `USER_SESSIONS=off` — DMs and General) |
+| `CONTEXT_WINDOW` | `1000000` | Context window size for the fill percentage on session cards |
+| `CONTEXT_WARN_PCT` | `80` | Offer `/compact` in the session's chat at this context fill (0 — never) |
+| `DIGEST_AT` | `21:00` | When to send the owner the «🌙 Daily summary» (spending, commits, limits); `off` — never. On request — `/digest` |
+| `LIMIT_ALERTS` | `80,95` | Subscription limit notice thresholds in percent; `off` — no notices. A window that crossed a threshold gets «✅ Tokens are back» exactly at the reset; in `/usage` the same can be ordered with 🔔 for any window |
+| `LIMIT_CHECK_MIN` | `10` | How often to check limits (minutes, 0 — never) |
+| `USAGE_LIMITS` | `on` | `/usage`: ask the undocumented Anthropic endpoint for limit percentages (`off` — local data only) |
+| `USER_SHARE_ALERT` | `40` | Tell the owner when another user took this many percent of the 5-hour window (once per window; 0 — never). Works together with `LIMIT_ALERTS` |
+| `CI_WATCH_MIN` | `5` | How often to check the latest GitHub Actions run of project sessions' branches (via `gh`; 0 — never) |
+| `QUIET_HOURS` | `off` | Quiet hours, e.g. `23:00-08:00`: everything the bot sends arrives silently. The buttons in «/menu → ⚙️» override `.env` |
+| `BOT_LANGUAGE` | `ru` | The default interface language (`ru`, `en`, `es`, `zh`, `fr`, `de`) when neither the chat nor the owner chose one and the user's Telegram language is unknown |
+| `TMUX_SESSION` | `claude` | The tmux session for new windows |
+| `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voice: transcribing incoming messages and spoken replies — see [docs/voice.md](docs/voice.md), install with `bewitched voice install` |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | The command for a new session. The bot adds `-n claude-<telegram id>` (user session) or `-n claude-topic-<topic>` (project); the tmux window gets the same name |
 
-Доступ (pairing, allowlist, группы) — как у официального плагина, см. [ACCESS.md](ACCESS.md) и `/telegram-bewitched:access`.
+Access (pairing, allowlist, groups) works as in the official plugin, see [ACCESS.md](ACCESS.md) and `/telegram-bewitched:access`.
 
-## Разработка
+## Development
 
 ```
 bun install
-bun test          # юнит + интеграционные тесты с фейковым Bot API
+bun test          # unit + integration tests with a fake Bot API
 bunx tsc --noEmit
 ```
 
-Перевод: строки интерфейса пишутся по-русски в `t('…', { переменные })`, словари — `src/i18n/<язык>.ts`; `bun scripts/i18n-keys.ts missing en` покажет непереведённые, тест проверяет полноту словарей.
+Translations: interface strings are written in Russian as `t('…', { vars })`; dictionaries are in `src/i18n/<lang>.ts`; `bun scripts/i18n-keys.ts missing en` lists untranslated strings, and a test checks that every dictionary is complete.
 
-Структура: `server.ts` — тонкий MCP-клиент сессии; `src/daemon/` — демон (опрос, маршрутизация, топики, стриминг, кнопки, инструменты, HTTP, меню и экраны пульта, статистика, отчёты, напоминания); `src/i18n/` — языки интерфейса; `src/voice/` и `voice/*.py` — расшифровка и синтез речи; `hooks/` — хуки Claude Code → демон; `bin/bewitched.ts` — CLI. Синхронизация с upstream — [UPSTREAM.md](UPSTREAM.md).
+Layout: `server.ts` — a thin MCP client per session; `src/daemon/` — the daemon (polling, routing, topics, streaming, buttons, tools, HTTP, menus and screens, statistics, reports, reminders); `src/i18n/` — interface languages; `src/voice/` and `voice/*.py` — speech recognition and synthesis; `hooks/` — Claude Code hooks → daemon; `bin/bewitched.ts` — the CLI. Syncing with upstream — [UPSTREAM.md](UPSTREAM.md).
