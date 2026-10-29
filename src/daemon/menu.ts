@@ -13,7 +13,7 @@ import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
-import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
+import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sessionShortName, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
@@ -25,10 +25,10 @@ export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.u
 
 export async function sessionsList(d: Daemon): Promise<Screen> {
   const list = sortedSessions(d)
-  const lines = list.map(s => {
+  const lines = list.map((s, i) => {
     const label = sessionLabel(d, s)
     const icon = label.slice(0, label.indexOf(' '))
-    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
+    return `${i + 1}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
   })
   const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
@@ -40,7 +40,8 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
 
   const rows: Btn[][] = []
   for (const [i, s] of list.entries()) {
-    const b = button(clip(`${sessionLabel(d, s)} ${statusLabel(s).slice(0, 2)}`, 40), `sm:s:${s.id}`)
+    // The number from the list, the name and the status dot: the rest is in the text above.
+    const b = button(`${i + 1}. ${clip(sessionShortName(d, s), 30)} ${statusLabel(s).slice(0, 2)}`, `sm:s:${s.id}`)
     if (i % 2 === 0) rows.push([b])
     else rows.at(-1)!.push(b)
   }

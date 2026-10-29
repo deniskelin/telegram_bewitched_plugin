@@ -3,6 +3,7 @@ import type { Dict } from './index.ts'
 // Interface strings: Russian source → fr. Keys are the exact strings passed to t()/k() in the code.
 const dict: Dict = {
   "… ещё {n}": "… {n} de plus",
+  "Главная": "Principale",
   "👑 главная": "👑 principale",
   "⚠️ Сессия <b>{v}</b> остановилась.": "⚠️ La session <b>{v}</b> s'est arrêtée.",
   "⚠️ Сессия <b>{v}</b> (#{id}) остановилась.": "⚠️ La session <b>{v}</b> (#{id}) s'est arrêtée.",

@@ -623,8 +623,11 @@ describe('topics', () => {
   test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
     tg.push(textMessage({ text: '/sessions' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))
-    expect(String(r.body.text)).toContain('📂 <b>proj</b> · ')
+    expect(String(r.body.text)).toMatch(/\n\d+\. 📂 <b>proj<\/b> · /)
     const kb = JSON.stringify(r.body.reply_markup)
+    // Buttons: the number, the name and the status dot only.
+    const btn = (r.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.callback_data === `sm:s:${sessionId}`)!
+    expect(btn.text).toMatch(/^\d+\. proj [🟢🔵🟡]$/u)
     expect(kb).toContain(`sm:s:${sessionId}`)
     expect(kb).toContain('sm:list')
 

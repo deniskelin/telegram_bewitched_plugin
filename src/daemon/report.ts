@@ -70,6 +70,13 @@ export function projectTitle(s: Session): string {
   return s.topic?.name.replace(/^🗄 /, '') || s.group?.title || s.projectName
 }
 
+/** Главная, the user's name or the project's title, no icon: for buttons. */
+export function sessionShortName(d: Daemon, s: Session): string {
+  const user = d.userIdOf(s)
+  if (user) return d.userShortName(user)
+  return s === d.mainSession() ? t('Главная') : projectTitle(s)
+}
+
 /** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
 export function sessionLabel(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
