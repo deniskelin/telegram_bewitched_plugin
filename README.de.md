@@ -103,7 +103,7 @@ Claude-Code-Sitzungen in tmux: 👤 eine pro Person (~/user/<id>) · 📂 eine p
 ```
 
    War vorher das offizielle Plugin installiert, werden `.env` und `access.json` beim ersten Start automatisch aus `~/.claude/channels/telegram/` übernommen.
-3. Starten Sie eine Sitzung mit dem Kanal (siehe „Start“), schreiben Sie dem Bot privat – er antwortet mit einem 6-stelligen Code – und führen Sie in Claude Code `/telegram-bewitched:access pair <Code>` aus. Der erste gekoppelte Nutzer wird zum Besitzer. Mehr in [ACCESS.md](ACCESS.md) (auf Englisch).
+3. Starten Sie eine Sitzung mit dem Kanal (siehe „Start“), schreiben Sie dem Bot privat – er antwortet mit einem 6-stelligen Code – und führen Sie in Claude Code `/telegram-bewitched:access pair <Code>` aus. Der erste gekoppelte Nutzer wird zum Besitzer. Mehr in [ACCESS.md](ACCESS.de.md).
 
 **Das offizielle Plugin und der Fork dürfen nicht gleichzeitig dasselbe Token abfragen.** Deaktivieren Sie das offizielle (`/plugin disable telegram@claude-plugins-official`) oder starten Sie Claude ohne dessen `--channels`. Sieht der Daemon das offizielle Plugin mit demselben Token laufen, wartet er, statt um die Abfrage zu kämpfen.
 
@@ -156,7 +156,7 @@ Alles Folgende gibt es auch als Knöpfe in **`/menu`** (das Befehlsmenü von Tel
 
 Eine Gruppe ohne Themen kann ein eigenes Projekt sein – ein Familienchat zu einer Website, ein Teamchat zu einem Dienst.
 
-1. Fügen Sie den Bot der Gruppe hinzu und erlauben Sie sie im Terminal: `/telegram-bewitched:access group add <id>` (die ID nennt der Bot beim Hinzufügen; bis dahin schweigt er dort). Standardmäßig antwortet der Bot nur, wenn er erwähnt wird – `--no-mention` schaltet das ab (dazu muss der Privacy-Modus bei @BotFather aus sein – siehe [ACCESS.md](ACCESS.md)).
+1. Fügen Sie den Bot der Gruppe hinzu und erlauben Sie sie im Terminal: `/telegram-bewitched:access group add <id>` (die ID nennt der Bot beim Hinzufügen; bis dahin schweigt er dort). Standardmäßig antwortet der Bot nur, wenn er erwähnt wird – `--no-mention` schaltet das ab (dazu muss der Privacy-Modus bei @BotFather aus sein – siehe [ACCESS.md](ACCESS.de.md)).
 2. Bei der ersten Nachricht aus der Gruppe bekommt der Besitzer eine Karte im Privatchat: „📁 Neu“ (`~/projects/<Gruppenname>`), „📂 Projekt wählen“ (ein vorhandener Ordner) oder „🚫 Kein Projekt“ (die Hauptsitzung antwortet, wie bisher). Was in der Gruppe geschrieben wurde, wartet so lange in der Warteschlange.
 3. Die Projektsitzung startet in tmux (bestätigt mit „✅ Start bestätigen“ in Ihrem Privatchat), antwortet direkt in der Gruppe und zeigt dort ihren Fortschritt. Sie hat kein Thema.
 
@@ -232,7 +232,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Sprache: Transkription eingehender Nachrichten und gesprochene Antworten – siehe [docs/voice.md](docs/voice.md), Installation mit `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Der Befehl für eine neue Sitzung. Der Bot fügt `-n claude-<telegram id>` (Nutzersitzung) oder `-n claude-topic-<Thema>` (Projekt) hinzu; das tmux-Fenster heißt genauso |
 
-Der Zugriff (Kopplung, Allowlist, Gruppen) funktioniert wie im offiziellen Plugin, siehe [ACCESS.md](ACCESS.md) (auf Englisch) und `/telegram-bewitched:access`.
+Der Zugriff (Kopplung, Allowlist, Gruppen) funktioniert wie im offiziellen Plugin, siehe [ACCESS.md](ACCESS.de.md) und `/telegram-bewitched:access`.
 
 ## Entwicklung
 

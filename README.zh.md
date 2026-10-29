@@ -103,7 +103,7 @@ tmux 中的 Claude Code 会话：👤 每人一个（~/user/<id>）· 📂 每�
 ```
 
    如果之前装过官方插件，首次启动时会自动从 `~/.claude/channels/telegram/` 复制 `.env` 和 `access.json`。
-3. 启动带频道的会话（见「运行」），在私聊中给机器人发消息——它会回复一个 6 位代码——然后在 Claude Code 中运行 `/telegram-bewitched:access pair <代码>`。第一个配对的用户成为所有者。详见 [ACCESS.md](ACCESS.md)（英文）。
+3. 启动带频道的会话（见「运行」），在私聊中给机器人发消息——它会回复一个 6 位代码——然后在 Claude Code 中运行 `/telegram-bewitched:access pair <代码>`。第一个配对的用户成为所有者。详见 [ACCESS.md](ACCESS.zh.md)。
 
 **官方插件和本分支不能同时轮询同一个令牌。** 请禁用官方插件（`/plugin disable telegram@claude-plugins-official`），或运行 Claude 时不带它的 `--channels`。如果守护进程发现官方插件正在用同一个令牌运行，它会等待，而不是争抢轮询。
 
@@ -156,7 +156,7 @@ claude plugin update telegram-bewitched@bewitched
 
 没有话题的群组也可以是一个独立项目——比如关于某个网站的家庭群，关于某个服务的工作群。
 
-1. 把机器人加入群组，并在终端中允许它：`/telegram-bewitched:access group add <id>`（加入时机器人会把 id 告诉您；在此之前它在群里保持沉默）。默认机器人只在被提及时回复——`--no-mention` 可关闭此限制（还需在 @BotFather 关闭 privacy mode，见 [ACCESS.md](ACCESS.md)）。
+1. 把机器人加入群组，并在终端中允许它：`/telegram-bewitched:access group add <id>`（加入时机器人会把 id 告诉您；在此之前它在群里保持沉默）。默认机器人只在被提及时回复——`--no-mention` 可关闭此限制（还需在 @BotFather 关闭 privacy mode，见 [ACCESS.md](ACCESS.zh.md)）。
 2. 群组发来第一条消息时，所有者会在私聊中收到卡片：「📁 新建」（`~/projects/<群组名>`）、「📂 选择项目」（现有文件夹）或「🚫 不是项目」（与以前一样由主会话回复）。在此期间群组中的消息在队列中等待。
 3. 项目会话在 tmux 中启动（在您私聊中点「✅ 确认启动」确认），直接在群组中回复并在那里显示进度。它没有话题。
 
@@ -232,7 +232,7 @@ claude plugin update telegram-bewitched@bewitched
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-<telegram id>`（用户会话）或 `-n claude-topic-<话题>`（项目）；tmux 窗口使用相同名称 |
 
-访问控制（配对、allowlist、群组）与官方插件相同，见 [ACCESS.md](ACCESS.md)（英文）和 `/telegram-bewitched:access`。
+访问控制（配对、allowlist、群组）与官方插件相同，见 [ACCESS.md](ACCESS.zh.md)和 `/telegram-bewitched:access`。
 
 ## 开发
 

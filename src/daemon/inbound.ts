@@ -264,7 +264,13 @@ async function handleInbound(
     if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: '✍' }]).catch(() => {})
     const r = await speechToText(d, attachment)
     if ('error' in r) sttMeta = { stt_error: safeMeta(r.error) ?? 'error' }
-    else {
+    else if (!r.text.trim() && !caption) {
+      // Nothing was said (a muted mic, a pocket recording): tell the sender, don't bother the session.
+      d.store.updateMessageText(chatId, msg.message_id, tr('🎤 (в записи нет речи)'))
+      await ctx.reply(tr('🎤 В записи нет речи — похоже, микрофон был выключен. Запишите ещё раз или напишите текстом.'), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+      if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, []).catch(() => {})
+      return
+    } else {
       text = caption ? `${caption}\n\n🎤 ${r.text}` : `🎤 ${r.text}`
       d.store.updateMessageText(chatId, msg.message_id, text)
       sttMeta = {
@@ -273,7 +279,7 @@ async function handleInbound(
         ...(r.language ? { voice_language: r.language } : {}),
       }
       if (prefsFor(chatId, threadId).transcript) {
-        void ctx.reply(`🎤 ${r.text || tr('(тишина)')}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+        void ctx.reply(`🎤 ${r.text || tr('(в записи нет речи)')}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
       }
     }
     if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})

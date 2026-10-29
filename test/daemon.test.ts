@@ -1039,7 +1039,8 @@ describe('voice', () => {
     tg.files.set('voice1', readFileSync(`${dir}/in.ogg`))
     let sttForm: FormData | null = null
     let ttsBody: Record<string, unknown> | null = null
-    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: 'привет из голоса', language: 'ru', duration: 1 }) } })
+    let sttText = 'привет из голоса'
+    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: sttText, language: 'ru', duration: 1 }) } })
     const tts = Bun.serve({ port: 0, fetch: async req => { ttsBody = await req.json() as Record<string, unknown>; return new Response(readFileSync(`${dir}/out.wav`)) } })
     Object.assign(process.env, {
       STT_PROVIDER: 'openai-compatible', STT_URL: `http://127.0.0.1:${stt.port}/v1/audio/transcriptions`,
@@ -1077,6 +1078,17 @@ describe('voice', () => {
       await client.call('reply', { text: 'текстовый ответ' })
       await tg.waitFor('sendMessage', c => c.body.text === 'текстовый ответ')
       expect(tg.callsOf('sendVoice').length).toBe(voices)
+
+      // Nothing said: the sender hears it, the session doesn't.
+      sttText = '  '
+      tg.files.set('voice3', readFileSync(`${dir}/in.ogg`))
+      const before = client.msgs.length
+      tg.push({ message: { message_id: 91003, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice3', file_unique_id: 'v3', duration: 1, mime_type: 'audio/ogg' } } })
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎤 В записи нет речи'), 8000)
+      await Bun.sleep(200)
+      expect(client.msgs.slice(before).some(x => x.t === 'inbound' && (x as Inbound).meta.attachment_file_id === 'voice3')).toBe(false)
 
       // STT down: the message still arrives, as before, with stt_error.
       stt.stop(true)
