@@ -176,6 +176,17 @@ describe('buttons', () => {
     tg.push(callbackQuery(`q:${qid}:0`))
     await tg.waitFor('answerCallbackQuery', c => c.body.text === 'На этот вопрос уже ответили.')
   })
+
+  test('the chosen answer: one ✅, green; the recommendation colour goes away', async () => {
+    const r = await client.call('ask_user', { chat_id: '111', text: 'Выпускаем?', options: [{ label: '✅ Выпустить', style: 'primary' }, 'Позже'] })
+    const qid = /question_id: ([0-9a-f]{8})/.exec(r.text)![1]
+    await tg.waitFor('sendMessage', c => c.body.text === 'Выпускаем?')
+    tg.push(callbackQuery(`q:${qid}:0`))
+    const e = await tg.waitFor('editMessageReplyMarkup', c => JSON.stringify(c.body.reply_markup).includes(`q:${qid}:`))
+    const [chosen, other] = (e.body.reply_markup as { inline_keyboard: { text: string; style?: string }[][] }).inline_keyboard.flat()
+    expect(chosen).toMatchObject({ text: '✅ Выпустить', style: 'success' })
+    expect(other.style).toBeUndefined()
+  })
 })
 
 describe('topics', () => {
