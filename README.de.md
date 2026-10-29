@@ -1,10 +1,29 @@
 # telegram-bewitched
 
-🌍 [Русский](README.md) · [English](README.en.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · Deutsch
+🌍 [English](README.md) · [Русский](README.ru.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · Deutsch
 
-Ein Telegram-Kanal für Claude Code – ein Fork des [offiziellen Plugins](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) mit gemeinsamem Daemon, Projektthemen in einer Forum-Supergruppe, Live-Fortschritt, Antwortknöpfen und einem Verlauf, der Neustarts übersteht.
+**Claude Code aus Telegram steuern.** Sie schreiben einem Bot – es antwortet Claude Code, das auf Ihrem eigenen Server läuft und Zugriff auf Ihre Projekte hat. Jedes Projekt hat sein eigenes Thema in einer Gruppe, jede Person ihre eigene Sitzung. Sie sehen, was Claude gerade tut, bestätigen Berechtigungen per Knopf, schicken Sprachnachrichten und behalten Limits und Verbrauch in `/usage` im Blick.
 
-Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–8 sind umgesetzt, einschließlich Sprache (seit 1.2.0). Über das Pflichtenheft hinaus: das Steuerpult `/menu`, Abo-Limits und Verbrauch, Berichte mit Diagrammen, Erinnerungen, Steuerung des tmux-Fensters und von Git aus Telegram, Einladen und Entfernen von Personen, eine Oberfläche in sechs Sprachen. Was sich geändert hat: [CHANGELOG.md](CHANGELOG.md).
+Technisch ist es ein *Kanal*-Plugin für Claude Code (Channels lassen eine externe Quelle Nachrichten in eine laufende Sitzung schicken) – ein Fork des [offiziellen telegram-Plugins](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) mit gemeinsamem Daemon, Projektthemen in einer Forum-Supergruppe, Live-Fortschritt, Antwortknöpfen und einem Verlauf, der Neustarts übersteht.
+
+Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–9 sind umgesetzt, einschließlich Sprache (seit 1.2.0). Über das Pflichtenheft hinaus: das Steuerpult `/menu`, Abo-Limits und Verbrauch, Berichte mit Diagrammen, Erinnerungen, Steuerung des tmux-Fensters und von Git aus Telegram, Einladen und Entfernen von Personen, eine Oberfläche in sechs Sprachen. Was sich geändert hat: [CHANGELOG.md](CHANGELOG.md).
+
+## So funktioniert es
+
+```
+Telegram: Privatchats, Gruppenthemen
+        │ Bot API (ein Bot)
+        ▼
+bewitched-Daemon (einer pro Server): Abfrage, Routing, Warteschlange, Verlauf (SQLite),
+                                     Steuerpult, Erinnerungen, Limits, Sprache
+        │ Unix-Socket                       ▲ Claude-Code-Hooks: Fortschritt, „fertig“
+        ▼                                   │
+Claude-Code-Sitzungen in tmux: 👤 eine pro Person (~/user/<id>) · 📂 eine pro Projekt (sein Thema)
+```
+
+- Eine Nachricht geht an die Sitzung, die ihren Chat bedient: im Privatchat an die Sitzung des Absenders, im Thema an die Sitzung des Projekts. Läuft die Sitzung nicht, startet der Daemon sie in tmux und stellt die Nachricht zu, sobald sie verbunden ist.
+- Die Sitzung antwortet mit den Werkzeugen des Plugins (`reply`, `ask_user`, …); während sie arbeitet, zeigt der Daemon den Fortschritt.
+- Sitzungen starten mit dem Flag für Entwicklungskanäle, daher wird jeder Start einmal bestätigt – der Bot bietet einen Knopf „✅ Start bestätigen“.
 
 ## Unterschiede zum offiziellen Plugin
 
@@ -72,12 +91,17 @@ Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–8 sind u
 
 ## Installation
 
+1. Legen Sie bei [@BotFather](https://t.me/BotFather) einen Bot an (`/newbot`) und kopieren Sie das Token.
+2. In Claude Code:
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <Token>
 ```
 
-Bot-Token: `/telegram-bewitched:configure <Token>`. War vorher das offizielle Plugin installiert, werden `.env` und `access.json` beim ersten Start automatisch aus `~/.claude/channels/telegram/` übernommen.
+   War vorher das offizielle Plugin installiert, werden `.env` und `access.json` beim ersten Start automatisch aus `~/.claude/channels/telegram/` übernommen.
+3. Starten Sie eine Sitzung mit dem Kanal (siehe „Start“), schreiben Sie dem Bot privat – er antwortet mit einem 6-stelligen Code – und führen Sie in Claude Code `/telegram-bewitched:access pair <Code>` aus. Der erste gekoppelte Nutzer wird zum Besitzer. Mehr in [ACCESS.md](ACCESS.md) (auf Englisch).
 
 **Das offizielle Plugin und der Fork dürfen nicht gleichzeitig dasselbe Token abfragen.** Deaktivieren Sie das offizielle (`/plugin disable telegram@claude-plugins-official`) oder starten Sie Claude ohne dessen `--channels`. Sieht der Daemon das offizielle Plugin mit demselben Token laufen, wartet er, statt um die Abfrage zu kämpfen.
 
@@ -92,13 +116,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 Die erste Sitzung startet den Daemon. Er läuft weiter, wenn Sitzungen enden, damit Steuerpult und `/notify` immer antworten.
 
+CLI-Befehle laufen im Plugin-Ordner: Nach einer Installation aus dem Marketplace ist das `~/.claude/plugins/cache/bewitched/telegram-bewitched/<Version>/` (oder ein Klon des Repositorys).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<Version>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot in der crontab
 bun bin/bewitched.ts voice install           # Sprache, siehe docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "Build fehlgeschlagen"
 bun bin/bewitched.ts event --topic myproj --source ci "Deploy fehlgeschlagen: …"   # an Thema und Sitzung des Projekts
 ```
+
+## Aktualisierung
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Starten Sie danach die Claude-Code-Sitzungen neu (Client und Hooks kommen aus der neuen Version) und den Daemon – mit dem Befehl aus dem Ordner der **neuen** Version: `bun bin/bewitched.ts daemon restart`. Der Knopf „♻️ Daemon neu starten“ in `/server` startet die Version neu, die bereits läuft. Falls Sie `install-cron` genutzt haben, führen Sie es im neuen Ordner erneut aus – der Eintrag wird ersetzt.
 
 ## Themen in einer Supergruppe
 

@@ -1,10 +1,29 @@
 # telegram-bewitched
 
-🌍 [Русский](README.md) · [English](README.en.md) · [Español](README.es.md) · [中文](README.zh.md) · Français · [Deutsch](README.de.md)
+🌍 [English](README.md) · [Русский](README.ru.md) · [Español](README.es.md) · [中文](README.zh.md) · Français · [Deutsch](README.de.md)
 
-Un canal Telegram pour Claude Code — un fork du [plugin officiel](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) avec un démon partagé, des sujets par projet dans un supergroupe à forums, une progression en direct, des boutons de réponse et un historique qui survit aux redémarrages.
+**Pilotez Claude Code depuis Telegram.** Vous écrivez à un bot — c'est Claude Code, qui tourne sur votre propre serveur avec accès à vos projets, qui répond. Chaque projet a son sujet dans un groupe, chaque personne sa propre session. Vous voyez ce que Claude fait en ce moment, approuvez les autorisations par boutons, envoyez des messages vocaux et suivez limites et dépenses dans `/usage`.
 
-Cahier des charges : [docs/TZ.md](docs/TZ.md) (en russe). Les étapes 0–8 sont réalisées, voix comprise (depuis 1.2.0). Au-delà du cahier des charges : le panneau `/menu`, les limites de l'abonnement et les dépenses, des rapports avec graphiques, des rappels, le pilotage de la fenêtre tmux et de git depuis Telegram, l'invitation et la suppression de personnes, une interface en six langues. Ce qui a changé : [CHANGELOG.md](CHANGELOG.md).
+Techniquement, c'est un plugin de *canal* Claude Code (les channels permettent à une source externe d'envoyer des messages dans une session en cours) — un fork du [plugin officiel telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) avec un démon partagé, des sujets par projet dans un supergroupe à forums, une progression en direct, des boutons de réponse et un historique qui survit aux redémarrages.
+
+Cahier des charges : [docs/TZ.md](docs/TZ.md) (en russe). Les étapes 0–9 sont réalisées, voix comprise (depuis 1.2.0). Au-delà du cahier des charges : le panneau `/menu`, les limites de l'abonnement et les dépenses, des rapports avec graphiques, des rappels, le pilotage de la fenêtre tmux et de git depuis Telegram, l'invitation et la suppression de personnes, une interface en six langues. Ce qui a changé : [CHANGELOG.md](CHANGELOG.md).
+
+## Comment ça marche
+
+```
+Telegram : messages privés, sujets du groupe
+        │ Bot API (un seul bot)
+        ▼
+démon bewitched (un par serveur) : interrogation, routage, file, historique (SQLite),
+                                   panneau, rappels, limites, voix
+        │ socket unix                       ▲ hooks Claude Code : progression, « terminé »
+        ▼                                   │
+sessions Claude Code dans tmux : 👤 une par personne (~/user/<id>) · 📂 une par projet (son sujet)
+```
+
+- Un message va à la session qui sert son chat : en privé, la session de l'expéditeur ; dans un sujet, la session du projet. Si la session ne tourne pas, le démon la lance dans tmux et livre le message dès sa connexion.
+- La session répond avec les outils du plugin (`reply`, `ask_user`, …) ; pendant qu'elle travaille, le démon affiche sa progression.
+- Les sessions démarrent avec le flag des canaux de développement, chaque lancement se confirme donc une fois — le bot propose un bouton « ✅ Confirmer le lancement ».
 
 ## Différences avec le plugin officiel
 
@@ -72,12 +91,17 @@ Cahier des charges : [docs/TZ.md](docs/TZ.md) (en russe). Les étapes 0–8 sont
 
 ## Installation
 
+1. Créez un bot avec [@BotFather](https://t.me/BotFather) (`/newbot`) et copiez le jeton.
+2. Dans Claude Code :
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <jeton>
 ```
 
-Jeton du bot : `/telegram-bewitched:configure <jeton>`. Si le plugin officiel était installé, `.env` et `access.json` sont copiés depuis `~/.claude/channels/telegram/` automatiquement au premier démarrage.
+   Si le plugin officiel était installé, `.env` et `access.json` sont copiés depuis `~/.claude/channels/telegram/` automatiquement au premier démarrage.
+3. Lancez une session avec le canal (voir « Lancement »), écrivez au bot en privé — il répond par un code à 6 caractères — puis exécutez `/telegram-bewitched:access pair <code>` dans Claude Code. Le premier utilisateur appairé devient le propriétaire. Plus de détails dans [ACCESS.md](ACCESS.md) (en anglais).
 
 **Le plugin officiel et le fork ne doivent pas interroger le même jeton en même temps.** Désactivez l'officiel (`/plugin disable telegram@claude-plugins-official`) ou lancez Claude sans son `--channels`. Si le démon voit le plugin officiel tourner avec le même jeton, il attend au lieu de se battre pour l'interrogation.
 
@@ -92,13 +116,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 La première session lance le démon. Il continue de tourner après la fermeture des sessions, pour que le panneau et `/notify` répondent toujours.
 
+Les commandes de la CLI se lancent depuis le dossier du plugin : après une installation par le marketplace, c'est `~/.claude/plugins/cache/bewitched/telegram-bewitched/<version>/` (ou un clone du dépôt).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<version>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot dans la crontab
 bun bin/bewitched.ts voice install           # voix, voir docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "la compilation a échoué"
 bun bin/bewitched.ts event --topic myproj --source ci "le déploiement a échoué : …"   # vers le sujet et la session du projet
 ```
+
+## Mise à jour
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Ensuite, redémarrez les sessions Claude Code (le client et les hooks viennent de la nouvelle version) et le démon — avec la commande depuis le dossier de la **nouvelle** version : `bun bin/bewitched.ts daemon restart`. Le bouton « ♻️ Redémarrer le démon » de `/server` redémarre la version déjà en cours. Si vous avez utilisé `install-cron`, relancez-le depuis le nouveau dossier — l'entrée est remplacée.
 
 ## Sujets dans un supergroupe
 

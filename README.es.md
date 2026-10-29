@@ -1,10 +1,29 @@
 # telegram-bewitched
 
-🌍 [Русский](README.md) · [English](README.en.md) · Español · [中文](README.zh.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
+🌍 [English](README.md) · [Русский](README.ru.md) · Español · [中文](README.zh.md) · [Français](README.fr.md) · [Deutsch](README.de.md)
 
-Un canal de Telegram para Claude Code: un fork del [plugin oficial](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) con un demonio compartido, temas por proyecto en un supergrupo con foros, progreso en vivo, botones de respuesta e historial que sobrevive a los reinicios.
+**Controla Claude Code desde Telegram.** Escribes a un bot y te responde Claude Code, que funciona en tu propio servidor con acceso a tus proyectos. Cada proyecto tiene su tema en un grupo y cada persona su propia sesión. Ves qué está haciendo Claude en este momento, apruebas permisos con botones, envías mensajes de voz y vigilas límites y gasto en `/usage`.
 
-Especificación: [docs/TZ.md](docs/TZ.md) (en ruso). Están hechas las etapas 0–8, voz incluida (desde 1.2.0). Más allá de la especificación: el panel `/menu`, límites de la suscripción y gasto, informes con gráficos, recordatorios, control de la ventana de tmux y de git desde Telegram, invitar y eliminar personas, interfaz en seis idiomas. Qué ha cambiado: [CHANGELOG.md](CHANGELOG.md).
+Por dentro es un plugin de *canal* de Claude Code (los channels permiten que una fuente externa envíe mensajes a una sesión en marcha): un fork del [plugin oficial telegram](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) con un demonio compartido, temas por proyecto en un supergrupo con foros, progreso en vivo, botones de respuesta e historial que sobrevive a los reinicios.
+
+Especificación: [docs/TZ.md](docs/TZ.md) (en ruso). Están hechas las etapas 0–9, voz incluida (desde 1.2.0). Más allá de la especificación: el panel `/menu`, límites de la suscripción y gasto, informes con gráficos, recordatorios, control de la ventana de tmux y de git desde Telegram, invitar y eliminar personas, interfaz en seis idiomas. Qué ha cambiado: [CHANGELOG.md](CHANGELOG.md).
+
+## Cómo funciona
+
+```
+Telegram: privados, temas del grupo
+        │ Bot API (un bot)
+        ▼
+demonio bewitched (uno por servidor): sondeo, enrutado, cola, historial (SQLite),
+                                      panel, recordatorios, límites, voz
+        │ socket unix                       ▲ hooks de Claude Code: progreso, «listo»
+        ▼                                   │
+sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una por proyecto (su tema)
+```
+
+- Un mensaje va a la sesión que atiende su chat: un privado, a la sesión de quien escribe; un tema, a la sesión de ese proyecto. Si la sesión no está en marcha, el demonio la inicia en tmux y entrega el mensaje cuando se conecta.
+- La sesión responde con las herramientas del plugin (`reply`, `ask_user`, …); mientras trabaja, el demonio muestra su progreso.
+- Las sesiones se inician con el flag de canales de desarrollo, así que cada inicio se confirma una vez: el bot ofrece el botón «✅ Confirmar inicio».
 
 ## Diferencias con el plugin oficial
 
@@ -72,12 +91,17 @@ Especificación: [docs/TZ.md](docs/TZ.md) (en ruso). Están hechas las etapas 0�
 
 ## Instalación
 
+1. Crea un bot con [@BotFather](https://t.me/BotFather) (`/newbot`) y copia el token.
+2. En Claude Code:
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <token>
 ```
 
-Token del bot: `/telegram-bewitched:configure <token>`. Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
+   Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
+3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.md) (en inglés).
 
 **El plugin oficial y el fork no deben sondear el mismo token a la vez.** Desactiva el oficial (`/plugin disable telegram@claude-plugins-official`) o ejecuta Claude sin su `--channels`. Si el demonio ve el plugin oficial funcionando con el mismo token, espera en lugar de pelear por el sondeo.
 
@@ -92,13 +116,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 La primera sesión arranca el demonio. Sigue funcionando cuando las sesiones se cierran, para que el panel y `/notify` respondan siempre.
 
+Los comandos de la CLI se ejecutan desde la carpeta del plugin: tras instalar desde el marketplace es `~/.claude/plugins/cache/bewitched/telegram-bewitched/<versión>/` (o un clon del repositorio).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<versión>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot en crontab
 bun bin/bewitched.ts voice install           # voz, ver docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "falló la compilación"
 bun bin/bewitched.ts event --topic myproj --source ci "falló el despliegue: …"   # al tema y la sesión del proyecto
 ```
+
+## Actualización
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Después reinicia las sesiones de Claude Code (el cliente y los hooks se toman de la nueva versión) y el demonio, con el comando desde la carpeta de la versión **nueva**: `bun bin/bewitched.ts daemon restart`. El botón «♻️ Reiniciar el demonio» de `/server` reinicia la versión que ya está en marcha. Si usaste `install-cron`, repítelo desde la carpeta nueva: la entrada se sustituye.
 
 ## Temas en un supergrupo
 
