@@ -8,7 +8,7 @@
 
 import { prefsFor } from '../access.ts'
 import { httpToken, settings } from '../config.ts'
-import { fmtDuration, isOwnTool, maskSecrets, summarizeTool } from '../format.ts'
+import { escapeHtml, fmtDuration, isOwnTool, maskSecrets, summarizeTool } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { handleEvent, type ExternalEvent } from './events.ts'
 import { notify } from './tools.ts'
@@ -16,8 +16,8 @@ import { scheduleDashboard, sessionTarget } from './topics.ts'
 import { checkContext } from './menu.ts'
 import { inChat } from './lang.ts'
 import { classify, failureHint, onLimitFailure } from './outoftokens.ts'
-import { turnCostLine } from './usage.ts'
-import { sendRich } from '../tg.ts'
+import { turnCostBlock, turnCostLine } from './usage.ts'
+import { editRich, sendRich } from '../tg.ts'
 import { t } from '../i18n/index.ts'
 
 const MAX_BODY = 1024 * 1024
@@ -115,18 +115,30 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
 }
 
 /**
- * «🔢 Расход хода» (a chat setting, off by default): after the turn, a silent
- * line under the bot's last message there with what the turn cost. Read from
- * the transcript — the model is not asked. The transcript lags the Stop hook
- * a little, hence the wait.
+ * «🔢 Расход хода» (a chat setting, off by default): what the turn cost, read
+ * from the transcript — the model is not asked. FR-11: appended to the turn's
+ * answer itself (a grey footer and a collapsed table); a silent line under the
+ * bot's last message when there is no such answer or the edit fails. The
+ * transcript lags the Stop hook a little, hence the wait.
  */
 function reportTurnCost(d: Daemon, s: Session, start: number): void {
   const target = sessionTarget(d, s)
   if (!target || !prefsFor(target.chatId, target.threadId).turnCost) return
   const end = Date.now()
   setTimeout(() => void (async () => {
-    const [rich, plain] = inChat(d, target.chatId, target.threadId, () => [turnCostLine(s, start, end, true), turnCostLine(s, start, end)])
-    if (!rich || !plain) return
+    const [block, rich, plain] = inChat(d, target.chatId, target.threadId, () => [turnCostBlock(s, start, end), turnCostLine(s, start, end, true), turnCostLine(s, start, end)])
+    if (!block || !rich || !plain) return
+    const a = s.lastAnswer
+    if (a && a.chatId === target.chatId && a.at >= start - 1000) {
+      try {
+        await editRich(d.bot, a.chatId, a.messageId, a.markdown != null
+          ? `${a.markdown}\n\n${block}`
+          : { html: `<p>${escapeHtml(a.text ?? '').replace(/\n/g, '<br>')}</p>${block}` })
+        return
+      } catch (err) {
+        d.log(`turn cost into the answer failed, sending a line: ${err}`)
+      }
+    }
     const last = d.store.history(target.chatId, target.threadId ?? null, 10).filter(m => m.direction === 'out' && m.date * 1000 >= start - 1000).at(-1)
     const extra = {
       disable_notification: true,

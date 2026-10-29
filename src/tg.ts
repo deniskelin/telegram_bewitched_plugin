@@ -109,9 +109,10 @@ export async function sendRich(bot: Bot, chatId: string, markdown: string, extra
   return res.message_id as number
 }
 
-/** An existing message (text or rich) becomes this rich Markdown. */
-export async function editRich(bot: Bot, chatId: string, messageId: number, markdown: string, extra: Record<string, unknown> = {}): Promise<void> {
-  await raw(bot).editMessageText({ chat_id: chatId, message_id: messageId, rich_message: { markdown: hardBreaks(markdown) }, ...extra })
+/** An existing message (text or rich) becomes this rich Markdown, or rich HTML. */
+export async function editRich(bot: Bot, chatId: string, messageId: number, content: string | { html: string }, extra: Record<string, unknown> = {}): Promise<void> {
+  const rich_message = typeof content === 'string' ? { markdown: hardBreaks(content) } : content
+  await raw(bot).editMessageText({ chat_id: chatId, message_id: messageId, rich_message, ...extra })
 }
 
 export function isThreadNotFound(err: unknown): boolean {

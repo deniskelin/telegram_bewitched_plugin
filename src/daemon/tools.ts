@@ -110,6 +110,7 @@ function idsResult(ids: number[]): string {
 async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Promise<string> {
   const c = resolveChat(d, s, args)
   assertAllowedChat(c.chatId)
+  s.lastAnswer = null
   // FR-1: the user watched the answer stream; send what the model wrote since its last tool call.
   // The MessageDisplay hook with that text may still be on its way (a bun process per hook): wait for it a little.
   if (args.use_last_message === true) for (let i = 0; i < 20 && !s.answer.trim(); i++) await new Promise(r => setTimeout(r, 100))
@@ -166,6 +167,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
       if (format === 'rich') await editRich(d.bot, c.chatId, progress, text)
       else if (text.length <= limit) await d.bot.api.editMessageText(c.chatId, progress, text)
       else throw new Error('too long for one message')
+      s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: text } : { text }) }
       ids.push(progress)
       recordOut(d, c, progress, text)
     } catch (err) {
@@ -183,6 +185,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
         })
         ids.push(id)
         recordOut(d, cc, id, text)
+        s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: text }
         return
       } catch (err) {
         if (isThreadNotFound(err)) throw err
@@ -201,6 +204,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
         })
         ids.push(sent.message_id)
         recordOut(d, cc, sent.message_id, parts[i])
+        if (parts.length === 1 && !parseMode) s.lastAnswer = { chatId: cc.chatId, messageId: sent.message_id, at: Date.now(), text: parts[0] }
       } catch (err) {
         if (i === 0) {
           // The chat is gone for the bot (blocked, deleted, deactivated): the owner hears it, once per chat.

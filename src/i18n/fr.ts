@@ -819,6 +819,18 @@ const dict: Dict = {
   "✏️ конец: правкой": "✏️ fin : modifier",
   "🆕 конец: новым": "🆕 fin : nouveau",
   "⏳ Работаю…": "⏳ Je travaille…",
+  "Время": "Durée",
+  "Запросов к модели": "Requêtes au modèle",
+  "Модель": "Modèle",
+  "Ввод": "Entrée",
+  "Вывод": "Sortie",
+  "Чтение кэша": "Lecture du cache",
+  "Запись в кэш": "Écriture du cache",
+  "Всего": "Total",
+  "{v} ток.": "{v} jet.",
+  "В ценах API": "Aux prix de l'API",
+  "🔢 {took} · {v} ток. · кэш {cache}% · ${cost}": "🔢 {took} · {v} jet. · cache {cache}% · ${cost}",
+  "🔢 Расход хода": "🔢 Coût du tour",
 }
 
 export default dict

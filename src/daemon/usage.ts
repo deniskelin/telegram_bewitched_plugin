@@ -761,6 +761,43 @@ export function turnCostLine(s: Session, since: number, now = Date.now(), rich =
   return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}% · **${cost}**', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}% · ${cost}', vars)
 }
 
+/**
+ * FR-11: the turn's cost to append under its answer (rich HTML): a grey
+ * footer line with the gist and a collapsed table with everything — time,
+ * requests, models, tokens by kind, API price. Null when nothing was counted.
+ */
+export function turnCostBlock(s: Session, since: number, now = Date.now()): string | null {
+  const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  const k = { input: 0, output: 0, read: 0, write5m: 0, write1h: 0 }
+  const models = new Map<string, number>()
+  let requests = 0
+  for (const e of collectEntries(now, 1)) {
+    if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
+    add(sum, e)
+    for (const f of ['input', 'output', 'read', 'write5m', 'write1h'] as const) k[f] += e[f]
+    const m = e.model.replace(/^claude-/, '')
+    models.set(m, (models.get(m) ?? 0) + 1)
+    requests++
+  }
+  if (!sum.tokens) return null
+  const cache = Math.round((k.read / sum.tokens) * 100)
+  const took = fmtDuration(now - since)
+  const row = (name: string, v: string) => `<tr><td>${escapeHtml(name)}</td><td align="right">${v}</td></tr>`
+  const rows = [
+    row(tr('Время'), took),
+    row(tr('Запросов к модели'), String(requests)),
+    row(tr('Модель'), escapeHtml([...models.entries()].map(([m, n]) => models.size > 1 ? `${m} ×${n}` : m).join(', '))),
+    row(tr('Ввод'), fmtTok(k.input)),
+    row(tr('Вывод'), fmtTok(k.output)),
+    row(tr('Чтение кэша'), `${fmtTok(k.read)} (${cache}%)`),
+    row(tr('Запись в кэш'), fmtTok(k.write5m + k.write1h)),
+    row(tr('Всего'), tr('{v} ток.', { v: fmtTok(sum.tokens) })),
+    row(tr('В ценах API'), `<b>$${sum.cost.toFixed(2)}</b>` + (sum.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: sum.unpriced }) : '')),
+  ]
+  const gist = tr('🔢 {took} · {v} ток. · кэш {cache}% · ${cost}', { took, v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2) })
+  return `<details><summary>${escapeHtml(tr('🔢 Расход хода'))}</summary><table bordered striped compact>${rows.join('')}</table></details><footer>${escapeHtml(gist)}</footer>`
+}
+
 export function sessionCostLine(s: Session, now = Date.now()): string | null {
   const since = startOfDay(now)
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
