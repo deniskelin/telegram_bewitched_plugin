@@ -641,7 +641,6 @@ const dict: Dict = {
   "ничего": "nichts",
   "🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>": "🧠 <b>Nach Modell</b>, {period}\n<blockquote>{v}</blockquote>",
   "🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>": "🗂 <b>Nach Sitzung</b>, {period}\n<blockquote expandable>{v}</blockquote>",
-  "<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>": "<i>🔔 – an die Zurücksetzung des Fensters erinnern, 🔕 – dasselbe ohne Ton.</i>",
   "👥 Группы": "👥 Gruppen",
   "Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы": "Eine normale Gruppe (ohne Themen) kann auch ein Projekt sein: erlauben Sie sie über access, und der Bot schickt Ihnen eine Karte – /menu → 👥 Gruppen",
   "Меню: сессии, группы, статистика, люди, настройки": "Menü: Sitzungen, Gruppen, Statistik, Personen, Einstellungen",
@@ -713,8 +712,6 @@ const dict: Dict = {
   "✖️ Удалить": "✖️ Löschen",
   "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ Ein neues 5-Stunden-Fenster startete direkt nach der Zurücksetzung – die nächste gegen {time}.",
   "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ Fenster nach der Zurücksetzung konnte nicht gestartet werden: {err}",
-  "⚡ Окно сразу после сброса: вкл": "⚡ Fenster nach Reset: an",
-  "⚡ Окно сразу после сброса: выкл": "⚡ Fenster nach Reset: aus",
   "🔄 Обновлено": "🔄 Aktualisiert",
   "⚡ Окно будет запускаться сразу после сброса": "⚡ Das Fenster startet direkt nach jeder Zurücksetzung",
   "Окно запускается как обычно": "Das Fenster startet wie gewohnt",
@@ -737,6 +734,11 @@ const dict: Dict = {
   "Сервер Anthropic ответил ошибкой или перегружен — повторите сообщение чуть позже.": "Der Anthropic-Server meldete einen Fehler oder ist überlastet – sende die Nachricht etwas später erneut.",
   "Ответ упёрся в максимальную длину — попросите продолжить.": "Die Antwort erreichte die maximale Länge – bitte um Fortsetzung.",
   "Запрос отклонён API (слишком большой контекст или вложение?) — попробуйте /compact.": "Die API hat die Anfrage abgelehnt (Kontext oder Anhang zu groß?) – versuche /compact.",
+  "<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>": "<i>An das Zurücksetzen des Fensters erinnern: 🔔 – mit Ton, 🔕 – lautlos.</i>",
+  "{v}: выкл": "{v}: aus",
+  "⚡ Окно: обычно": "⚡ Fenster: normal",
+  "⚡ Сразу после сброса": "⚡ Direkt nach Reset",
+  "Без напоминания о сбросе": "Keine Erinnerung an das Zurücksetzen",
 }
 
 export default dict

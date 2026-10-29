@@ -641,7 +641,6 @@ const dict: Dict = {
   "ничего": "nothing",
   "🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>": "🧠 <b>By model</b>, {period}\n<blockquote>{v}</blockquote>",
   "🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>": "🗂 <b>By session</b>, {period}\n<blockquote expandable>{v}</blockquote>",
-  "<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>": "<i>🔔 — remind about the window reset, 🔕 — the same without sound.</i>",
   "👥 Группы": "👥 Groups",
   "Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы": "An ordinary group (without topics) can be a project too: allow it via access and the bot will send you a card — /menu → 👥 Groups",
   "Меню: сессии, группы, статистика, люди, настройки": "Menu: sessions, groups, statistics, people, settings",
@@ -713,8 +712,6 @@ const dict: Dict = {
   "✖️ Удалить": "✖️ Delete",
   "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ A new 5-hour window started right after the reset — the next reset is around {time}.",
   "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ Couldn't start the window after the reset: {err}",
-  "⚡ Окно сразу после сброса: вкл": "⚡ Window right after reset: on",
-  "⚡ Окно сразу после сброса: выкл": "⚡ Window right after reset: off",
   "🔄 Обновлено": "🔄 Refreshed",
   "⚡ Окно будет запускаться сразу после сброса": "⚡ The window will start right after each reset",
   "Окно запускается как обычно": "The window starts as usual",
@@ -737,6 +734,11 @@ const dict: Dict = {
   "Сервер Anthropic ответил ошибкой или перегружен — повторите сообщение чуть позже.": "The Anthropic server returned an error or is overloaded — resend the message a bit later.",
   "Ответ упёрся в максимальную длину — попросите продолжить.": "The answer hit the maximum length — ask to continue.",
   "Запрос отклонён API (слишком большой контекст или вложение?) — попробуйте /compact.": "The API rejected the request (context or attachment too large?) — try /compact.",
+  "<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>": "<i>Remind about the window reset: 🔔 — with sound, 🔕 — silently.</i>",
+  "{v}: выкл": "{v}: off",
+  "⚡ Окно: обычно": "⚡ Window: as usual",
+  "⚡ Сразу после сброса": "⚡ Right after reset",
+  "Без напоминания о сбросе": "No reset reminder",
 }
 
 export default dict
