@@ -36,7 +36,7 @@ Claude-Code-Sitzungen in tmux: 👤 eine pro Person (~/user/<id>) · 📂 eine p
 | `claude -p` / Subagenten neben dem Kanal | ❌ starten eine eigene Abfrage und legen den Kanal lahm | ✅ passive Sitzungen fassen eingehende Nachrichten nicht an |
 | Konflikt mit einem anderen Abfrageprozess | stilles 409 | ✅ wartet und meldet sich beim Besitzer im Privatchat |
 | Themen | ❌ | ✅ Forum-Supergruppe, ein Thema pro Projekt, Verbindung aus dem Privatchat mit `/connect_group` |
-| Steuerpult | ❌ | ✅ angeheftete Übersicht in General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
+| Steuerpult | ❌ | ✅ angeheftete Übersicht in General (mit `JOURNAL_CHAT_ID` — im Journal-Thema „🖥 Sitzungen“), `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
 | Neue Sitzung aus Telegram | ❌ | ✅ Thema anlegen → Projektordner + Claude in einem tmux-Fenster; `/new_session` |
 | Archiv für Sitzung und Thema | ❌ | ✅ „🗄 Archivieren“ beendet die Sitzung und schließt das Thema; erneutes Öffnen startet die Sitzung wieder |
 | Live-Fortschritt | ❌ nur „schreibt…“ für 5 s | ✅ Entwurf mit „Überlegungen“ im Privatchat (Bot API 10.2), ein aktualisiertes „⏳ Arbeite…“ mit Aktionen im Thema, `/verbose 0\|1\|2` |

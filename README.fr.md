@@ -36,7 +36,7 @@ sessions Claude Code dans tmux : 👤 une par personne (~/user/<id>) · 📂 une
 | `claude -p` / sous-agents à côté du canal | ❌ lancent leur propre interrogation et cassent le canal | ✅ les sessions passives ne touchent pas aux messages entrants |
 | Conflit avec un autre processus d'interrogation | 409 silencieux | ✅ attend et prévient le propriétaire en privé |
 | Sujets | ❌ | ✅ supergroupe à forums, un sujet par projet, connexion depuis le privé avec `/connect_group` |
-| Panneau de contrôle | ❌ | ✅ résumé épinglé dans General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
+| Panneau de contrôle | ❌ | ✅ résumé épinglé dans General (avec `JOURNAL_CHAT_ID` — dans le sujet « 🖥 Sessions » du journal), `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
 | Nouvelle session depuis Telegram | ❌ | ✅ vous créez un sujet → dossier du projet + Claude dans une fenêtre tmux ; `/new_session` |
 | Archive de session et de sujet | ❌ | ✅ « 🗄 Archiver » ferme la session et le sujet ; rouvrir le sujet relance la session |
 | Progression en direct | ❌ seulement « écrit… » pendant 5 s | ✅ brouillon avec « réflexion » en privé (Bot API 10.2), « ⏳ Je travaille… » mis à jour avec les actions dans un sujet, `/verbose 0\|1\|2` |

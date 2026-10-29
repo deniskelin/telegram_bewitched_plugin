@@ -1774,6 +1774,21 @@ describe('journal (JOURNAL_CHAT_ID)', () => {
       void daemonTopic
       expect(w.body.message_thread_id).toBeDefined()
 
+      // The pinned dashboard moves from General of the topics group to the journal's «🖥 Сессии».
+      const { updateDashboard } = await import('../src/daemon/topics.ts')
+      const old = JSON.parse(d.store.get('dashboard_msg') ?? 'null') ?? { id: Number(d.store.get('dashboard_msg_id')) }
+      await updateDashboard(d)
+      const dash = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).includes('Пульт'))
+      expect(dash.body.message_thread_id).toBeDefined()
+      await tg.waitFor('createForumTopic', c => String(c.body.chat_id) === '-5300' && c.body.name === '🖥 Сессии')
+      if (old.id) await tg.waitFor('deleteMessage', c => c.body.message_id === old.id)
+      await tg.waitFor('pinChatMessage', c => String(c.body.chat_id) === '-5300')
+      // Next time it is edited in place there.
+      const edits = tg.callsOf('editMessageText').length
+      ;(d.sessions.values().next().value as { lastActivity: number }).lastActivity = Date.now() - 3_600_000
+      await updateDashboard(d)
+      expect(tg.callsOf('editMessageText').slice(edits).some(c => String(c.body.chat_id) === '-5300')).toBe(true)
+
       // Someone who is not a user writes in a DM.
       tg.push(textMessage({ from: 777001, text: 'привет, кто ты?' }))
       const st = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('✉️ Написал(а) не пользователь'))
