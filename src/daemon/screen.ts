@@ -5,8 +5,10 @@
  *
  * Callback data: tx:<target>[:<key>], target p<N> = pane %N, w<N> = window N
  * of TMUX_SESSION. Keys are a fixed set; nothing typed by the user reaches tmux.
- * Besides keys: c — accept the development-channels prompt (only when it is
- * on the screen), l / s — start / stop refreshing the screen for a minute.
+ * Besides keys: c — confirm the launch: answer the startup questions of a
+ * new session (folder trust, development channels — only those) one after
+ * another until the session connects; l / s — start / stop refreshing the
+ * screen for a minute; z — delete the message.
  */
 
 import { InlineKeyboard, type Context } from 'grammy'
@@ -24,9 +26,18 @@ const MAX_CHARS = 3500
 const LIVE_MS = 60_000
 const LIVE_EVERY_MS = 4000
 
-/** Claude Code's prompt at the start of a session loaded with --dangerously-load-development-channels. */
-const CHANNELS_TITLE = 'Loading development channels'
-const CHANNELS_CONFIRM = 'I am using this for local development'
+/** How long «✅ Подтвердить запуск» keeps answering prompts and waiting for the session to connect. */
+const CONFIRM_MS = 120_000
+
+/**
+ * The questions Claude Code asks when a session starts, as it draws them:
+ * a title and the confirm option. «✅ Подтвердить запуск» answers these and
+ * nothing else. The trust dialog has its focus on «No» by default.
+ */
+const STARTUP_PROMPTS = [
+  { title: 'Accessing workspace', confirm: 'Yes, I trust this folder' },
+  { title: 'Loading development channels', confirm: 'I am using this for local development' },
+] as const
 
 const KEYS: Record<string, { label: string; key: string }> = {
   '1': { label: '1', key: '1' },
@@ -55,43 +66,83 @@ export function screenText(raw: string): string {
   return text
 }
 
-export function isChannelsPrompt(raw: string | null): boolean {
-  return !!raw && raw.includes(CHANNELS_TITLE) && raw.includes(CHANNELS_CONFIRM)
+/** The startup question on the screen, if any. */
+function startupPrompt(raw: string | null): (typeof STARTUP_PROMPTS)[number] | null {
+  if (!raw) return null
+  return STARTUP_PROMPTS.find(p => raw.includes(p.title) && raw.includes(p.confirm)) ?? null
+}
+
+export function isStartupPrompt(raw: string | null): boolean {
+  return startupPrompt(raw) != null
 }
 
 /**
- * Accept the development-channels prompt: Enter when the confirm option has
- * the focus (❯), Up when "Exit" has it, "1" otherwise. Nothing is pressed
- * unless that exact prompt is on the screen — not on a folder-trust question
- * or anything else. Returns what was on the screen at the end.
+ * The key that moves toward the confirm option of a startup question: Enter
+ * when it has the focus (❯), else ↑/↓ toward it. Null when there is no such
+ * question or no visible focus — then nothing is pressed.
  */
-export async function acceptChannels(d: Daemon, target: string): Promise<'accepted' | 'no_prompt' | 'stuck'> {
-  for (let i = 0; i < 3; i++) {
-    const raw = await d.tmuxCapture(target)
-    if (!isChannelsPrompt(raw)) return i ? 'accepted' : 'no_prompt'
-    const focus = raw!.split('\n').find(l => l.includes('❯')) ?? ''
-    const key = focus.includes(CHANNELS_CONFIRM) ? 'Enter' : /\bExit\b/.test(focus) ? 'Up' : '1'
-    await d.tmuxKeys(target, [key])
-    await Bun.sleep(settings.screenRedrawMs)
-  }
-  return isChannelsPrompt(await d.tmuxCapture(target)) ? 'stuck' : 'accepted'
+export function confirmKey(raw: string | null): string | null {
+  const p = startupPrompt(raw)
+  if (!p) return null
+  const lines = raw!.split('\n')
+  const focus = lines.findIndex(l => l.includes('❯'))
+  const confirm = lines.findIndex(l => l.includes(p.confirm))
+  if (focus < 0 || confirm < 0) return null
+  return focus === confirm ? 'Enter' : confirm > focus ? 'Down' : 'Up'
 }
+
+export type ConfirmResult = { result: 'connected'; sessionId: string } | { result: 'no_prompt' | 'stuck' | 'gone' | 'timeout' }
+
+/**
+ * Answer the startup questions of the session in target one by one until it
+ * connects (CONFIRM_MS at most). Only the questions in STARTUP_PROMPTS are
+ * answered; anything else on the screen stops it ("stuck").
+ */
+export async function confirmLaunch(d: Daemon, target: string, onStep: () => Promise<void> = async () => {}): Promise<ConfirmResult> {
+  const pane = target.startsWith('%') ? target : await d.tmuxPaneId(target)
+  const deadline = Date.now() + CONFIRM_MS
+  let answered = false
+  for (let presses = 0; Date.now() < deadline && presses < 20;) {
+    const s = pane ? d.activeSessions().find(x => x.tmuxPane === pane) : undefined
+    if (s) return { result: 'connected', sessionId: s.id }
+    const raw = await d.tmuxCapture(target)
+    if (raw == null) return { result: 'gone' }
+    if (isStartupPrompt(raw)) {
+      const key = confirmKey(raw)
+      if (!key) return { result: 'stuck' }
+      await d.tmuxKeys(target, [key])
+      presses++
+      answered = true
+      await Bun.sleep(settings.screenRedrawMs)
+      await onStep().catch(() => {})
+      continue
+    }
+    // Nothing asked and nothing answered yet: not a session waiting on us.
+    if (!answered) return { result: 'no_prompt' }
+    await Bun.sleep(settings.confirmPollMs)
+  }
+  return { result: 'timeout' }
+}
+
+/** Confirmations running, by tmux target: a second tap doesn't start another. */
+const confirming = new Set<string>()
 
 /** Live screens by "chat:message": when the refreshing stops. */
 const live = new Map<string, number>()
 
-export async function screenView(d: Daemon, code: string, liveOn = false): Promise<{ text: string; kb: InlineKeyboard; gone: boolean }> {
+export async function screenView(d: Daemon, code: string, liveOn = false, note = ''): Promise<{ text: string; kb: InlineKeyboard; gone: boolean }> {
   const target = tmuxTarget(code)!
   const raw = await d.tmuxCapture(target)
   const session = code.startsWith('p') ? [...d.sessions.values()].find(s => s.tmuxPane === target) : undefined
   const time = new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
   const head = t('🖥 <b>Экран</b> <code>{v}</code>{v2} · {time}{v3}', { v: escapeHtml(target), v2: session ? ` · #${session.id}` : '', time, v3: liveOn ? t(' · ▶️ обновляется') : '' })
-  const text = raw == null ? t('{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.', { head }) : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
+  const body = raw == null ? t('{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.', { head }) : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
+  const text = note ? `${body}\n${note}` : body
   const key = (c: string) => button(KEYS[c].label, `tx:${code}:${c}`)
   const rows = raw == null ? [] : [[key('1'), key('2'), key('3'), key('e'), key('x')], [key('u'), key('d'), key('t'), button('🔄', `tx:${code}`),
     liveOn ? button('⏸', `tx:${code}:s`) : button(t('▶️ 1 мин'), `tx:${code}:l`)]]
-  if (isChannelsPrompt(raw)) rows.unshift([button(t('✅ Подтвердить запуск'), `tx:${code}:c`, 'success')])
-  if (session) rows.push([button(t('« К сессии'), `sm:s:${session.id}`)])
+  if (isStartupPrompt(raw) && !confirming.has(tmuxTarget(code)!)) rows.unshift([button(t('✅ Подтвердить запуск'), `tx:${code}:c`, 'success')])
+  rows.push([...(session ? [button(t('« К сессии'), `sm:s:${session.id}`)] : []), button(t('✖️ Закрыть'), `tx:${code}:z`)])
   return { text, kb: new InlineKeyboard(rows), gone: raw == null }
 }
 
@@ -106,11 +157,25 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
   const [, code, key] = m
   const msg = ctx.callbackQuery?.message
   const liveKey = msg ? `${msg.chat.id}:${msg.message_id}` : ''
+  if (key === 'z') {
+    await answer()
+    live.delete(liveKey)
+    await ctx.deleteMessage().catch(() => ctx.editMessageText(t('✖️ Закрыто')).catch(() => {}))
+    return true
+  }
   if (key === 'c') {
-    const r = await acceptChannels(d, tmuxTarget(code)!)
-    if (r === 'no_prompt') await answer(t('На экране нет запроса о каналах — смотрите сами 👁'))
-    else await answer(r === 'accepted' ? t('✅ Запуск подтверждён') : t('Не вышло — нажмите клавиши вручную'))
-    await edit(d, ctx, code, live.has(liveKey))
+    const target = tmuxTarget(code)!
+    if (confirming.has(target)) { await answer(t('Уже подтверждаю…')); return true }
+    if (!isStartupPrompt(await d.tmuxCapture(target))) {
+      await answer(t('На экране нет вопросов запуска — смотрите сами 👁'))
+      await edit(d, ctx, code, live.has(liveKey))
+      return true
+    }
+    await answer(t('✅ Подтверждаю запуск…'))
+    live.delete(liveKey)
+    confirming.add(target)
+    // In the background: the bot keeps handling other updates meanwhile.
+    void runConfirm(d, ctx, code, target).finally(() => confirming.delete(target))
     return true
   }
   if (key === 'l' || key === 's') {
@@ -135,8 +200,25 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
   return true
 }
 
-async function edit(d: Daemon, ctx: Context, code: string, liveOn: boolean): Promise<void> {
-  const v = await screenView(d, code, liveOn)
+/** «✅ Подтвердить запуск»: answer the questions, show progress, close the screen once the session is in. */
+async function runConfirm(d: Daemon, ctx: Context, code: string, target: string): Promise<void> {
+  const progress = t('⏳ Подтверждаю запуск — жду, пока сессия подключится…')
+  await edit(d, ctx, code, false, progress)
+  const r = await confirmLaunch(d, target, () => edit(d, ctx, code, false, progress))
+  if (r.result === 'connected') {
+    const s = d.sessions.get(r.sessionId)
+    const done = t('✅ Сессия #{id} подключилась — можно писать.', { id: r.sessionId }) + (s ? ` ${s.projectName}` : '')
+    await ctx.editMessageText(done, { reply_markup: new InlineKeyboard([[button(t('✖️ Закрыть'), `tx:${code}:z`)]]) }).catch(() => {})
+    return
+  }
+  const note = r.result === 'gone' ? t('❌ Окно закрылось — сессия не запустилась.')
+    : r.result === 'timeout' ? t('⌛ Сессия так и не подключилась — посмотрите экран.')
+    : t('⚠️ На экране вопрос, на который я не отвечаю сам, — ответьте клавишами.')
+  await edit(d, ctx, code, false, note)
+}
+
+async function edit(d: Daemon, ctx: Context, code: string, liveOn: boolean, note = ''): Promise<void> {
+  const v = await screenView(d, code, liveOn, note)
   await ctx.editMessageText(v.text, { parse_mode: 'HTML', reply_markup: v.kb })
     .catch(async err => {
       if (isMessageNotModified(err)) return

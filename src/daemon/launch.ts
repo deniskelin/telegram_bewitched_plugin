@@ -15,7 +15,7 @@ import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { inChat } from './lang.ts'
-import { isChannelsPrompt } from './screen.ts'
+import { isStartupPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -121,6 +121,11 @@ export async function tmuxType(target: string, text: string): Promise<void> {
   await run(['send-keys', '-t', target, 'Enter'])
 }
 
+/** The pane id (%N) of a window; null when it is gone. Replaced in tests via Daemon. */
+export function tmuxPaneId(target: string): Promise<string | null> {
+  return run(['display-message', '-p', '-t', target, '#{pane_id}']).then(id => id || null, () => null)
+}
+
 /** Close a tmux window (by pane id or session:window); the processes in it end. */
 export async function tmuxKillWindow(target: string): Promise<void> {
   await run(['kill-window', '-t', target])
@@ -174,7 +179,7 @@ export async function remindLaunch(d: Daemon, dir: string, win: string, first: b
   if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
   const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
-  const text = inChat(d, o, undefined, () => isChannelsPrompt(raw)
+  const text = inChat(d, o, undefined, () => isStartupPrompt(raw)
     ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(win) })
     : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(win) }))
   await say(d, o, undefined, text, inChat(d, o, undefined, () => screenKb(win)))

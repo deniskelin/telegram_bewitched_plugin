@@ -117,6 +117,8 @@ export const settings = {
   /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
   /** Pause after a key press in 👁 Экран before capturing the screen again. */
   get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
+  /** How often «✅ Подтвердить запуск» looks for the session to connect after the questions are answered. */
+  get confirmPollMs() { return num('CONFIRM_POLL_MS', 1000) },
   /** Remind the owner when a launched session hasn't connected after this many seconds (again after 5×; 0 = never). */
   get launchRemindSec() { return num('LAUNCH_REMIND_SEC', 180) },
   get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },

@@ -133,7 +133,7 @@ bun bin/bewitched.ts event --topic myproj --source ci "部署失败：…"   # �
 
 ### 需要手动完成的事
 
-1. **确认每次会话启动。** 在 Claude Code 频道处于 research preview 期间，用 `--dangerously-load-development-channels` 启动会显示警告界面。机器人不会自行接受：启动消息中有「✅ 确认启动」按钮——点按后机器人会检查窗口中确实是这个界面，然后选择「I am using this for local development」（其他任何问题，例如是否信任文件夹，都留给您处理——「👁 屏幕与按键」或 `tmux attach -t claude:<窗口>`）。新用户发第一条消息时、服务器重启后、会话崩溃后以及每次空闲关闭后（如已启用）都需要确认。
+1. **确认每次会话启动。** 在 Claude Code 频道处于 research preview 期间，用 `--dangerously-load-development-channels` 启动会显示警告界面。机器人不会自行接受：启动消息中有「✅ 确认启动」按钮——点按后机器人会依次回答启动问题（新文件夹的信任确认「Yes, I trust this folder」以及「I am using this for local development」），等待会话连接，然后把屏幕替换为「✅ 会话已连接」。其他任何问题都留给您处理——「👁 屏幕与按键」（附「✖️ 关闭」）或 `tmux attach -t claude:<窗口>`。新用户发第一条消息时、服务器重启后、会话崩溃后以及每次空闲关闭后（如已启用）都需要确认。
 2. **在服务器上保留 tmux。** 没有它，会话无法自动启动——机器人会发来手动启动的命令。
 3. **重启已停止的会话**——用看门狗通知中的「🚀 启动」按钮（并再次确认），或使用通知中的命令。
 

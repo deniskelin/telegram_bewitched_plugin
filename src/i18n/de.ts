@@ -346,9 +346,6 @@ const dict: Dict = {
   "{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.": "{head}\n\nFenster nicht gefunden: Die Sitzung ist beendet oder tmux wurde neu gestartet.",
   "▶️ 1 мин": "▶️ 1 Min.",
   "« К сессии": "« Zur Sitzung",
-  "На экране нет запроса о каналах — смотрите сами 👁": "Keine Kanal-Abfrage auf dem Bildschirm – sehen Sie selbst nach 👁",
-  "✅ Запуск подтверждён": "✅ Start bestätigt",
-  "Не вышло — нажмите клавиши вручную": "Hat nicht geklappt – Tasten manuell drücken",
   "▶️ Обновляю минуту": "▶️ Aktualisiere eine Minute lang",
   "⏸ Остановлено": "⏸ Gestoppt",
   "Нажато: {v}": "Gedrückt: {v}",
@@ -631,6 +628,16 @@ const dict: Dict = {
   "⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.": "⏳ Sitzung <b>{v}</b> (Fenster {v2}) wartet auf die Bestätigung des Starts – bis dahin erreichen sie keine Nachrichten.",
   "⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.": "⏳ Sitzung <b>{v}</b> (Fenster {v2}) wurde gestartet, hat sich aber nie verbunden. Sehen Sie nach, was auf dem Bildschirm steht.",
   "⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.": "⏳ Ihre Sitzung wird auf dem Server noch bestätigt – die Nachricht geht nicht verloren und kommt an, sobald sie verbunden ist.",
+  "✖️ Закрыть": "✖️ Schließen",
+  "✖️ Закрыто": "✖️ Geschlossen",
+  "Уже подтверждаю…": "Bestätige bereits…",
+  "На экране нет вопросов запуска — смотрите сами 👁": "Keine Startfragen auf dem Bildschirm – sehen Sie selbst nach 👁",
+  "✅ Подтверждаю запуск…": "✅ Bestätige den Start…",
+  "⏳ Подтверждаю запуск — жду, пока сессия подключится…": "⏳ Bestätige den Start – warte, bis die Sitzung verbunden ist…",
+  "✅ Сессия #{id} подключилась — можно писать.": "✅ Sitzung #{id} ist verbunden – Sie können schreiben.",
+  "❌ Окно закрылось — сессия не запустилась.": "❌ Das Fenster wurde geschlossen – die Sitzung ist nicht gestartet.",
+  "⌛ Сессия так и не подключилась — посмотрите экран.": "⌛ Die Sitzung hat sich nie verbunden – sehen Sie auf den Bildschirm.",
+  "⚠️ На экране вопрос, на который я не отвечаю сам, — ответьте клавишами.": "⚠️ Auf dem Bildschirm steht eine Frage, die ich nicht selbst beantworte – antworten Sie mit den Tasten.",
 }
 
 export default dict

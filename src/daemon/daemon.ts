@@ -19,7 +19,7 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
-import { tmuxCapture, tmuxKeys, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -252,6 +252,8 @@ export class Daemon {
   /** Type a line (e.g. "/compact") into a pane and press Enter. Replaced in tests. */
   tmuxType: (target: string, text: string) => Promise<void> = tmuxType
   tmuxKillWindow: (target: string) => Promise<void> = tmuxKillWindow
+  /** Pane id (%N) of a tmux window. Replaced in tests. */
+  tmuxPaneId: (target: string) => Promise<string | null> = tmuxPaneId
 
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
