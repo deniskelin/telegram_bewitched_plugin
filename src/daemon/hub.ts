@@ -74,6 +74,7 @@ function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Sc
     c.threadId != null ? t('⚙️ <b>Настройки в этом топике</b>') : c.chatId.startsWith('-') ? t('⚙️ <b>Настройки в General</b>') : t('⚙️ <b>Настройки в этой личке</b>'),
     t('Язык: {lang}', { lang: LANG_NAMES[normLang(p.lang) ?? lang()] }) + (p.lang ? '' : t(' (по умолчанию)')),
     t('Подробность прогресса: {badge} {info}', { badge: verboseBadge(p.verbose), info: t(VERBOSE_INFO[p.verbose]) }),
+    t('Ответ: {v}', { v: p.streamAnswer ? t('пишется на глазах') : t('приходит целиком') }),
     t('«✅ готово» после хода: {v}', { v: t(NOTIFY_DONE_INFO[p.notifyDone]) }),
     t('Ответы: {v}', { v: t(VOICE_INFO[p.voice]) }) + (ttsEnabled() ? '' : t(' (синтез речи выключен)')),
     t('Расшифровка голосовых в чате: {v}', { v: p.transcript ? t('показывать') : t('не показывать') }) + (sttEnabled() ? '' : t(' (распознавание выключено)')),
@@ -86,6 +87,7 @@ function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Sc
     LANGS.slice(0, 3).map(l => button(mark(cur === l, LANG_NAMES[l]), `hub:lg:${l}`, cur === l ? 'primary' : undefined)),
     LANGS.slice(3).map(l => button(mark(cur === l, LANG_NAMES[l]), `hub:lg:${l}`, cur === l ? 'primary' : undefined)),
     ([0, 1, 2] as const).map(v => button(mark(p.verbose === v, verboseBadge(v)), `hub:v:${v}`, p.verbose === v ? 'primary' : undefined)),
+    [button(mark(p.streamAnswer, t('✍️ на глазах')), 'hub:sa:on', p.streamAnswer ? 'primary' : undefined), button(mark(!p.streamAnswer, t('📦 целиком')), 'hub:sa:off', !p.streamAnswer ? 'primary' : undefined)],
     (['off', 'long', 'always'] as const).map(v => button(mark(p.notifyDone === v, `✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`), `hub:n:${v}`, p.notifyDone === v ? 'primary' : undefined)),
     (['off', 'mirror', 'always'] as const).map(v => button(mark(p.voice === v, `🔊 ${v === 'off' ? t('текст') : v === 'mirror' ? t('зеркально') : t('всегда')}`), `hub:vo:${v}`, p.voice === v ? 'primary' : undefined)),
     [button(mark(p.transcript, t('🎤 показывать')), 'hub:tr:on', p.transcript ? 'primary' : undefined), button(mark(!p.transcript, t('🎤 скрывать')), 'hub:tr:off', !p.transcript ? 'primary' : undefined)],
@@ -144,7 +146,7 @@ export function registerHubCommands(d: Daemon, bot: Bot): void {
   })
 }
 
-/** hub:main|stats|people|rem|mc|set|help|usage|digest|reports, hub:v|n|vo|tr|tv|ts|qh|lg:<value> */
+/** hub:main|stats|people|rem|mc|set|help|usage|digest|reports, hub:v|n|vo|tr|tv|ts|sa|qh|lg:<value> */
 export async function handleHubCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^hub:([a-z]+)(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -200,13 +202,14 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       screen = settingsScreen(d, c)
       break
     }
-    case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': {
+    case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': case 'sa': {
       const c = place(ctx)
       const key = c.threadId != null ? `${c.chatId}:${c.threadId}` : c.chatId
       if (action === 'v' && ['0', '1', '2'].includes(value ?? '')) setPref(key, { verbose: Number(value) as 0 | 1 | 2 })
       if (action === 'n' && (value === 'off' || value === 'long' || value === 'always')) setPref(key, { notifyDone: value })
       if (action === 'vo' && (value === 'off' || value === 'mirror' || value === 'always')) setPref(key, { voice: value })
       if (action === 'tr' && (value === 'on' || value === 'off')) setPref(key, { transcript: value === 'on' })
+      if (action === 'sa' && (value === 'on' || value === 'off')) setPref(key, { streamAnswer: value === 'on' })
       if (action === 'tv' && (SILERO_VOICES as readonly string[]).includes(value ?? '')) setPref(key, { ttsVoice: value })
       if (action === 'ts' && SPEEDS.some(v => Math.round(v * 100) === Number(value))) setPref(key, { ttsSpeed: Number(value) / 100 })
       toast = t('Сохранено')

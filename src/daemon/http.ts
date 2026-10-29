@@ -50,12 +50,15 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   switch (h.event) {
     case 'UserPromptSubmit':
       touchTurn(s)
+      s.answer = ''
       break
     case 'PreToolUse': {
       touchTurn(s)
       const name = String(data.tool_name ?? '')
       const summary = name ? summarizeTool(name, data.tool_input as Record<string, unknown>) : ''
       if (summary) s.lastTool = { text: summary, at: Date.now() }
+      // Text before a tool call was narration, not the answer.
+      if (name && !isOwnTool(name)) s.answer = ''
       if (name && !isOwnTool(name)) d.streams.onTool(s, summary)
       break
     }
@@ -67,6 +70,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     case 'MessageDisplay': {
       touchTurn(s)
       const delta = typeof data.delta === 'string' ? data.delta : ''
+      if (delta) s.answer = (s.answer + (delta.endsWith('\n') ? delta : delta + '\n')).slice(-20_000)
       if (delta) d.streams.onText(s, delta.endsWith('\n') ? delta : delta + '\n')
       break
     }

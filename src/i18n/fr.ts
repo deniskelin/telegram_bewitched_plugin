@@ -679,6 +679,11 @@ const dict: Dict = {
   "🚫 Отвязано": "🚫 Délié",
   "⏳ Владелец ещё не настроил эту группу — сообщение сохранено и дойдёт, когда он решит.": "⏳ Le propriétaire n'a pas encore configuré ce groupe — le message est conservé et arrivera dès sa décision.",
   "⚠️ процесс Claude Code ({pid}) ещё не завершился — транскрипты могут появиться снова": "⚠️ le processus Claude Code ({pid}) n'est pas encore terminé — des transcriptions peuvent réapparaître",
+  "Ответ: {v}": "Réponse : {v}",
+  "пишется на глазах": "s'écrit sous vos yeux",
+  "приходит целиком": "arrive entière",
+  "✍️ на глазах": "✍️ en direct",
+  "📦 целиком": "📦 entière",
 }
 
 export default dict
