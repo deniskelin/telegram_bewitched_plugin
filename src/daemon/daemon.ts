@@ -31,6 +31,9 @@ export function userPendingKey(userId: string): string {
 
 export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 
+/** An extra forum group for project topics (FR-3). */
+export type TopicGroup = { chatId: string; title: string; paths: string[] }
+
 export type Session = {
   id: string
   sock: Socket<SockData>
@@ -104,9 +107,48 @@ export class Daemon {
     return this.store.get('topics_chat_id')
   }
 
+  /**
+   * FR-3: more forum groups for project topics. The main one (topicsChatId)
+   * keeps General and the pinned panel; each extra one takes the projects
+   * under its folders (longest match wins) and the topics created in it.
+   */
+  extraTopicGroups(): TopicGroup[] {
+    try {
+      const v = JSON.parse(this.store.get('topic_groups') ?? '[]')
+      return Array.isArray(v) ? v : []
+    } catch {
+      return []
+    }
+  }
+
+  setExtraTopicGroups(list: TopicGroup[]): void {
+    this.store.set('topic_groups', list.length ? JSON.stringify(list) : null)
+  }
+
+  /** Every topics group, the main one first. */
+  topicChats(): string[] {
+    const main = this.topicsChatId
+    return [...(main ? [main] : []), ...this.extraTopicGroups().map(g => g.chatId).filter(c => c !== main)]
+  }
+
+  isTopicsChat(chatId: string): boolean {
+    return this.topicChats().includes(chatId)
+  }
+
+  /** The group a project's topic belongs in: an extra group whose folder holds it, else the main one. */
+  topicsChatFor(projectKey: string): string | null {
+    let best: { chatId: string; len: number } | null = null
+    for (const g of this.extraTopicGroups()) {
+      for (const p of g.paths) {
+        if ((projectKey === p || projectKey.startsWith(p.endsWith('/') ? p : p + '/')) && (!best || p.length > best.len)) best = { chatId: g.chatId, len: p.length }
+      }
+    }
+    return best?.chatId ?? this.topicsChatId
+  }
+
   /** True when only paired users can post in the topics group — safe to show permission buttons there. */
-  topicsGroupIsStrict(): boolean {
-    const chat = this.topicsChatId
+  topicsGroupIsStrict(chatId: string | null = this.topicsChatId): boolean {
+    const chat = chatId
     if (!chat) return false
     const a = loadAccess()
     const g = a.groups[chat]
@@ -475,8 +517,11 @@ export class Daemon {
 
   /** Topic row for a session's project in the topics group, if any. */
   topicRowFor(s: Session): TopicRow | null {
-    const chat = this.topicsChatId
-    return chat ? this.store.topicForProject(chat, s.projectKey) : null
+    for (const chat of this.topicChats()) {
+      const row = this.store.topicForProject(chat, s.projectKey)
+      if (row) return row
+    }
+    return null
   }
 
   socketExists(): boolean {
