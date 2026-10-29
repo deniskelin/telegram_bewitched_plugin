@@ -46,6 +46,17 @@ export class FakeTelegram {
     throw new Error(`timeout waiting for ${method}; got: ${this.calls.map(c => c.method).join(', ')}`)
   }
 
+  /** An answer: a new message, or (FR-11) the progress message edited into it. */
+  async waitForAnswer(text: string, timeoutMs = 3000): Promise<Call> {
+    const deadline = Date.now() + timeoutMs
+    while (Date.now() < deadline) {
+      const c = this.calls.find(x => (x.method === 'sendMessage' || x.method === 'editMessageText') && x.body.text === text)
+      if (c) return c
+      await Bun.sleep(20)
+    }
+    throw new Error(`timeout waiting for the answer "${text}"; got: ${this.calls.map(c => c.method).join(', ')}`)
+  }
+
   private async handle(req: Request): Promise<Response> {
     const url = new URL(req.url)
     const f = /^\/file\/bot[^/]+\/files\/([\w-]+)\.\w+$/.exec(url.pathname)

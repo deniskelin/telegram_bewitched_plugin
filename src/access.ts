@@ -41,6 +41,8 @@ export type Prefs = {
   ttsSpeed?: number
   /** Stream the answer as it is written (the model writes it as text, then reply with use_last_message). */
   streamAnswer?: boolean
+  /** How a streamed answer ends in a group/topic: the progress message is edited into it, or it comes as a new message (with a notification). */
+  streamFinal?: 'edit' | 'new'
   /** Interface language of the chat (ru, en, es, zh, fr, de); unset — the user's Telegram language or BOT_LANGUAGE. */
   lang?: string
   /** After each turn, a silent line with what it cost (tokens, cache share, $) — from the transcript, no model call. */
@@ -160,7 +162,7 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true, turnCost: merged.turnCost ?? false }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true, streamFinal: merged.streamFinal ?? 'edit', turnCost: merged.turnCost ?? false }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const

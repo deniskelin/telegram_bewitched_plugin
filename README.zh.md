@@ -209,6 +209,7 @@ claude plugin update telegram-bewitched@bewitched
 | `PERMISSIONS_TO` | `topic` | 权限请求发往何处：`topic`、`dm`、`both` |
 | `STOP_MODE` | `interrupt` | `interrupt`（向 tmux 发送 Escape）、`notify`、`off` |
 | `PROGRESS_FINAL` | `delete` | 回答后如何处理进度消息：`delete`、`keep` |
+| `RICH_SCREENS` | `on` | 机器人界面（`/menu`、`/sessions`、`/usage`…）以 Telegram 富文本消息显示——标题、分隔线、分节；`off` — 普通 HTML |
 | `NOTIFY_LONG_SEC` | `60` | 自动通知的「长任务」阈值 |
 | `DAEMON_IDLE_EXIT_MIN` | `0` | 无会话 N 分钟后停止守护进程（0——从不） |
 | `BEWITCHED_HTTP_PORT` | `8797` | 本地 HTTP（钩子、`/notify`、`/event`），仅 127.0.0.1，令牌在 `http.token` |

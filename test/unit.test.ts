@@ -442,3 +442,44 @@ describe('i18n', async () => {
     expect(variants('Отмена')).toEqual(expect.arrayContaining(['Отмена', 'Cancel', 'Abbrechen', '取消']))
   })
 })
+
+describe('rich (FR-11)', async () => {
+  const { screenToRich, hardBreaks, richToMarkdown } = await import('../src/rich.ts')
+
+  test('a screen gets a heading, a divider, sections and a footer', () => {
+    const html = '📋 <b>Сессии</b> (2)\n1. 🟢 <b>a</b> · ok\n2. ⚪️ <b>b</b>\n\n💸 <b>Потребление</b>, в ценах API\n<blockquote>5 ч: 1\nСутки: 2</blockquote>\n\n<i>Стоимость — как в API.</i>'
+    expect(screenToRich(html)).toBe('<h3>📋 Сессии (2)</h3><hr/><p>1. 🟢 <b>a</b> · ok<br>2. ⚪️ <b>b</b></p><h4>💸 Потребление, в ценах API</h4><blockquote>5 ч: 1<br>Сутки: 2</blockquote><footer>Стоимость — как в API.</footer>')
+  })
+
+  test('notices and one-liners are not screens', () => {
+    expect(screenToRich('✅ <b>Готово</b>')).toBeNull()
+    expect(screenToRich('⚠️ Сессия <b>x</b> (#1) остановилась.\nТопик закрыт.')).toBeNull()
+    expect(screenToRich('Просто текст\nещё')).toBeNull()
+  })
+
+  test('pre blocks keep their newlines', () => {
+    expect(screenToRich('🖥 <b>Сервер</b>\n<pre>a\n\nb</pre>')).toBe('<h3>🖥 Сервер</h3><hr/><pre>a\n\nb</pre>')
+  })
+
+  test('hardBreaks keeps single newlines, not in code, tables or before blocks', () => {
+    expect(hardBreaks('a\nb\n\nc')).toBe('a  \nb\n\nc')
+    expect(hardBreaks('```\nx\ny\n```')).toBe('```\nx\ny\n```')
+    expect(hardBreaks('| a |\n| b |')).toBe('| a |\n| b |')
+    expect(hardBreaks('Шаги:\n- раз\n- два')).toBe('Шаги:\n- раз\n- два')
+    expect(hardBreaks('# T\n---')).toBe('# T\n---')
+    expect(hardBreaks('> q1\n> q2')).toBe('> q1  \n> q2')
+  })
+
+  test('a received rich message becomes Markdown', () => {
+    const rm = { blocks: [
+      { type: 'heading', text: 'Demo', size: 2 },
+      { type: 'divider' },
+      { type: 'paragraph', text: ['a ', { type: 'bold', text: 'b' }, ' ', { type: 'code', text: 'c' }] },
+      { type: 'list', items: [{ label: '•', blocks: [{ type: 'paragraph', text: 'x' }] }, { has_checkbox: true, is_checked: true, blocks: [{ type: 'paragraph', text: 'y' }] }] },
+      { type: 'pre', text: 'echo 1', language: 'php' },
+      { type: 'table', cells: [[{ text: 'h' }, { text: 'v' }], [{ text: '1' }, { text: '2' }]] },
+      { type: 'details', summary: 'More', blocks: [{ type: 'paragraph', text: 'inside' }] },
+    ] }
+    expect(richToMarkdown(rm)).toBe('## Demo\n\n---\n\na **b** `c`\n\n- x\n- [x] y\n\n```php\necho 1\n```\n\n| h | v |\n|---|---|\n| 1 | 2 |\n\n<details><summary>More</summary>\n\ninside\n\n</details>')
+  })
+})

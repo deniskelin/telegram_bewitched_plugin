@@ -813,6 +813,12 @@ const dict: Dict = {
   "⚡ Окно: обычно": "⚡ Fenster: normal",
   "⚡ Сразу после сброса": "⚡ Direkt nach Reset",
   "Без напоминания о сбросе": "Keine Erinnerung an das Zurücksetzen",
+  "Конец ответа в группе: {v}": "Ende der Antwort in einer Gruppe: {v}",
+  "правкой того же сообщения, без звука": "durch Bearbeiten derselben Nachricht, ohne Ton",
+  "новым сообщением, со звуком": "als neue Nachricht, mit Ton",
+  "✏️ конец: правкой": "✏️ Ende: bearbeiten",
+  "🆕 конец: новым": "🆕 Ende: neu",
+  "⏳ Работаю…": "⏳ Arbeite…",
 }
 
 export default dict

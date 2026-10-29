@@ -209,6 +209,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `PERMISSIONS_TO` | `topic` | A dónde van las solicitudes de permiso: `topic`, `dm`, `both` |
 | `STOP_MODE` | `interrupt` | `interrupt` (Escape en tmux), `notify`, `off` |
 | `PROGRESS_FINAL` | `delete` | Qué hacer con el mensaje de progreso tras la respuesta: `delete`, `keep` |
+| `RICH_SCREENS` | `on` | Pantallas del bot (`/menu`, `/sessions`, `/usage`…) como mensajes enriquecidos de Telegram — título, separador, secciones; `off` — HTML simple |
 | `NOTIFY_LONG_SEC` | `60` | Umbral de «turno largo» para el aviso automático |
 | `DAEMON_IDLE_EXIT_MIN` | `0` | Detener el demonio tras N minutos sin sesiones (0: nunca) |
 | `BEWITCHED_HTTP_PORT` | `8797` | HTTP local (hooks, `/notify`, `/event`), solo 127.0.0.1, token en `http.token` |

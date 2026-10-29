@@ -13,8 +13,8 @@
 import { InlineKeyboard } from 'grammy'
 import { prefsFor, verboseBadge } from '../access.ts'
 import { settings } from '../config.ts'
-import { clip, fmtDuration, maskSecrets } from '../format.ts'
-import { isMessageNotModified, sendDraft } from '../tg.ts'
+import { clip, escapeHtml, fmtDuration, maskSecrets } from '../format.ts'
+import { editRich, isMessageNotModified, sendDraft } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { t } from '../i18n/index.ts'
 
@@ -41,6 +41,8 @@ type Stream = {
   typing: ReturnType<typeof setInterval> | null
   closed: boolean
   opening: Promise<void> | null
+  /** The group progress message is edited as a rich message, until Telegram refuses one. */
+  rich: boolean
 }
 
 export function stopKeyboard(sessionId: string): InlineKeyboard | undefined {
@@ -82,6 +84,7 @@ export class Streams {
       typing: null,
       closed: false,
       opening: null,
+      rich: true,
     }
     this.map.set(s.id, st)
     st.opening = this.start(s, st).catch(err => this.d.log(`stream open failed: ${err}`))
@@ -157,8 +160,22 @@ export class Streams {
     const thinking = (hidden > 0 ? t('… ещё {hidden}\n', { hidden }) : '') + lines.join('\n')
     // The answer being written wins over the model's running commentary.
     let body = maskSecrets((st.answer || st.text).trim())
-    if (body.length > (st.answer ? MAX_ANSWER : MAX_TEXT)) body = '…' + body.slice(-(st.answer ? MAX_ANSWER : MAX_TEXT))
+    const max = st.answer ? MAX_ANSWER : MAX_TEXT
+    if (body.length > max) {
+      const cut = body.length - max
+      // Cut inside a code block: reopen it, or the rest would read as text.
+      const reopen = (body.slice(0, cut).match(/^\s*```/gm)?.length ?? 0) % 2 === 1
+      body = (reopen ? '```\n' : '') + '…' + body.slice(cut)
+    }
     return { thinking, body }
+  }
+
+  /** The group progress message as rich Markdown: the header, the steps as a collapsible quote, then the answer. */
+  private richProgress(st: Stream, thinking: string, body: string): string {
+    const { chatId, threadId } = st.chat
+    const head = `**${escapeHtml(t('⏳ Работаю…'))}** · ${verboseBadge(prefsFor(chatId, threadId).verbose)} · ${fmtDuration(Date.now() - st.startedAt)}`
+    const steps = thinking ? `<blockquote expandable>${thinking.split('\n').map(escapeHtml).join('<br>')}</blockquote>` : ''
+    return [head, steps, body ? `---\n\n${body}` : ''].filter(Boolean).join('\n\n')
   }
 
   private async flush(s: Session, st: Stream): Promise<void> {
@@ -173,6 +190,16 @@ export class Streams {
         await sendDraft(this.d.bot, Number(chatId), st.draftId, { thinking, body, canStop: settings.stopMode !== 'off' },
           threadId != null ? { message_thread_id: threadId } : {})
       } else if (st.progressMsgId != null) {
+        if (st.rich) {
+          try {
+            await editRich(this.d.bot, chatId, st.progressMsgId, this.richProgress(st, thinking, body), { reply_markup: stopKeyboard(s.id) })
+            return
+          } catch (err) {
+            if (isMessageNotModified(err)) return
+            st.rich = false
+            this.d.log(`rich progress failed, plain text from now on: ${err}`)
+          }
+        }
         const head = t('⏳ Работаю… · {v} ({v2})', { v: verboseBadge(prefsFor(chatId, threadId).verbose), v2: fmtDuration(Date.now() - st.startedAt) })
         const text = [head, thinking, body].filter(Boolean).join('\n\n').slice(0, 4000)
         await this.d.bot.api.editMessageText(chatId, st.progressMsgId, text, { reply_markup: stopKeyboard(s.id) })
@@ -180,6 +207,21 @@ export class Streams {
     } catch (err) {
       if (!isMessageNotModified(err)) this.d.log(`stream flush failed: ${err}`)
     }
+  }
+
+  /**
+   * FR-11: the answer is about to go out in a group, and the chat ends a
+   * streamed answer by editing: hand over the progress message (it becomes the
+   * answer) and stop the stream without touching it. Null — no such message.
+   */
+  takeProgress(s: Session, chatId: string): number | null {
+    const st = this.map.get(s.id)
+    if (!st || st.closed || st.chat.isPrivate || st.chat.chatId !== chatId || st.progressMsgId == null) return null
+    if (prefsFor(st.chat.chatId, st.chat.threadId).streamFinal !== 'edit') return null
+    const id = st.progressMsgId
+    st.progressMsgId = null
+    this.close(s, 'reply')
+    return id
   }
 
   /** The answer for this chat went out: drop the progress view. */

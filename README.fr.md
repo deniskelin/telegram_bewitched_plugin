@@ -209,6 +209,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 | `PERMISSIONS_TO` | `topic` | Où vont les demandes d'autorisation : `topic`, `dm`, `both` |
 | `STOP_MODE` | `interrupt` | `interrupt` (Échap dans tmux), `notify`, `off` |
 | `PROGRESS_FINAL` | `delete` | Que faire du message de progression après la réponse : `delete`, `keep` |
+| `RICH_SCREENS` | `on` | Écrans du bot (`/menu`, `/sessions`, `/usage`…) en messages riches Telegram — titre, séparateur, sections ; `off` — HTML simple |
 | `NOTIFY_LONG_SEC` | `60` | Seuil du « long tour » pour l'avis automatique |
 | `DAEMON_IDLE_EXIT_MIN` | `0` | Arrêter le démon après N minutes sans session (0 — jamais) |
 | `BEWITCHED_HTTP_PORT` | `8797` | HTTP local (hooks, `/notify`, `/event`), 127.0.0.1 seulement, jeton dans `http.token` |

@@ -209,6 +209,7 @@ claude plugin update telegram-bewitched@bewitched
 | `PERMISSIONS_TO` | `topic` | Куда слать запросы разрешений: `topic`, `dm`, `both` |
 | `STOP_MODE` | `interrupt` | `interrupt` (Escape в tmux), `notify`, `off` |
 | `PROGRESS_FINAL` | `delete` | Что делать с сообщением прогресса после ответа: `delete`, `keep` |
+| `RICH_SCREENS` | `on` | Экраны бота (`/menu`, `/sessions`, `/usage`…) — rich-сообщениями Telegram: заголовок, разделитель, разделы; `off` — обычный HTML |
 | `NOTIFY_LONG_SEC` | `60` | Порог «долгого хода» для авто-уведомления |
 | `DAEMON_IDLE_EXIT_MIN` | `0` | Остановить демон после N минут без сессий (0 — никогда) |
 | `BEWITCHED_HTTP_PORT` | `8797` | Локальный HTTP (хуки, `/notify`, `/event`), только 127.0.0.1, токен в `http.token` |

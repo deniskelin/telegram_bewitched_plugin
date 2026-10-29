@@ -209,6 +209,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `PERMISSIONS_TO` | `topic` | Wohin Berechtigungsanfragen gehen: `topic`, `dm`, `both` |
 | `STOP_MODE` | `interrupt` | `interrupt` (Escape in tmux), `notify`, `off` |
 | `PROGRESS_FINAL` | `delete` | Was nach der Antwort mit der Fortschrittsnachricht geschieht: `delete`, `keep` |
+| `RICH_SCREENS` | `on` | Bot-Bildschirme (`/menu`, `/sessions`, `/usage`…) als Telegram-Rich-Nachrichten — Überschrift, Trennlinie, Abschnitte; `off` — einfaches HTML |
 | `NOTIFY_LONG_SEC` | `60` | Schwelle für einen „langen Durchgang“ bei der automatischen Meldung |
 | `DAEMON_IDLE_EXIT_MIN` | `0` | Daemon nach N Minuten ohne Sitzungen beenden (0 – nie) |
 | `BEWITCHED_HTTP_PORT` | `8797` | Lokales HTTP (Hooks, `/notify`, `/event`), nur 127.0.0.1, Token in `http.token` |

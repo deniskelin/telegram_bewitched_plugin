@@ -12,6 +12,7 @@ import { join } from 'path'
 import { can, dmCommandGate, gate, loadAccess, owner, prefsFor, roleOf } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
+import { richToMarkdown } from '../rich.ts'
 import { toWav16k } from '../voice/audio.ts'
 import { sttEnabled, transcribe, type SttResult } from '../voice/stt.ts'
 import { downloadToInbox } from './media.ts'
@@ -681,6 +682,13 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.on('message:sticker', ctx => {
     const st = ctx.message.sticker
     return handleInbound(d, ctx, `(sticker${st.emoji ? ` ${st.emoji}` : ''})`, undefined, { kind: 'sticker', file_id: st.file_id, size: st.file_size })
+  })
+
+  // FR-11: a rich message (forwarded from a bot, Bot API 10.1+) has no text — its blocks go to the session as Markdown.
+  bot.on('message', (ctx, next) => {
+    const rm = (ctx.message as { rich_message?: unknown }).rich_message
+    if (!rm) return next()
+    return handleInbound(d, ctx, richToMarkdown(rm) || '(rich message)', undefined)
   })
 
   bot.on('edited_message:text', ctx => {

@@ -10,7 +10,7 @@ import { extname, join } from 'path'
 import { assertAllowedChat, assertSendable, can, loadAccess, owner, prefsFor, setPref } from '../access.ts'
 import { INBOX_DIR, MEMORY_DIR, settings } from '../config.ts'
 import { chunk, escapeHtml } from '../format.ts'
-import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
+import { editRich, isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { downloadToInbox } from './media.ts'
@@ -111,6 +111,8 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const c = resolveChat(d, s, args)
   assertAllowedChat(c.chatId)
   // FR-1: the user watched the answer stream; send what the model wrote since its last tool call.
+  // The MessageDisplay hook with that text may still be on its way (a bun process per hook): wait for it a little.
+  if (args.use_last_message === true) for (let i = 0; i < 20 && !s.answer.trim(); i++) await new Promise(r => setTimeout(r, 100))
   const text = args.use_last_message === true ? s.answer.trim() : String(args.text ?? '')
   if (args.use_last_message === true && !text) throw new Error('use_last_message: no text written since the last tool call — write the answer first, or pass text')
   if (!text && !(args.files as unknown[] | undefined)?.length) throw new Error('text is required')
@@ -157,7 +159,22 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     voice = null
   }
 
-  await withTopicRetry(d, s, c, async cc => {
+  // FR-11: the chat watched the answer grow in the progress message — it becomes the answer, no second message.
+  const progress = !voice && (format === 'rich' || format === 'text') ? d.streams.takeProgress(s, c.chatId) : null
+  if (progress != null) {
+    try {
+      if (format === 'rich') await editRich(d.bot, c.chatId, progress, text)
+      else if (text.length <= limit) await d.bot.api.editMessageText(c.chatId, progress, text)
+      else throw new Error('too long for one message')
+      ids.push(progress)
+      recordOut(d, c, progress, text)
+    } catch (err) {
+      d.log(`answer into the progress message failed, sending a new one: ${err}`)
+      void d.bot.api.deleteMessage(c.chatId, progress).catch(() => {})
+    }
+  }
+
+  if (!ids.length) await withTopicRetry(d, s, c, async cc => {
     c.threadId = cc.threadId
     if (format === 'rich') {
       try {
