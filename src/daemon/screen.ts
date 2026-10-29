@@ -51,10 +51,12 @@ const KEYS: Record<string, { label: string; key: string }> = {
   t: { label: 'Tab', key: 'Tab' },
 }
 
-/** p9 → %9, w3 → <TMUX_SESSION>:3; anything else is refused. */
+/** p9 → %9, w3 → <TMUX_SESSION>:3, sclaude-user-1.0 → claude-user-1:0; anything else is refused. */
 export function tmuxTarget(code: string): string | null {
   if (/^p\d+$/.test(code)) return `%${code.slice(1)}`
   if (/^w\d+$/.test(code)) return `${settings.tmuxSession}:${code.slice(1)}`
+  const own = /^s(claude-[\p{L}\p{N}_-]+)\.(\d+)$/u.exec(code)
+  if (own) return `=${own[1]}:${own[2]}`
   return null
 }
 
@@ -136,7 +138,7 @@ export async function screenView(d: Daemon, code: string, liveOn = false, note =
   const raw = await d.tmuxCapture(target)
   const session = code.startsWith('p') ? [...d.sessions.values()].find(s => s.tmuxPane === target) : undefined
   const time = new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  const head = t('🖥 <b>Экран</b> <code>{v}</code>{v2} · {time}{v3}', { v: escapeHtml(target), v2: session ? ` · #${session.id}` : '', time, v3: liveOn ? t(' · ▶️ обновляется') : '' })
+  const head = t('🖥 <b>Экран</b> <code>{v}</code>{v2} · {time}{v3}', { v: escapeHtml(target.replace(/^=/, '')), v2: session ? ` · #${session.id}` : '', time, v3: liveOn ? t(' · ▶️ обновляется') : '' })
   const body = raw == null ? t('{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.', { head }) : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
   const text = note ? `${body}\n${note}` : body
   const key = (c: string) => button(KEYS[c].label, `tx:${code}:${c}`)

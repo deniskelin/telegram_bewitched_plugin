@@ -19,7 +19,7 @@ import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { launchCommand, launchForTopic, manualCmd, screenKb, sessionName, watchLaunch } from './launch.ts'
+import { attachTarget, confirmHint, launchCommand, launchForTopic, manualCmd, screenKb, sessionName, watchLaunch } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -69,7 +69,7 @@ function ownerNotice(r: Restart, head: string): string {
     head,
     '',
     tr('Запустить заново в терминале:'),
-    tr('<pre>tmux attach -t {v}  # или: tmux new -s {v}</pre>', { v: escapeHtml(settings.tmuxSession) }),
+    tr('<pre>tmux attach -t {v}  # или: tmux new -s {v}</pre>', { v: escapeHtml(r.session ?? settings.tmuxSession) }),
     manualCmd(r.dir, { resume: r.resume ?? undefined, continue: !r.resume, name: r.session }),
     tr('и примите экран подтверждения каналов. Или кнопкой — запущу в новом окне tmux.'),
   ].join('\n')
@@ -117,7 +117,7 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     d.store.set(`wd:${m[2]}`, null)
     await answer(tr('🚀 Запускаю'))
     await ctx.editMessageText(
-      tr('🚀 Запускаю <b>{v}</b> в tmux: окно {v2}.\nПодтвердите:<pre>tmux attach -t {v3}:{v2}</pre>и примите экран подтверждения каналов (или кнопкой «👁 Экран»).\n<code>{v4}</code>', { v: escapeHtml(r.name), v2: escapeHtml(win), v3: escapeHtml(settings.tmuxSession), v4: escapeHtml(launchCommand(o)) }),
+      tr('🚀 Запускаю <b>{v}</b> в tmux: окно {v2}.\nПодтвердите:{v3}\n<code>{v4}</code>', { v: escapeHtml(r.name), v2: escapeHtml(attachTarget(win)), v3: confirmHint(win), v4: escapeHtml(launchCommand(o)) }),
       { parse_mode: 'HTML', reply_markup: screenKb(win) },
     ).catch(() => {})
   } catch (err) {
