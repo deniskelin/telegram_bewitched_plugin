@@ -117,6 +117,8 @@ export const settings = {
   /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
   /** Pause after a key press in 👁 Экран before capturing the screen again. */
   get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
+  /** Remind the owner when a launched session hasn't connected after this many seconds (again after 5×; 0 = never). */
+  get launchRemindSec() { return num('LAUNCH_REMIND_SEC', 180) },
   get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },
   /** Warn the owner when a limit crosses these percentages and when it resets ("off" = never). */
   get limitAlerts(): number[] {

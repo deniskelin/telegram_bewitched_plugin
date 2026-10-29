@@ -1174,6 +1174,22 @@ describe('convenience', () => {
     await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏸ Остановлено')
   })
 
+  test('⏳ a launch nobody confirmed: the owner is reminded with «✅ Подтвердить запуск», the user hears once', async () => {
+    const { remindLaunch } = await import('../src/daemon/launch.ts')
+    const dir = join(settings.usersDir, '555')
+    d.tmuxCapture = async t => (t === 'claude:9' ? 'WARNING: Loading development channels\n❯ 1. I am using this for local development\n  2. Exit' : null)
+    await remindLaunch(d, dir, '9', true)
+    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно 9) ждёт подтверждения запуска'))
+    expect(JSON.stringify(owner.body.reply_markup)).toContain('tx:w9:c')
+    await tg.waitFor('sendMessage', c => c.body.chat_id === '555' && String(c.body.text).startsWith('⏳ Вашу сессию ещё подтверждают'))
+    // The second reminder goes to the owner only; a gone window is not reported.
+    const before = tg.callsOf('sendMessage').length
+    await remindLaunch(d, dir, '9', false)
+    expect(tg.callsOf('sendMessage').slice(before).map(c => c.body.chat_id)).toEqual(['111'])
+    await remindLaunch(d, dir, '8', true)
+    expect(tg.callsOf('sendMessage').length).toBe(before + 1)
+  })
+
   test('📜 daemon log and ♻️ restart after a confirmation; the new daemon edits the message', async () => {
     const { setRestartDaemon, reportRestart } = await import('../src/daemon/server.ts')
     let restarts = 0
