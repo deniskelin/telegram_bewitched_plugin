@@ -5,6 +5,7 @@
  */
 
 import { escapeHtml } from '../format.ts'
+import { t } from '../i18n/index.ts'
 
 // Reference palette (light): surface, inks, grid, baseline, the series blue.
 const C = {
@@ -72,7 +73,7 @@ export function columnChartSvg(o: { title: string; subtitle: string; columns: Co
     if (i % (o.labelEvery ?? 1) === 0) out.push(`<text x="${cx}" y="${top + ph + 28}" font-size="14" fill="${C.muted}" text-anchor="middle">${escapeHtml(c.label)}</text>`)
   }
   out.push(`<line x1="${left}" x2="${W - right}" y1="${top + ph}" y2="${top + ph}" stroke="${C.baseline}" stroke-width="1"/>`)
-  if (max <= 0) out.push(`<text x="${left + pw / 2}" y="${top + ph / 2}" font-size="18" fill="${C.muted}" text-anchor="middle">Нет активности за период</text>`)
+  if (max <= 0) out.push(`<text x="${left + pw / 2}" y="${top + ph / 2}" font-size="18" fill="${C.muted}" text-anchor="middle">${escapeHtml(t('Нет активности за период'))}</text>`)
   out.push('</svg>')
   return out.join('\n')
 }

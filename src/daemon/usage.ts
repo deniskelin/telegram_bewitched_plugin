@@ -14,6 +14,7 @@ import { owner } from '../access.ts'
 import { button } from './stream.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { commitsSince } from './git.ts'
+import { locale, k, t as tr } from '../i18n/index.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -55,10 +56,10 @@ type UsageResponse = {
 }
 
 const LIMIT_LABELS: Record<string, string> = {
-  session: '5 часов',
-  weekly_all: 'Неделя',
-  weekly_opus: 'Неделя, Opus',
-  weekly_sonnet: 'Неделя, Sonnet',
+  session: k('5 часов'),
+  weekly_all: k('Неделя'),
+  weekly_opus: k('Неделя, Opus'),
+  weekly_sonnet: k('Неделя, Sonnet'),
 }
 
 /** The response shape changes without notice: read what is there, skip the rest. */
@@ -73,7 +74,7 @@ export function parseLimits(r: UsageResponse): Limits {
     }
   } else {
     const windows: [string, Window | undefined][] = [
-      ['5 часов', r.five_hour], ['Неделя', r.seven_day], ['Неделя, Opus', r.seven_day_opus], ['Неделя, Sonnet', r.seven_day_sonnet],
+      [k('5 часов'), r.five_hour], [k('Неделя'), r.seven_day], [k('Неделя, Opus'), r.seven_day_opus], [k('Неделя, Sonnet'), r.seven_day_sonnet],
     ]
     for (const [label, w] of windows) {
       if (w && typeof w.utilization === 'number') items.push({ label, percent: w.utilization, resetsAt: date(w.resets_at) })
@@ -98,9 +99,9 @@ export function resetLimitsCache(): void {
 
 /** Limits, or why they are missing. Cached for a minute: /usage pressed twice is one request. */
 export async function fetchLimits(o: OAuth | null = readOAuth()): Promise<Limits | string> {
-  if (!settings.usageLimits) return 'отключены (USAGE_LIMITS=off)'
-  if (!o?.accessToken) return 'нет OAuth-токена подписки в .credentials.json'
-  if (o.expiresAt && o.expiresAt < Date.now()) return 'токен истёк, Claude Code обновит его при следующем запросе'
+  if (!settings.usageLimits) return tr('отключены (USAGE_LIMITS=off)')
+  if (!o?.accessToken) return tr('нет OAuth-токена подписки в .credentials.json')
+  if (o.expiresAt && o.expiresAt < Date.now()) return tr('токен истёк, Claude Code обновит его при следующем запросе')
   if (limitsCache && Date.now() - limitsCache.at < 60_000) return limitsCache.value
   let value: Limits | string
   try {
@@ -108,13 +109,13 @@ export async function fetchLimits(o: OAuth | null = readOAuth()): Promise<Limits
       headers: { Authorization: `Bearer ${o.accessToken}`, 'anthropic-beta': 'oauth-2025-04-20', 'Content-Type': 'application/json' },
       signal: AbortSignal.timeout(10_000),
     })
-    if (!res.ok) value = `эндпоинт ответил ${res.status}`
+    if (!res.ok) value = tr('эндпоинт ответил {status}', { status: res.status })
     else {
       const parsed = parseLimits(await res.json() as UsageResponse)
-      value = parsed.items.length ? parsed : 'эндпоинт ответил в незнакомом формате'
+      value = parsed.items.length ? parsed : tr('эндпоинт ответил в незнакомом формате')
     }
   } catch (err) {
-    value = `эндпоинт недоступен: ${err instanceof Error ? err.message : err}`
+    value = tr('эндпоинт недоступен: {v}', { v: String(err instanceof Error ? err.message : err) })
   }
   limitsCache = { at: Date.now(), value }
   return value
@@ -279,23 +280,25 @@ export function add(s: Sum, e: Entry): void {
 }
 
 export function fmtTok(n: number): string {
-  if (n >= 1e9) return `${(n / 1e9).toFixed(1)} млрд`
-  if (n >= 1e6) return `${(n / 1e6).toFixed(1)} млн`
-  if (n >= 1e3) return `${Math.round(n / 1e3)} тыс.`
+  if (n >= 1e9) return tr('{v} млрд', { v: (n / 1e9).toFixed(1) })
+  if (n >= 1e6) return tr('{v} млн', { v: (n / 1e6).toFixed(1) })
+  if (n >= 1e3) return tr('{v} тыс.', { v: Math.round(n / 1e3) })
   return String(n)
 }
 
 export function fmtSum(s: Sum): string {
-  return `${fmtTok(s.tokens)} ток. · $${s.cost.toFixed(2)}${s.unpriced ? ` (+${s.unpriced} без цены)` : ''}`
+  return tr('{v} ток. · ${v2}{v3}', { v: fmtTok(s.tokens), v2: s.cost.toFixed(2), v3: s.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: s.unpriced }) : '' })
 }
 
-export function fmtReset(at: Date, now: number): string {
-  const time = at.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
+/** "сброс в 18:30 (через 2 ч 5 мин)"; without the word: "в 18:30 (через 2 ч 5 мин)". */
+export function fmtReset(at: Date, now: number, word = true): string {
+  const time = at.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
   const sameDay = new Date(now).toDateString() === at.toDateString()
-  const when = sameDay ? `в ${time}` : `${at.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })} в ${time}`
+  const when = sameDay ? tr('в {time}', { time }) : tr('{v} в {time}', { v: at.toLocaleDateString(locale(), { day: '2-digit', month: '2-digit' }), time })
   const left = Math.max(0, at.getTime() - now)
   const days = Math.floor(left / 86_400_000)
-  return `сброс ${when} (через ${days ? `${days} д ${Math.floor((left % 86_400_000) / 3600_000)} ч` : fmtDuration(left)})`
+  const vars = { when, v: days ? tr('{days} д {v} ч', { days, v: Math.floor((left % 86_400_000) / 3600_000) }) : fmtDuration(left) }
+  return word ? tr('сброс {when} (через {v})', vars) : tr('{when} (через {v})', vars)
 }
 
 /** 20 segments, 5% each. */
@@ -306,7 +309,7 @@ export function bar(percent: number): string {
 
 /** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
 export function ownerOf(d: Daemon, cwd: string): string {
-  if (!cwd) return '❔ неизвестно'
+  if (!cwd) return tr('❔ неизвестно')
   const rel = relative(settings.usersDir, cwd)
   const user = /^(\d+)(\/|$)/.exec(rel)?.[1]
   if (user) return `👤 ${d.userLabel(user)}`
@@ -314,28 +317,62 @@ export function ownerOf(d: Daemon, cwd: string): string {
   return `📂 ${basename(cwd) || cwd}`
 }
 
+export type Share = { who: string; userId: string | null; cost: number; percent: number }
+
+/**
+ * Who spent the 5-hour window: API-price cost since the window began, by
+ * person (a user's session) or 📂 projects together, and each one's part of
+ * the window's percentage — utilization × their share of the cost. An
+ * estimate: the limit itself is not counted in dollars.
+ */
+export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = Date.now()): { limit: Limit; shares: Share[] } | null {
+  const limit = limits.items.find(l => l.label === LIMIT_LABELS.session)
+  if (!limit) return null
+  const start = limit.resetsAt ? limit.resetsAt.getTime() - 5 * 3600_000 : now - 5 * 3600_000
+  const by = new Map<string, Share>()
+  let total = 0
+  for (const e of entries) {
+    if (e.ts < start) continue
+    const cost = costOf(e) ?? 0
+    const userId = /^(\d+)(\/|$)/.exec(relative(settings.usersDir, e.cwd))?.[1] ?? null
+    const key = userId ?? 'projects'
+    const sh = by.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : tr('📂 проекты и главная'), userId, cost: 0, percent: 0 }
+    sh.cost += cost
+    total += cost
+    by.set(key, sh)
+  }
+  if (total <= 0) return { limit, shares: [] }
+  const shares = [...by.values()].map(sh => ({ ...sh, percent: limit.percent * sh.cost / total })).sort((a, b) => b.cost - a.cost)
+  return { limit, shares }
+}
+
 export async function usageReport(d: Daemon, now = Date.now()): Promise<string> {
   const oauth = readOAuth()
   const plan = planName(oauth)
-  const out: string[] = [`📊 <b>Подписка</b>: ${plan ? escapeHtml(plan) : 'не найдена (вход по API-ключу или учётные данные в keychain)'}`]
+  const out: string[] = [tr('📊 <b>Подписка</b>: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })]
 
   const limits = await fetchLimits(oauth)
-  if (typeof limits === 'string') out.push(`Лимиты: ${escapeHtml(limits)}`)
+  if (typeof limits === 'string') out.push(tr('Лимиты: {v}', { v: escapeHtml(limits) }))
   else {
-    const lines = limits.items.map(l => `${escapeHtml(l.label)}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`)
-    if (limits.breakdown) lines.push(`За неделю: ${escapeHtml(limits.breakdown)}`)
+    const lines = limits.items.map(l => `${escapeHtml(tr(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`)
+    if (limits.breakdown) lines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
     out.push(`<blockquote>${lines.join('\n')}</blockquote>`)
   }
 
   const entries = collectEntries(now)
-  const windows: [string, number][] = [['5 часов', 5 * 3600_000], ['Сутки', 86_400_000], ['7 дней', 7 * 86_400_000]]
+  const windows: [string, number][] = [[tr('5 часов'), 5 * 3600_000], [tr('Сутки'), 86_400_000], [tr('7 дней'), 7 * 86_400_000]]
   const sums = windows.map(([label, ms]) => {
     const s: Sum = { tokens: 0, cost: 0, unpriced: 0 }
     for (const e of entries) if (e.ts >= now - ms) add(s, e)
     return `${label}: ${fmtSum(s)}`
   })
-  out.push(`💸 <b>Потребление</b>, в ценах API\n<blockquote>${sums.join('\n')}</blockquote>`)
+  out.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: sums.join('\n') }))
   if (!entries.length) return out.join('\n\n')
+  const ws = typeof limits === 'string' ? null : windowShares(d, limits, entries, now)
+  if (ws?.shares.length) {
+    out.push(tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)\n<blockquote>{v3}</blockquote>', { v: escapeHtml(tr(ws.limit.label)), v2: Math.round(ws.limit.percent), v3: ws.shares.map(sh =>
+      `${escapeHtml(sh.who)}: ≈${Math.round(sh.percent)}% · $${sh.cost.toFixed(2)}`).join('\n') }))
+  }
 
   const group = (key: (e: Entry) => string) => {
     const m = new Map<string, Sum>()
@@ -349,9 +386,9 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   }
   const models = group(e => e.model.replace(/^claude-/, ''))
   const owners = group(e => ownerOf(d, e.cwd))
-  out.push(`🧠 <b>По моделям</b>, 7 дней\n<blockquote>${models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n')}</blockquote>`)
-  out.push(`🗂 <b>По сессиям</b>, 7 дней\n<blockquote expandable>${owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n')}</blockquote>`)
-  out.push('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>')
+  out.push(tr('🧠 <b>По моделям</b>, 7 дней\n<blockquote>{v}</blockquote>', { v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') }))
+  out.push(tr('🗂 <b>По сессиям</b>, 7 дней\n<blockquote expandable>{v}</blockquote>', { v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') }))
+  out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
   return out.join('\n\n')
 }
 
@@ -382,17 +419,36 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
     const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
     // The reset timer (below) already said so, on the minute; this is the fallback if it didn't run.
     if (prev.level > 0 && level === 0 && !prev.notified) {
-      await d.bot.api.sendMessage(to, `✅ Лимит «${escapeHtml(l.label)}» восстановился: ${Math.round(l.percent)}% ${bar(l.percent)}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+      await d.bot.api.sendMessage(to, tr('✅ Лимит «{v}» восстановился: {v2}% {v3}', { v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent) }), { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
     } else if (level > (newWindow ? 0 : prev.level)) {
       const icon = level >= thresholds.at(-1)! ? '🚨' : '⚠️'
-      await d.bot.api.sendMessage(to, `${icon} Лимит «${escapeHtml(l.label)}»: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${reset}`, { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+      await d.bot.api.sendMessage(to, tr('{icon} Лимит «{v}»: <b>{v2}%</b> {v3}{reset}', { icon, v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent), reset }), { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
     }
     d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
     // Over a threshold: say "tokens are back" exactly when the window resets.
     if (level > 0 && l.resetsAt) scheduleResetNotice(d, l.label, l.resetsAt)
   }
+  await checkShares(d, to, limits, now)
   rescheduleRequested(d)
   d.onSessionsChanged()
+}
+
+/** USER_SHARE_ALERT: tell the owner once per window when someone else took that much of the 5-hour window. */
+async function checkShares(d: Daemon, to: string, limits: Limits, now: number): Promise<void> {
+  const pct = settings.userShareAlert
+  if (pct <= 0) return
+  const ws = windowShares(d, limits, collectEntries(now, 1), now)
+  if (!ws) return
+  const windowKey = ws.limit.resetsAt?.toISOString() ?? ''
+  for (const sh of ws.shares) {
+    if (!sh.userId || sh.userId === to || sh.percent < pct) continue
+    const key = `share_alert:${sh.userId}`
+    if (d.store.get(key) === windowKey) continue
+    d.store.set(key, windowKey)
+    const reset = ws.limit.resetsAt ? `\n${fmtReset(ws.limit.resetsAt, now)}` : ''
+    await d.bot.api.sendMessage(to, tr('👥 {v} израсходовал(а) ≈<b>{v2}%</b> окна «{v3}» (всего занято {v4}%).{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }), { parse_mode: 'HTML' })
+      .catch(err => d.log(`share notice failed: ${err}`))
+  }
 }
 
 // --------------------------------------------------------------------------
@@ -423,7 +479,7 @@ async function fireResetNotice(d: Daemon, label: string, key: string): Promise<v
   if (req?.at === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
   // The 10-minute check would otherwise announce the same reset again.
   d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
-  await d.bot.api.sendMessage(to, `✅ Токены обновились: лимит «${escapeHtml(label)}» сброшен, можно пользоваться.`, { parse_mode: 'HTML', disable_notification: silent })
+  await d.bot.api.sendMessage(to, tr('✅ Токены обновились: лимит «{v}» сброшен, можно пользоваться.', { v: escapeHtml(tr(label)) }), { parse_mode: 'HTML', disable_notification: silent })
     .catch(err => d.log(`reset notice failed: ${err}`))
 }
 
@@ -456,11 +512,11 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req?.at === it.resetsAt.toISOString() ? req : null
     return [[
-      button(`${asked && !asked.silent ? '✅' : '🔔'} Напомнить о сбросе: ${it.label}`, `lr:${i}`),
-      button(`${asked?.silent ? '✅' : '🔕'} Тихо`, `lr:${i}:s`),
+      button(tr('{v} Напомнить о сбросе: {label}', { v: asked && !asked.silent ? '✅' : '🔔', label: tr(it.label) }), `lr:${i}`),
+      button(tr('{v} Тихо', { v: asked?.silent ? '✅' : '🔕' }), `lr:${i}:s`),
     ]]
   })
-  rows.push([button('« Статистика', 'hub:stats')])
+  rows.push([button(tr('« Статистика'), 'hub:stats')])
   return new InlineKeyboard(rows)
 }
 
@@ -468,17 +524,17 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
   const m = /^lr:(\d+)(:s)?$/.exec(data)
   if (!m) return false
   if (!ctx.from || String(ctx.from.id) !== owner()) {
-    await ctx.answerCallbackQuery({ text: 'Только для владельца подписки.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Только для владельца подписки.') }).catch(() => {})
     return true
   }
   const it = lastLimits()?.limits.items[Number(m[1])]
   if (!it?.resetsAt) {
-    await ctx.answerCallbackQuery({ text: 'Данные о лимитах устарели — откройте /usage заново.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Данные о лимитах устарели — откройте /usage заново.') }).catch(() => {})
     return true
   }
   const silent = !!m[2]
   requestResetNotice(d, it.label, it.resetsAt, silent)
-  await ctx.answerCallbackQuery({ text: `${silent ? '🔕 Тихо напомню' : '🔔 Напомню'} ${fmtReset(it.resetsAt, Date.now()).replace(/^сброс /, '')}` }).catch(() => {})
+  await ctx.answerCallbackQuery({ text: `${silent ? tr('🔕 Тихо напомню') : tr('🔔 Напомню')} ${fmtReset(it.resetsAt, Date.now(), false)}` }).catch(() => {})
   await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
   return true
 }
@@ -496,7 +552,7 @@ export function startLimitWatch(d: Daemon): void {
 export function limitsLine(): string | null {
   const l = lastLimits()
   if (!l || !l.limits.items.length) return null
-  return '📊 ' + l.limits.items.map(i => `${i.label} ${Math.round(i.percent)}%`).join(' · ')
+  return '📊 ' + l.limits.items.map(i => `${tr(i.label)} ${Math.round(i.percent)}%`).join(' · ')
 }
 
 // --------------------------------------------------------------------------
@@ -514,7 +570,7 @@ export function sessionCostLine(s: Session, now = Date.now()): string | null {
   const since = startOfDay(now)
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
   for (const e of collectEntries(now, 1)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
-  return sum.tokens ? `💸 сегодня $${sum.cost.toFixed(2)} · ${fmtTok(sum.tokens)} ток.` : null
+  return sum.tokens ? tr('💸 сегодня ${v} · {v2} ток.', { v: sum.cost.toFixed(2), v2: fmtTok(sum.tokens) }) : null
 }
 
 /** What happened today: spend by session and commits per project folder. */
@@ -530,20 +586,20 @@ export async function digestReport(d: Daemon, now = Date.now()): Promise<string>
     byFolder.set(e.cwd, sum)
   }
   const folders = new Set([...byFolder.keys(), ...d.activeSessions().map(s => s.projectKey)].filter(Boolean))
-  const date = new Date(now).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
-  const out = [`🌙 <b>Итоги дня</b> · ${date}`, `💸 ${fmtSum(total)} в ценах API`]
+  const date = new Date(now).toLocaleDateString(locale(), { day: 'numeric', month: 'long' })
+  const out = [tr('🌙 <b>Итоги дня</b> · {date}', { date }), tr('💸 {v} в ценах API', { v: fmtSum(total) })]
   const rows: { cost: number; text: string }[] = []
   for (const dir of folders) {
     const sum = byFolder.get(dir)
     const commits = await commitsSince(dir, new Date(since))
     if (!sum && !commits?.length) continue
-    const lines = [`${ownerOf(d, dir)}${sum ? ` · $${sum.cost.toFixed(2)}` : ''}${commits?.length ? ` · коммитов ${commits.length}` : ''}`]
+    const lines = [`${ownerOf(d, dir)}${sum ? ` · $${sum.cost.toFixed(2)}` : ''}${commits?.length ? tr(' · коммитов {length}', { length: commits.length }) : ''}`]
     for (const c of (commits ?? []).slice(0, 3)) lines.push(`   • ${escapeHtml(c.length > 80 ? c.slice(0, 79) + '…' : c)}`)
-    if ((commits?.length ?? 0) > 3) lines.push(`   … ещё ${commits!.length - 3}`)
+    if ((commits?.length ?? 0) > 3) lines.push(tr('   … ещё {v}', { v: commits!.length - 3 }))
     rows.push({ cost: sum?.cost ?? 0, text: lines.join('\n') })
   }
   rows.sort((a, b) => b.cost - a.cost)
-  out.push(rows.length ? rows.map(r => r.text).join('\n') : 'Сегодня сессии ничего не делали.')
+  out.push(rows.length ? rows.map(r => r.text).join('\n') : tr('Сегодня сессии ничего не делали.'))
   const limits = limitsLine()
   if (limits) out.push(limits)
   return out.join('\n\n')

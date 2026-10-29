@@ -1,5 +1,7 @@
 /** Pure text helpers: chunking, sanitizing, progress summaries. */
 
+import { k, t } from './i18n/index.ts'
+
 /** Telegram caps messages at 4096 chars. Split long replies, preferring paragraph boundaries in 'newline' mode. */
 export function chunk(text: string, limit: number, mode: 'length' | 'newline'): string[] {
   if (text.length <= limit) return [text]
@@ -67,22 +69,22 @@ function fileName(p: unknown): string {
 
 /** This plugin's own tools, as people would say it. */
 const OWN_TOOLS: Record<string, string> = {
-  reply: '💬 ответ в Telegram',
-  ask_user: '❓ вопрос с кнопками',
-  notify: '🔔 уведомление',
-  react: '👍 реакция на сообщение',
-  edit_message: '✏️ правка сообщения',
-  download_attachment: '📎 скачивание вложения',
-  get_history: '📜 чтение истории чата',
-  search_messages: '🔎 поиск по сообщениям',
-  get_message: '📜 чтение сообщения',
-  save_memory: '🧠 сохранение памяти чата',
-  read_memory: '🧠 чтение памяти чата',
-  list_topics: '📋 список топиков',
-  create_topic: '➕ создание топика',
-  rename_topic: '✏️ переименование топика',
-  archive_topic: '🗄 архивирование топика',
-  delete_topic: '🗑 удаление топика',
+  reply: k('💬 ответ в Telegram'),
+  ask_user: k('❓ вопрос с кнопками'),
+  notify: k('🔔 уведомление'),
+  react: k('👍 реакция на сообщение'),
+  edit_message: k('✏️ правка сообщения'),
+  download_attachment: k('📎 скачивание вложения'),
+  get_history: k('📜 чтение истории чата'),
+  search_messages: k('🔎 поиск по сообщениям'),
+  get_message: k('📜 чтение сообщения'),
+  save_memory: k('🧠 сохранение памяти чата'),
+  read_memory: k('🧠 чтение памяти чата'),
+  list_topics: k('📋 список топиков'),
+  create_topic: k('➕ создание топика'),
+  rename_topic: k('✏️ переименование топика'),
+  archive_topic: k('🗄 архивирование топика'),
+  delete_topic: k('🗑 удаление топика'),
 }
 
 /** One progress line for a tool call: "🔧 Bash: npm test". */
@@ -99,10 +101,10 @@ export function summarizeTool(name: string, input: Record<string, unknown> | und
     case 'WebSearch': line = `🌐 ${short(i.query, 70)}`; break
     case 'WebFetch': line = `🌐 ${short(i.url, 70)}`; break
     case 'Agent': case 'Task': line = `🤖 ${short(i.description, 70)}`; break
-    case 'TodoWrite': line = `📋 план`; break
+    case 'TodoWrite': line = t('📋 план'); break
     default: {
       const m = /^mcp__(.+?)__(.+)$/.exec(name)
-      const own = m && isOwnTool(name) ? OWN_TOOLS[m[2]] : undefined
+      const own = m && isOwnTool(name) && OWN_TOOLS[m[2]] ? t(OWN_TOOLS[m[2]]) : undefined
       line = own ?? (m ? `🔌 ${m[1]}: ${m[2]}` : `🔧 ${name}`)
     }
   }
@@ -116,11 +118,11 @@ export function isOwnTool(name: string): boolean {
 
 export function fmtDuration(ms: number): string {
   const s = Math.round(ms / 1000)
-  if (s < 60) return `${s} с`
+  if (s < 60) return t('{s} с', { s })
   const m = Math.floor(s / 60)
   const r = s % 60
-  if (m < 60) return r ? `${m} мин ${r} с` : `${m} мин`
-  return `${Math.floor(m / 60)} ч ${m % 60} мин`
+  if (m < 60) return r ? t('{m} мин {r} с', { m, r }) : t('{m} мин', { m })
+  return t('{h} ч {m} мин', { h: Math.floor(m / 60), m: m % 60 })
 }
 
 /**

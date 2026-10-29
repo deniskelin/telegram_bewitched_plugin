@@ -16,6 +16,9 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
+import { installLang } from './lang.ts'
+import { t } from '../i18n/index.ts'
+import { installQuietHours } from './quiet.ts'
 import { tmuxCapture, tmuxKeys, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
@@ -84,6 +87,7 @@ export class Daemon {
     this.bot = createBot(token, settings.apiRoot)
     this.store = new Store(dbFile)
     this.streams = new Streams(this)
+    installQuietHours(this, this.bot)
   }
 
   log(msg: string): void {
@@ -398,13 +402,14 @@ export class Daemon {
     const me = await this.bot.api.getMe()
     this.botUsername = me.username
     this.botId = me.id
+    installLang(this, this.bot)
     register(this.bot)
     let warned = false
     for (let attempt = 1; ; attempt++) {
       if (this.legacyConflict()) {
         if (!warned) {
           this.log('official telegram plugin is polling the same token — waiting for it to stop')
-          this.warnOwner('⚠️ Официальный плагин telegram опрашивает этого же бота, поэтому telegram-bewitched ждёт. Отключите его: `claude plugin disable telegram@claude-plugins-official` (и `telegram@synced`, если он синхронизирован с claude.ai).')
+          this.warnOwner(t('⚠️ Официальный плагин telegram опрашивает этого же бота, поэтому telegram-bewitched ждёт. Отключите его: `claude plugin disable telegram@claude-plugins-official` (и `telegram@synced`, если он синхронизирован с claude.ai).'))
         }
         warned = true
         await new Promise(r => setTimeout(r, 30_000))
@@ -427,7 +432,7 @@ export class Daemon {
         if (err instanceof Error && err.message === 'Aborted delay') return
         const is409 = err instanceof GrammyError && err.error_code === 409
         if (is409 && attempt === 3) {
-          this.warnOwner('⚠️ Другой процесс опрашивает этого бота (409 Conflict), сообщения до сессий не доходят. Частая причина — включённый официальный плагин telegram (в том числе `telegram@synced` с claude.ai). Проверьте: `claude plugin list`.')
+          this.warnOwner(t('⚠️ Другой процесс опрашивает этого бота (409 Conflict), сообщения до сессий не доходят. Частая причина — включённый официальный плагин telegram (в том числе `telegram@synced` с claude.ai). Проверьте: `claude plugin list`.'))
         }
         const delay = Math.min(1000 * attempt, 15_000)
         this.log(`${is409 ? '409 Conflict — another poller holds the token' : `polling error: ${err}`}; retry in ${delay / 1000}s`)

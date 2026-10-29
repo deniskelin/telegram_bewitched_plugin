@@ -2,18 +2,23 @@
  * /server in the owner's DM: the machine the bot and the Claude Code
  * sessions run on — CPU, load, memory, swap, disks, what eats them, and how
  * much the sessions and voice services take. All from /proc, no extra tools.
+ * Also the daemon's own log and a restart button (the new daemon reports
+ * back by editing the same message).
  */
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
-import { execFile } from 'child_process'
-import { readdirSync, readFileSync, statfsSync } from 'fs'
+import { execFile, spawn } from 'child_process'
+import { existsSync, openSync, readdirSync, readFileSync, statfsSync } from 'fs'
 import { cpus, hostname, homedir } from 'os'
+import { join } from 'path'
 import { owner } from '../access.ts'
-import { escapeHtml, fmtDuration } from '../format.ts'
+import { DAEMON_LOG, ENV_FILE, PLUGIN_ROOT } from '../config.ts'
+import { escapeHtml, fmtDuration, maskSecrets } from '../format.ts'
 import type { Daemon } from './daemon.ts'
 import { show } from './menu.ts'
 import { button } from './stream.ts'
 import { bar } from './usage.ts'
+import { t } from '../i18n/index.ts'
 
 function read(path: string): string {
   try {
@@ -68,7 +73,7 @@ function meminfo(): Record<string, number> {
 }
 
 function gb(n: number): string {
-  return n >= 1e12 ? `${(n / 1e12).toFixed(1)} ТБ` : n >= 1e9 ? `${(n / 1e9).toFixed(1)} ГБ` : `${Math.round(n / 1e6)} МБ`
+  return n >= 1e12 ? t('{v} ТБ', { v: (n / 1e12).toFixed(1) }) : n >= 1e9 ? t('{v} ГБ', { v: (n / 1e9).toFixed(1) }) : t('{v} МБ', { v: Math.round(n / 1e6) })
 }
 
 type Proc = { pid: number; cpu: number; rss: number; comm: string; args: string }
@@ -87,7 +92,7 @@ function processes(): Promise<Proc[]> {
 function procName(p: Proc): string {
   if (/stt_server\.py/.test(p.args)) return 'whisper (STT)'
   if (/silero_server\.py/.test(p.args)) return 'silero (TTS)'
-  if (p.comm === 'bun' && /daemon\/main\.ts/.test(p.args)) return 'демон бота'
+  if (p.comm === 'bun' && /daemon\/main\.ts/.test(p.args)) return t('демон бота')
   return p.comm
 }
 
@@ -102,13 +107,13 @@ export async function serverReport(d: Daemon): Promise<string> {
   const swapUsed = (mem.SwapTotal ?? 0) - (mem.SwapFree ?? 0)
   const pct = (a: number, b: number) => (b > 0 ? (a / b) * 100 : 0)
 
-  const lines = [`🖥 <b>${escapeHtml(hostname())}</b> · аптайм ${fmtDuration(up)}`, '']
+  const lines = [t('🖥 <b>{v}</b> · аптайм {v2}', { v: escapeHtml(hostname()), v2: fmtDuration(up) }), '']
   lines.push(`⚙️ CPU: <b>${Math.round(busy)}%</b> ${bar(busy)}`)
-  lines.push(`   ${escapeHtml(cpus()[0]?.model.replace(/\s+/g, ' ').trim() ?? '')} · ${cores} потоков`)
-  lines.push(`   нагрузка ${l1.toFixed(2)} / ${l5.toFixed(2)} / ${l15.toFixed(2)} (1/5/15 мин) · ${Math.round(pct(l1, cores))}% от ядер`)
-  lines.push(`🧠 Память: <b>${gb(memUsed)}</b> из ${gb(mem.MemTotal ?? 0)} ${bar(pct(memUsed, mem.MemTotal ?? 0))}`)
-  lines.push(`   доступно ${gb(mem.MemAvailable ?? 0)} · кэш ${gb((mem.Cached ?? 0) + (mem.Buffers ?? 0))}`)
-  if (mem.SwapTotal) lines.push(`💱 Swap: ${gb(swapUsed)} из ${gb(mem.SwapTotal)} ${bar(pct(swapUsed, mem.SwapTotal))}`)
+  lines.push(t('   {v} · {cores} потоков', { v: escapeHtml(cpus()[0]?.model.replace(/\s+/g, ' ').trim() ?? ''), cores }))
+  lines.push(t('   нагрузка {v} / {v2} / {v3} (1/5/15 мин) · {v4}% от ядер', { v: l1.toFixed(2), v2: l5.toFixed(2), v3: l15.toFixed(2), v4: Math.round(pct(l1, cores)) }))
+  lines.push(t('🧠 Память: <b>{v}</b> из {v2} {v3}', { v: gb(memUsed), v2: gb(mem.MemTotal ?? 0), v3: bar(pct(memUsed, mem.MemTotal ?? 0)) }))
+  lines.push(t('   доступно {v} · кэш {v2}', { v: gb(mem.MemAvailable ?? 0), v2: gb((mem.Cached ?? 0) + (mem.Buffers ?? 0)) }))
+  if (mem.SwapTotal) lines.push(t('💱 Swap: {v} из {v2} {v3}', { v: gb(swapUsed), v2: gb(mem.SwapTotal), v3: bar(pct(swapUsed, mem.SwapTotal)) }))
 
   const seen = new Set<string>()
   for (const path of ['/', homedir()]) {
@@ -119,26 +124,72 @@ export async function serverReport(d: Daemon): Promise<string> {
       const key = `${s.blocks}:${s.bfree}`
       if (seen.has(key)) continue
       seen.add(key)
-      lines.push(`💾 Диск ${escapeHtml(path)}: <b>${gb(total - free)}</b> из ${gb(total)} ${bar(pct(total - free, total))}`)
+      lines.push(t('💾 Диск {v}: <b>{v2}</b> из {v3} {v4}', { v: escapeHtml(path), v2: gb(total - free), v3: gb(total), v4: bar(pct(total - free, total)) }))
     } catch {}
   }
 
   // Claude Code sessions and the bot's own pieces.
   const claude = procs.filter(p => p.comm === 'claude')
   const bot = procs.filter(p => /stt_server\.py|silero_server\.py/.test(p.args) || (p.comm === 'bun' && /daemon\/main\.ts/.test(p.args)))
-  lines.push('', `🤖 Claude Code: ${claude.length} процесс(ов) · ${gb(claude.reduce((n, p) => n + p.rss, 0))} · CPU ${Math.round(claude.reduce((n, p) => n + p.cpu, 0))}%`)
-  lines.push(`   сессий в боте: ${d.activeSessions().length}`)
+  lines.push('', t('🤖 Claude Code: {length} процесс(ов) · {v} · CPU {v2}%', { length: claude.length, v: gb(claude.reduce((n, p) => n + p.rss, 0)), v2: Math.round(claude.reduce((n, p) => n + p.cpu, 0)) }))
+  lines.push(t('   сессий в боте: {v}', { v: d.activeSessions().length }))
   for (const p of bot) lines.push(`🧩 ${procName(p)}: ${gb(p.rss)} · CPU ${Math.round(p.cpu)}%`)
 
   const top = (by: 'cpu' | 'rss') => [...procs].sort((a, b) => b[by] - a[by]).slice(0, 5)
     .map(p => `• ${escapeHtml(procName(p))} (${p.pid}): ${by === 'cpu' ? `${Math.round(p.cpu)}% CPU` : gb(p.rss)}`)
-  lines.push('', '🔥 <b>Больше всего CPU</b>', ...top('cpu'))
-  lines.push('', '🐘 <b>Больше всего памяти</b>', ...top('rss'))
-  lines.push('', `<i>CPU — за последнюю секунду (100% = одно ядро у процесса). ${new Date().toLocaleTimeString('ru-RU')}</i>`)
+  lines.push('', t('🔥 <b>Больше всего CPU</b>'), ...top('cpu'))
+  lines.push('', t('🐘 <b>Больше всего памяти</b>'), ...top('rss'))
+  lines.push('', t('<i>CPU — за последнюю секунду (100% = одно ядро у процесса). {v}</i>', { v: new Date().toLocaleTimeString('ru-RU') }))
   return lines.join('\n')
 }
 
-const KB = () => new InlineKeyboard([[button('🔄 Обновить', 'srv:refresh'), button('« Статистика', 'hub:stats')]])
+const KB = () => new InlineKeyboard([
+  [button(t('🔄 Обновить'), 'srv:refresh'), button(t('📜 Логи демона'), 'srv:logs')],
+  [button(t('♻️ Перезапустить демон'), 'srv:rs'), button(t('« Статистика'), 'hub:stats')],
+])
+
+const LOG_LINES = 40
+
+/** The tail of the daemon log, secrets masked, at most ~3500 characters. */
+export function logTail(file = DAEMON_LOG, lines = LOG_LINES): string {
+  if (!existsSync(file)) return ''
+  let text = maskSecrets(readFileSync(file, 'utf8').trimEnd().split('\n').slice(-lines).join('\n'))
+  if (text.length > 3500) text = '…' + text.slice(-3500)
+  return text
+}
+
+/**
+ * `bewitched daemon restart` in its own process group: it stops this daemon
+ * and starts a new one. Keys from .env are left out of its environment so the
+ * new daemon reads the file afresh (a restart is how .env changes apply).
+ * Replaced in tests.
+ */
+export let restartDaemon = (): void => {
+  const env: Record<string, string | undefined> = { ...process.env, TMUX_PANE: '' }
+  try {
+    for (const line of readFileSync(ENV_FILE, 'utf8').split('\n')) {
+      const m = /^(\w+)=/.exec(line)
+      if (m) delete env[m[1]]
+    }
+  } catch {}
+  const out = openSync(DAEMON_LOG, 'a', 0o600)
+  spawn(process.execPath, [join(PLUGIN_ROOT, 'bin', 'bewitched.ts'), 'daemon', 'restart'], { cwd: PLUGIN_ROOT, detached: true, stdio: ['ignore', out, out], env }).unref()
+}
+export function setRestartDaemon(f: () => void): void {
+  restartDaemon = f
+}
+
+/** After a restart from Telegram: the new daemon edits the "restarting" message. */
+export async function reportRestart(d: Daemon, delayMs = 5000): Promise<void> {
+  const raw = d.store.get('restart_notice')
+  if (!raw) return
+  d.store.set('restart_notice', null)
+  const { chatId, messageId, at } = JSON.parse(raw) as { chatId: number; messageId: number; at: number }
+  // Sessions reconnect within a few seconds of the new daemon starting.
+  await Bun.sleep(delayMs)
+  const text = t('✅ Демон перезапущен за {v}: pid {pid}, сессий подключилось {v2}.', { v: fmtDuration(Date.now() - at), pid: process.pid, v2: d.activeSessions().length })
+  await d.bot.api.editMessageText(chatId, messageId, text, { reply_markup: KB() }).catch(err => d.log(`restart notice failed: ${err}`))
+}
 
 export function registerServerCommands(d: Daemon, bot: Bot): void {
   bot.command('server', async ctx => {
@@ -147,10 +198,37 @@ export function registerServerCommands(d: Daemon, bot: Bot): void {
   })
 }
 
+/** srv:refresh|logs|rs|rsok */
 export async function handleServerCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  if (data !== 'srv:refresh') return false
+  if (!/^srv:(refresh|logs|rs|rsok)$/.test(data)) return false
   if (String(ctx.from?.id) !== owner()) {
-    await ctx.answerCallbackQuery({ text: 'Только для владельца.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('Только для владельца.') }).catch(() => {})
+    return true
+  }
+  if (data === 'srv:logs') {
+    await ctx.answerCallbackQuery().catch(() => {})
+    const tail = logTail()
+    await show(ctx, {
+      text: t('📜 <b>Лог демона</b> · последние {LOG_LINES} строк\n<code>{v}</code>\n<pre>{v2}</pre>', { LOG_LINES, v: escapeHtml(DAEMON_LOG), v2: escapeHtml(tail) || t('пусто') }),
+      kb: new InlineKeyboard([[button('🔄', 'srv:logs'), button(t('« Сервер'), 'srv:refresh')]]),
+    })
+    return true
+  }
+  if (data === 'srv:rs') {
+    await ctx.answerCallbackQuery().catch(() => {})
+    await show(ctx, {
+      text: t('♻️ Перезапустить демон бота (pid {pid})?\n\nСессии Claude Code продолжат работать и переподключатся сами, .env перечитается. Пара секунд бот не будет отвечать.', { pid: process.pid }),
+      kb: new InlineKeyboard([[button(t('♻️ Да, перезапустить'), 'srv:rsok', 'danger'), button(t('Отмена'), 'srv:refresh')]]),
+    })
+    return true
+  }
+  if (data === 'srv:rsok') {
+    const msg = ctx.callbackQuery?.message
+    await ctx.answerCallbackQuery({ text: t('♻️ Перезапускаю…') }).catch(() => {})
+    await show(ctx, { text: t('♻️ Перезапускаю демон…'), kb: new InlineKeyboard() })
+    if (msg) d.store.set('restart_notice', JSON.stringify({ chatId: msg.chat.id, messageId: msg.message_id, at: Date.now() }))
+    d.log('restart requested from Telegram')
+    restartDaemon()
     return true
   }
   await ctx.answerCallbackQuery({ text: '🔄' }).catch(() => {})

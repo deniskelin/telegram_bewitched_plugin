@@ -13,11 +13,12 @@ import type { Daemon } from './daemon.ts'
 import { commitsSince } from './git.ts'
 import { button } from './stream.ts'
 import { add, collectEntries, fmtSum, fmtTok, limitsLine, ownerOf, type Entry, type Sum } from './usage.ts'
+import { locale, k, t } from '../i18n/index.ts'
 
 export type Kind = 'day' | 'week' | 'month'
 const KINDS: Kind[] = ['day', 'week', 'month']
-const KIND_NAME: Record<Kind, string> = { day: 'за сутки', week: 'за неделю', month: 'за месяц' }
-const WEEKDAYS = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+const KIND_NAME: Record<Kind, string> = { day: k('за сутки'), week: k('за неделю'), month: k('за месяц') }
+const WEEKDAYS = [k('Пн'), k('Вт'), k('Ср'), k('Чт'), k('Пт'), k('Сб'), k('Вс')]
 
 // --------------------------------------------------------------------------
 // Periods (local time)
@@ -68,7 +69,7 @@ export function buckets(p: Period): { label: string; start: number; end: number 
     for (let i = 0; i < 7; i++) {
       const s = new Date(p.start); s.setDate(s.getDate() + i)
       const e = new Date(p.start); e.setDate(e.getDate() + i + 1)
-      out.push({ label: `${WEEKDAYS[i]} ${s.getDate()}`, start: s.getTime(), end: e.getTime() })
+      out.push({ label: `${t(WEEKDAYS[i])} ${s.getDate()}`, start: s.getTime(), end: e.getTime() })
     }
   } else {
     for (let day = 1; ; day += 7) {
@@ -83,10 +84,10 @@ export function buckets(p: Period): { label: string; start: number; end: number 
 }
 
 function periodTitle(p: Period): string {
-  const dm = (t: Date) => t.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' })
-  if (p.kind === 'day') return `${dm(p.start)}, ${p.start.toLocaleDateString('ru-RU', { weekday: 'long' })}`
+  const dm = (t: Date) => t.toLocaleDateString(locale(), { day: 'numeric', month: 'long' })
+  if (p.kind === 'day') return `${dm(p.start)}, ${p.start.toLocaleDateString(locale(), { weekday: 'long' })}`
   if (p.kind === 'week') return `${dm(p.start)} — ${dm(new Date(p.end.getTime() - 1))}`
-  const m = p.start.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }).replace(' г.', '')
+  const m = p.start.toLocaleDateString(locale(), { month: 'long', year: 'numeric' }).replace(' г.', '') // i18n-ignore: the Russian locale's year suffix
   return m[0].toUpperCase() + m.slice(1)
 }
 
@@ -122,10 +123,10 @@ function groupBy(entries: Entry[], key: (e: Entry) => string): [string, Sum][] {
 function change(cur: number, prev: number, word: string): string {
   if (prev <= 0) return ''
   const pct = Math.round(((cur - prev) / prev) * 100)
-  return pct === 0 ? ` · как ${word}` : ` · ${pct > 0 ? '▲' : '▼'} ${Math.abs(pct)}% к ${word}`
+  return pct === 0 ? t(' · как {word}', { word }) : t(' · {v} {v2}% к {word}', { v: pct > 0 ? '▲' : '▼', v2: Math.abs(pct), word })
 }
 
-const PREV_WORD: Record<Kind, string> = { day: 'прошлому дню', week: 'прошлой неделе', month: 'прошлому месяцу' }
+const PREV_WORD: Record<Kind, string> = { day: k('прошлому дню'), week: k('прошлой неделе'), month: k('прошлому месяцу') }
 
 export type Report = { caption: string; text: string; png: Buffer | null; svg: string }
 
@@ -138,40 +139,40 @@ export async function buildReport(d: Daemon, p: Period): Promise<Report> {
   const before = sumOf(inPrev)
 
   const cols: Column[] = buckets(p).map(b => ({ label: b.label, value: sumOf(inP.filter(e => e.ts >= b.start && e.ts < b.end)).cost }))
-  const title = `Расход ${KIND_NAME[p.kind]} · ${periodTitle(p)}`
-  const subtitle = `$${total.cost.toFixed(2)} в ценах API · ${fmtTok(total.tokens)} токенов · по ${p.kind === 'day' ? 'часам' : p.kind === 'week' ? 'дням' : 'неделям'}`
+  const title = t('Расход {v} · {v2}', { v: t(KIND_NAME[p.kind]), v2: periodTitle(p) })
+  const subtitle = t('${v} в ценах API · {v2} токенов · по {v3}', { v: total.cost.toFixed(2), v2: fmtTok(total.tokens), v3: p.kind === 'day' ? t('часам') : p.kind === 'week' ? t('дням') : t('неделям') })
   const svg = columnChartSvg({ title, subtitle, columns: cols, labelEvery: p.kind === 'day' ? 3 : 1 })
   const png = await svgToPng(svg)
 
-  const lines: string[] = [`📊 <b>Статистика ${KIND_NAME[p.kind]}</b> · ${escapeHtml(periodTitle(p))}`]
-  lines.push(`💸 ${fmtSum(total)}${change(total.cost, before.cost, PREV_WORD[p.kind])}`)
+  const lines: string[] = [t('📊 <b>Статистика {v}</b> · {v2}', { v: t(KIND_NAME[p.kind]), v2: escapeHtml(periodTitle(p)) })]
+  lines.push(`💸 ${fmtSum(total)}${change(total.cost, before.cost, t(PREV_WORD[p.kind]))}`)
   if (inP.length) {
-    lines.push(`🔁 Ответов модели: ${inP.length}${change(inP.length, inPrev.length, PREV_WORD[p.kind])}`)
+    lines.push(t('🔁 Ответов модели: {length}{v}', { length: inP.length, v: change(inP.length, inPrev.length, t(PREV_WORD[p.kind])) }))
     const active = cols.filter(c => c.value > 0).length
     const peak = cols.reduce((a, b) => (b.value > a.value ? b : a), cols[0])
-    const unit = p.kind === 'day' ? ['Активных часов', 'Пик', (l: string) => `${l}:00–${Number(l) + 1}:00`] as const
-      : p.kind === 'week' ? ['Активных дней', 'Пик', (l: string) => l] as const
-      : ['Активных недель', 'Пик', (l: string) => `${l} числа`] as const
-    lines.push(`⏱ ${unit[0]}: ${active} из ${cols.length} · ${unit[1]}: ${escapeHtml(unit[2](peak.label))} ($${peak.value.toFixed(2)})`)
+    const unit = p.kind === 'day' ? [t('Активных часов'), t('Пик'), (l: string) => `${l}:00–${Number(l) + 1}:00`] as const
+      : p.kind === 'week' ? [t('Активных дней'), t('Пик'), (l: string) => l] as const
+      : [t('Активных недель'), t('Пик'), (l: string) => t('{l} числа', { l })] as const
+    lines.push(t('⏱ {v}: {active} из {length} · {v2}: {v3} (${v4})', { v: unit[0], active, length: cols.length, v2: unit[1], v3: escapeHtml(unit[2](peak.label)), v4: peak.value.toFixed(2) }))
 
     const models = groupBy(inP, e => e.model.replace(/^claude-/, ''))
-    lines.push('', '🧠 <b>Модели</b>', ...models.map(([k, s]) => `• ${escapeHtml(k)}: $${s.cost.toFixed(2)} · ${fmtTok(s.tokens)} · ${share(s.cost, total.cost)}`))
+    lines.push('', t('🧠 <b>Модели</b>'), ...models.map(([k, s]) => `• ${escapeHtml(k)}: $${s.cost.toFixed(2)} · ${fmtTok(s.tokens)} · ${share(s.cost, total.cost)}`))
     const sessions = groupBy(inP, e => e.cwd)
-    lines.push('', '🗂 <b>Сессии</b>')
+    lines.push('', t('🗂 <b>Сессии</b>'))
     for (const [cwd, s] of sessions.slice(0, 8)) {
       const commits = cwd ? await commitsSince(cwd, p.start, p.end) : null
-      lines.push(`• ${escapeHtml(ownerOf(d, cwd))}: $${s.cost.toFixed(2)}${commits?.length ? ` · коммитов ${commits.length}` : ''}`)
+      lines.push(`• ${escapeHtml(ownerOf(d, cwd))}: $${s.cost.toFixed(2)}${commits?.length ? t(' · коммитов {length}', { length: commits.length }) : ''}`)
     }
-    if (sessions.length > 8) lines.push(`… ещё ${sessions.length - 8}`)
+    if (sessions.length > 8) lines.push(t('… ещё {v}', { v: sessions.length - 8 }))
     // Cache reads dominate long sessions: worth knowing what the money went to.
     const read = inP.reduce((n, e) => n + e.read, 0)
-    lines.push('', `📦 Из кэша прочитано ${Math.round((read / (total.tokens || 1)) * 100)}% токенов`)
+    lines.push('', t('📦 Из кэша прочитано {v}% токенов', { v: Math.round((read / (total.tokens || 1)) * 100) }))
   } else {
-    lines.push('Сессии в этот период не работали.')
+    lines.push(t('Сессии в этот период не работали.'))
   }
   const limits = limitsLine()
   if (limits) lines.push(limits)
-  lines.push('', '<i>Стоимость — если бы те же токены шли через API. /reports — настройки отчётов.</i>')
+  lines.push('', t('<i>Стоимость — если бы те же токены шли через API. /reports — настройки отчётов.</i>'))
   return { caption: `📊 ${escapeHtml(title)}`, text: lines.join('\n'), png, svg }
 }
 
@@ -223,16 +224,16 @@ export function startReports(d: Daemon): void {
 // /reports
 // --------------------------------------------------------------------------
 
-const WHEN: Record<Kind, string> = { day: 'в 00:00 за прошедшие сутки', week: 'в понедельник за прошлую неделю', month: '1-го числа за прошлый месяц' }
+const WHEN: Record<Kind, string> = { day: k('в 00:00 за прошедшие сутки'), week: k('в понедельник за прошлую неделю'), month: k('1-го числа за прошлый месяц') }
 
 export function reportsScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   const on = reportSettings(d)
-  const lines = ['📊 <b>Отчёты о потреблении</b>', 'График расхода и статистика приходят сюда, когда период закончился.', '']
-  for (const k of KINDS) lines.push(`${on[k] ? '✅' : '⬜️'} ${KIND_NAME[k][0].toUpperCase() + KIND_NAME[k].slice(1)} — ${WHEN[k]}`)
+  const lines = [t('📊 <b>Отчёты о потреблении</b>'), t('График расхода и статистика приходят сюда, когда период закончился.'), '']
+  for (const k of KINDS) lines.push(`${on[k] ? '✅' : '⬜️'} ${t(KIND_NAME[k])[0].toUpperCase() + t(KIND_NAME[k]).slice(1)} — ${t(WHEN[k])}`)
   const kb = new InlineKeyboard([
-    KINDS.map(k => button(`${on[k] ? '✅' : '⬜️'} ${k === 'day' ? 'День' : k === 'week' ? 'Неделя' : 'Месяц'}`, `rp:t:${k}`, on[k] ? 'success' : undefined)),
-    KINDS.map(k => button(`📨 ${k === 'day' ? 'Вчера' : k === 'week' ? 'Прошл. неделя' : 'Прошл. месяц'}`, `rp:now:${k}`)),
-    [button('« Статистика', 'hub:stats')],
+    KINDS.map(k => button(`${on[k] ? '✅' : '⬜️'} ${k === 'day' ? t('День') : k === 'week' ? t('Неделя') : t('Месяц')}`, `rp:t:${k}`, on[k] ? 'success' : undefined)),
+    KINDS.map(k => button(`📨 ${k === 'day' ? t('Вчера') : k === 'week' ? t('Прошл. неделя') : t('Прошл. месяц')}`, `rp:now:${k}`)),
+    [button(t('« Статистика'), 'hub:stats')],
   ])
   return { text: lines.join('\n'), kb }
 }
@@ -249,19 +250,19 @@ export async function handleReportCallback(d: Daemon, ctx: Context, data: string
   const m = /^rp:(t|now):(day|week|month)$/.exec(data)
   if (!m) return false
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
     return true
   }
   const kind = m[2] as Kind
   if (m[1] === 't') {
     const on = !reportSettings(d)[kind]
     setReport(d, kind, on)
-    await ctx.answerCallbackQuery({ text: `${on ? '✅ Включён' : '⬜️ Выключен'} отчёт ${KIND_NAME[kind]}` }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('{v} отчёт {v2}', { v: on ? t('✅ Включён') : t('⬜️ Выключен'), v2: t(KIND_NAME[kind]) }) }).catch(() => {})
     const { text, kb } = reportsScreen(d)
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {})
     return true
   }
-  await ctx.answerCallbackQuery({ text: '📨 Собираю отчёт…' }).catch(() => {})
+  await ctx.answerCallbackQuery({ text: t('📨 Собираю отчёт…') }).catch(() => {})
   await sendReport(d, String(ctx.chat!.id), await buildReport(d, lastPeriod(kind)))
   return true
 }

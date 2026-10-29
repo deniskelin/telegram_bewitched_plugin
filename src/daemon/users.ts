@@ -16,6 +16,7 @@ import { show } from './menu.ts'
 import { listReminders } from './reminders.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
+import { t } from '../i18n/index.ts'
 
 function isPrimaryOwner(ctx: Context): boolean {
   return !!ctx.from && String(ctx.from.id) === owner()
@@ -41,7 +42,7 @@ function dirSize(path: string): number {
 }
 
 function fmtSize(n: number): string {
-  return n >= 1e6 ? `${(n / 1e6).toFixed(1)} МБ` : n >= 1e3 ? `${Math.round(n / 1e3)} КБ` : `${n} Б`
+  return n >= 1e6 ? t('{v} МБ', { v: (n / 1e6).toFixed(1) }) : n >= 1e3 ? t('{v} КБ', { v: Math.round(n / 1e3) }) : t('{n} Б', { n })
 }
 
 function label(d: Daemon, id: string): string {
@@ -50,24 +51,24 @@ function label(d: Daemon, id: string): string {
 
 /** What removal will touch, for the confirmation. */
 function plan(d: Daemon, id: string): string[] {
-  const out: string[] = ['• доступ: id из <code>allowFrom</code>']
+  const out: string[] = [t('• доступ: id из <code>allowFrom</code>')]
   const s = d.userSession(id)
-  if (s) out.push(`• сессия #${s.id}${s.tmuxPane ? ` и её окно tmux (<code>${escapeHtml(s.tmuxPane)}</code>)` : ' (не в tmux — закройте её сами)'}`)
+  if (s) out.push(t('• сессия #{id}{v}', { id: s.id, v: s.tmuxPane ? t(' и её окно tmux (<code>{v}</code>)', { v: escapeHtml(s.tmuxPane) }) : t(' (не в tmux — закройте её сами)') }))
   const dir = userDir(id)
-  if (dir && existsSync(dir)) out.push(`• папка <code>${escapeHtml(dir)}</code> (${fmtSize(dirSize(dir))})`)
+  if (dir && existsSync(dir)) out.push(t('• папка <code>{v}</code> ({v2})', { v: escapeHtml(dir), v2: fmtSize(dirSize(dir)) }))
   const tr = dir ? projectTranscriptDir(dir) : null
-  if (tr && existsSync(tr)) out.push(`• транскрипты Claude Code <code>${escapeHtml(tr)}</code> (${fmtSize(dirSize(tr))})`)
-  out.push('• история лички с ботом, очередь, память чата, напоминания и настройки')
+  if (tr && existsSync(tr)) out.push(t('• транскрипты Claude Code <code>{v}</code> ({v2})', { v: escapeHtml(tr), v2: fmtSize(dirSize(tr)) }))
+  out.push(t('• история лички с ботом, очередь, память чата, напоминания и настройки'))
   return out
 }
 
 export function confirmScreen(d: Daemon, id: string, back: string): { text: string; kb: InlineKeyboard } {
-  const kb: ReturnType<typeof button>[][] = [[button('🚫 Удалить всё', `ur:ok:${id}`, 'danger')]]
-  if (d.topicsChatId) kb.push([button('🚫 Удалить и исключить из группы', `ur:kick:${id}`, 'danger')])
-  kb.push([button('Отмена', back)])
+  const kb: ReturnType<typeof button>[][] = [[button(t('🚫 Удалить всё'), `ur:ok:${id}`, 'danger')]]
+  if (d.topicsChatId) kb.push([button(t('🚫 Удалить и исключить из группы'), `ur:kick:${id}`, 'danger')])
+  kb.push([button(t('Отмена'), back)])
   return {
-    text: [`🚫 Удалить <b>${escapeHtml(label(d, id))}</b>?`, '', 'Будет удалено без возможности восстановить:', ...plan(d, id),
-      '', 'Его сообщения в группе остаются. Написать боту снова он сможет только после нового приглашения.'].join('\n'),
+    text: [t('🚫 Удалить <b>{v}</b>?', { v: escapeHtml(label(d, id)) }), '', t('Будет удалено без возможности восстановить:'), ...plan(d, id),
+      '', t('Его сообщения в группе остаются. Написать боту снова он сможет только после нового приглашения.')].join('\n'),
     kb: new InlineKeyboard(kb),
   }
 }
@@ -82,23 +83,23 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
   saveAccess(a)
   const known = JSON.parse(d.store.get('known_users') ?? '[]') as string[]
   d.store.set('known_users', JSON.stringify(known.filter(x => x !== id)))
-  done.push('✅ доступ снят')
+  done.push(t('✅ доступ снят'))
 
   const s = d.userSession(id)
   if (s?.tmuxPane) {
     d.ending.add(s.id) // planned: no "session stopped" notice
-    await d.tmuxKillWindow(s.tmuxPane).then(() => done.push(`✅ сессия #${s.id} и окно tmux закрыты`), err => done.push(`⚠️ окно tmux: ${escapeHtml(String(err))}`))
-  } else if (s) done.push(`⚠️ сессия #${s.id} не в tmux — закройте её сами`)
+    await d.tmuxKillWindow(s.tmuxPane).then(() => done.push(t('✅ сессия #{id} и окно tmux закрыты', { id: s.id })), err => done.push(t('⚠️ окно tmux: {v}', { v: escapeHtml(String(err)) })))
+  } else if (s) done.push(t('⚠️ сессия #{id} не в tmux — закройте её сами', { id: s.id }))
 
   const dir = userDir(id)
   if (dir) {
     d.launching.delete(dir)
     const tr = projectTranscriptDir(dir)
-    for (const [what, path] of [['папка', dir], ['транскрипты', tr]] as const) {
+    for (const [what, path] of [[t('папка'), dir], [t('транскрипты'), tr]] as const) {
       if (!existsSync(path)) continue
       try {
         rmSync(path, { recursive: true, force: true })
-        done.push(`✅ ${what} удалена: <code>${escapeHtml(path)}</code>`)
+        done.push(t('✅ {what} удалена: <code>{v}</code>', { what, v: escapeHtml(path) }))
       } catch (err) {
         done.push(`⚠️ ${what}: ${escapeHtml(String(err))}`)
       }
@@ -112,13 +113,13 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
   d.store.set('reminders', JSON.stringify(reminders.filter(r => r.chatId !== id)))
   d.store.set(`user_name:${id}`, null)
   d.store.set(`user_info:${id}`, null)
-  done.push(`✅ история лички: ${msgs} сообщ., очередь: ${queued}, напоминаний: ${reminders.length - listReminders(d).length}`)
+  done.push(t('✅ история лички: {msgs} сообщ., очередь: {queued}, напоминаний: {v}', { msgs, queued, v: reminders.length - listReminders(d).length }))
 
   if (o.kick && d.topicsChatId) {
     // Ban then unban: removed from the group, free to be invited again later.
     await d.bot.api.banChatMember(d.topicsChatId, Number(id))
       .then(() => d.bot.api.unbanChatMember(d.topicsChatId!, Number(id), { only_if_banned: true }))
-      .then(() => done.push('✅ исключён из группы'), err => done.push(`⚠️ из группы исключить не вышло: ${escapeHtml(String(err))}`))
+      .then(() => done.push(t('✅ исключён из группы')), err => done.push(t('⚠️ из группы исключить не вышло: {v}', { v: escapeHtml(String(err)) })))
   }
   d.log(`removed user ${id}`)
   d.onSessionsChanged()
@@ -127,15 +128,15 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
 
 export function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   const [first, ...rest] = loadAccess().allowFrom
-  const lines = ['👥 <b>Пользователи</b>', `👑 ${escapeHtml(label(d, first ?? '?'))} — владелец`]
+  const lines = [t('👥 <b>Пользователи</b>'), t('👑 {v} — владелец', { v: escapeHtml(label(d, first ?? '?')) })]
   const kb: ReturnType<typeof button>[][] = []
   for (const id of rest) {
     const s = d.userSession(id)
-    lines.push(`👤 ${escapeHtml(label(d, id))} · ${s ? `сессия #${s.id}` : 'сессия не запущена'}`)
+    lines.push(`👤 ${escapeHtml(label(d, id))} · ${s ? t('сессия #{id}', { id: s.id }) : t('сессия не запущена')}`)
     kb.push([button(clip(`🚫 ${label(d, id)}`, 40), `ur:ask:${id}`)])
   }
-  if (!rest.length) lines.push('', 'Кроме вас — никого.')
-  kb.push([button('👥 Пригласить', 'inv:start'), button('« Меню', 'hub:main')])
+  if (!rest.length) lines.push('', t('Кроме вас — никого.'))
+  kb.push([button(t('👥 Пригласить'), 'inv:start'), button(t('« Меню'), 'hub:main')])
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb) }
 }
 
@@ -152,7 +153,7 @@ export async function handleUserCallback(d: Daemon, ctx: Context, data: string):
   const m = /^ur:(ask|ok|kick|list)(?::(\d+))?$/.exec(data)
   if (!m) return false
   if (!isPrimaryOwner(ctx)) {
-    await ctx.answerCallbackQuery({ text: 'Удалять пользователей может только владелец.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('Удалять пользователей может только владелец.') }).catch(() => {})
     return true
   }
   const [, action, id] = m
@@ -162,7 +163,7 @@ export async function handleUserCallback(d: Daemon, ctx: Context, data: string):
     return true
   }
   if (!id || id === owner()) {
-    await ctx.answerCallbackQuery({ text: 'Владельца удалить нельзя.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('Владельца удалить нельзя.') }).catch(() => {})
     return true
   }
   if (action === 'ask') {
@@ -172,12 +173,12 @@ export async function handleUserCallback(d: Daemon, ctx: Context, data: string):
     return true
   }
   if (!loadAccess().allowFrom.includes(id)) {
-    await ctx.answerCallbackQuery({ text: 'Уже удалён.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: t('Уже удалён.') }).catch(() => {})
     return true
   }
-  await ctx.answerCallbackQuery({ text: '🚫 Удаляю…' }).catch(() => {})
+  await ctx.answerCallbackQuery({ text: t('🚫 Удаляю…') }).catch(() => {})
   const who = label(d, id)
   const done = await removeUser(d, id, { kick: action === 'kick' })
-  await show(ctx, { text: [`🚫 <b>${escapeHtml(who)}</b> удалён.`, '', ...done].join('\n'), kb: new InlineKeyboard([[button('« Пользователи', 'ur:list')]]) })
+  await show(ctx, { text: [t('🚫 <b>{v}</b> удалён.', { v: escapeHtml(who) }), '', ...done].join('\n'), kb: new InlineKeyboard([[button(t('« Пользователи'), 'ur:list')]]) })
   return true
 }

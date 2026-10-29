@@ -1135,6 +1135,253 @@ describe('menu', () => {
   }, 20_000)
 })
 
+describe('convenience', () => {
+  const group = '-100500'
+
+  test('✅ confirm launch presses only on the channels prompt; ▶️ live screen; owner only', async () => {
+    const { acceptChannels } = await import('../src/daemon/screen.ts')
+    const prompt = (focus: 'ok' | 'exit') => `WARNING: Loading development channels\n\n${focus === 'ok' ? '❯' : ' '} I am using this for local development\n${focus === 'exit' ? '❯' : ' '} Exit\n`
+    let screen: string | null = prompt('exit')
+    const pressed: string[] = []
+    d.tmuxCapture = async () => screen
+    d.tmuxKeys = async (t, k) => {
+      pressed.push(`${t} ${k.join(' ')}`)
+      if (k[0] === 'Up') screen = prompt('ok')
+      else if (k[0] === 'Enter') screen = '╭ Claude Code ready'
+    }
+    expect(await acceptChannels(d, 'claude:5')).toBe('accepted')
+    expect(pressed).toEqual(['claude:5 Up', 'claude:5 Enter'])
+    // Something else on the screen (a folder-trust question): nothing is pressed.
+    screen = 'Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No, exit'
+    expect(await acceptChannels(d, 'claude:5')).toBe('no_prompt')
+    expect(pressed.length).toBe(2)
+
+    screen = prompt('ok')
+    tg.push(callbackQuery('tx:w5'))
+    const v = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>claude:5</code>'))
+    expect(JSON.stringify(v.body.reply_markup)).toContain('tx:w5:c')
+    expect(JSON.stringify(v.body.reply_markup)).toContain('tx:w5:l')
+    tg.push(callbackQuery('tx:w5:c'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '✅ Запуск подтверждён')
+    expect(pressed.at(-1)).toBe('claude:5 Enter')
+    tg.push(callbackQuery('tx:w5:c', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+
+    tg.push(callbackQuery('tx:w5:l', { messageId: 77 }))
+    const live = await tg.waitFor('editMessageText', c => String(c.body.text).includes('▶️ обновляется'))
+    expect(JSON.stringify(live.body.reply_markup)).toContain('tx:w5:s')
+    tg.push(callbackQuery('tx:w5:s', { messageId: 77 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏸ Остановлено')
+  })
+
+  test('⏳ a launch nobody confirmed: the owner is reminded with «✅ Подтвердить запуск», the user hears once', async () => {
+    const { remindLaunch } = await import('../src/daemon/launch.ts')
+    const dir = join(settings.usersDir, '555')
+    d.tmuxCapture = async t => (t === 'claude:9' ? 'WARNING: Loading development channels\n❯ 1. I am using this for local development\n  2. Exit' : null)
+    await remindLaunch(d, dir, '9', true)
+    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно 9) ждёт подтверждения запуска'))
+    expect(JSON.stringify(owner.body.reply_markup)).toContain('tx:w9:c')
+    await tg.waitFor('sendMessage', c => c.body.chat_id === '555' && String(c.body.text).startsWith('⏳ Вашу сессию ещё подтверждают'))
+    // The second reminder goes to the owner only; a gone window is not reported.
+    const before = tg.callsOf('sendMessage').length
+    await remindLaunch(d, dir, '9', false)
+    expect(tg.callsOf('sendMessage').slice(before).map(c => c.body.chat_id)).toEqual(['111'])
+    await remindLaunch(d, dir, '8', true)
+    expect(tg.callsOf('sendMessage').length).toBe(before + 1)
+  })
+
+  test('📜 daemon log and ♻️ restart after a confirmation; the new daemon edits the message', async () => {
+    const { setRestartDaemon, reportRestart } = await import('../src/daemon/server.ts')
+    let restarts = 0
+    setRestartDaemon(() => { restarts++ })
+    tg.push(callbackQuery('srv:logs'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📜 <b>Лог демона</b>'))
+    tg.push(callbackQuery('srv:rs'))
+    const ask = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('♻️ Перезапустить демон'))
+    expect(JSON.stringify(ask.body.reply_markup)).toContain('srv:rsok')
+    expect(restarts).toBe(0)
+    tg.push(callbackQuery('srv:rsok', { messageId: 55 }))
+    await tg.waitFor('editMessageText', c => c.body.text === '♻️ Перезапускаю демон…')
+    expect(restarts).toBe(1)
+    expect(JSON.parse(d.store.get('restart_notice')!)).toMatchObject({ messageId: 55 })
+    await reportRestart(d, 0)
+    const done = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Демон перезапущен'))
+    expect(done.body.message_id).toBe(55)
+    expect(d.store.get('restart_notice')).toBeNull()
+    tg.push(callbackQuery('srv:rs', { from: 222 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Только для владельца.')
+  })
+
+  test('🕘 past conversations: listed with their first words; /resume <id> typed into the pane', async () => {
+    const dir = join(process.env.CLAUDE_CONFIG_DIR!, 'projects', '-tmp-hist')
+    mkdirSync(dir, { recursive: true })
+    const a = '11111111-aaaa-4aaa-8aaa-111111111111', b = '22222222-bbbb-4bbb-8bbb-222222222222'
+    const user = (text: string) => JSON.stringify({ type: 'user', message: { role: 'user', content: text } })
+    writeFileSync(join(dir, `${a}.jsonl`), user('<channel source="x" chat_id="1">\nстарый разговор про CI\n</channel>') + '\n')
+    writeFileSync(join(dir, `${b}.jsonl`), user('текущий разговор') + '\n')
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/hist', projectRoot: '/tmp/hist', tmuxPane: '%21', claudePid: 2121 })
+    const s = [...d.sessions.values()].find(x => x.projectKey === '/tmp/hist')!
+    s.claude.sessionId = b
+    const typed: string[] = []
+    d.tmuxType = async (t, text) => { typed.push(`${t} ${text}`) }
+    try {
+      tg.push(callbackQuery(`sm:s:${s.id}`))
+      const card = await tg.waitFor('editMessageText', x => String(x.body.text).includes(`#${s.id}`) && JSON.stringify(x.body.reply_markup).includes('sm:hist'))
+      expect(JSON.stringify(card.body.reply_markup)).toContain(`mc:list:${s.id}`)
+      tg.push(callbackQuery(`sm:hist:${s.id}`))
+      const h = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🕘 <b>Разговоры</b>'))
+      expect(String(h.body.text)).toContain('старый разговор про CI')
+      expect(String(h.body.text)).toContain('<b>сейчас</b>')
+      const kb = JSON.stringify(h.body.reply_markup)
+      expect(kb).toContain(`sm:rs:${s.id}:${a.replace(/-/g, '')}`)
+      expect(kb).not.toContain(b.replace(/-/g, ''))
+      tg.push(callbackQuery(`sm:rs:${s.id}:${a.replace(/-/g, '')}`))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('Продолжить разговор от'))
+      expect(typed).toEqual([])
+      tg.push(callbackQuery(`sm:rsok:${s.id}:${a.replace(/-/g, '')}`))
+      await tg.waitFor('answerCallbackQuery', x => x.body.text === `➡️ /resume ${a}`)
+      expect(typed).toEqual([`%21 /resume ${a}`])
+    } finally {
+      c.close()
+    }
+  })
+
+  test('📌 always in the project: allowed without asking, shown in the card, removed with ❌', async () => {
+    const asks = () => tg.callsOf('sendMessage').filter(c => c.body.text === '🔐 proj: Write').length
+    client.sock.write(encode({ t: 'perm_req', request_id: 'hijkm', tool_name: 'Write', description: 'write a', input_preview: '{}' }))
+    const msg = await tg.waitFor('sendMessage', c => c.body.text === '🔐 proj: Write')
+    expect(JSON.stringify(msg.body.reply_markup)).toContain('perm:proj:hijkm')
+    tg.push(callbackQuery('perm:proj:hijkm', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'hijkm')).toMatchObject({ behavior: 'allow' })
+    const { projectRules } = await import('../src/daemon/permrules.ts')
+    expect(projectRules(d, '/tmp/proj')).toEqual(['Write'])
+    // A new session of the project (no ♾ memory) is not asked either.
+    d.sessions.get(sessionId)!.alwaysAllow.clear()
+    const before = asks()
+    client.sock.write(encode({ t: 'perm_req', request_id: 'jkmno', tool_name: 'Write', description: 'write b', input_preview: '{}' }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'jkmno')).toMatchObject({ behavior: 'allow' })
+    expect(asks()).toBe(before)
+    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes('📌 без вопросов в проекте: Write'))
+    expect(JSON.stringify(card.body.reply_markup)).toContain(`sm:prm:${sessionId}`)
+    tg.push(callbackQuery(`sm:prmd:${sessionId}:0`))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '🔐 Write снова спрашивается')
+    expect(projectRules(d, '/tmp/proj')).toEqual([])
+  })
+
+  test('⚡ quick commands: /macro add in a topic, the button posts the text and hands it to the session', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    tg.push(textMessage({ chat: Number(group), thread, text: '/macro add 🧪 Тесты | прогони тесты' }))
+    const list = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚡ <b>Быстрые команды</b>') && c.body.message_thread_id === thread)
+    expect(String(list.body.text)).toContain('<b>🧪 Тесты</b> — прогони тесты')
+    expect(JSON.stringify(list.body.reply_markup)).toContain(`mc:r:${group}:${thread}:0`)
+    tg.push(callbackQuery(`mc:r:${group}:${thread}:0`, { chat: Number(group) }))
+    await tg.waitFor('sendMessage', c => c.body.text === '⚡ прогони тесты' && c.body.message_thread_id === thread)
+    const m = await client.inbound(x => x.content === 'прогони тесты')
+    expect(m.meta).toMatchObject({ event: 'macro', macro: '🧪 Тесты' })
+    tg.push(textMessage({ chat: Number(group), thread, text: '/macro del 1' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).includes('Пока нет ни одной.'))
+    tg.push(textMessage({ chat: Number(group), thread, text: '/macro add без разделителя' }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Формат: /macro add'))
+  })
+
+  test('📡 /event over HTTP: posted to the topic and handed to the session', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const res = await fetch(`http://127.0.0.1:${settings.httpPort}/event`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ topic: 'proj', source: 'ci', text: 'build failed on main' }),
+    })
+    expect(res.status).toBe(200)
+    await tg.waitFor('sendMessage', c => c.body.text === '📡 ci: build failed on main' && c.body.message_thread_id === thread)
+    const m = await client.inbound(x => x.content.includes('Внешнее событие (ci)'))
+    expect(m.meta).toMatchObject({ event: 'external', source: 'ci' })
+    const bad = await fetch(`http://127.0.0.1:${settings.httpPort}/event`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ topic: 'nope', text: 'x' }),
+    })
+    expect(bad.status).toBe(400)
+  })
+
+  test('CI watch: the first look is silent, a failure gets 🛠 Починить, green after red is announced', async () => {
+    const { checkCi, setLatestRun } = await import('../src/daemon/events.ts')
+    let run = { databaseId: 1, status: 'completed', conclusion: 'success', name: 'tests', displayTitle: 'feat: x', url: 'https://github.com/o/r/actions/runs/1' }
+    setLatestRun(async (_cwd, branch) => (branch === 'main' ? run : null))
+    const notes = () => tg.callsOf('sendMessage').filter(c => String(c.body.text).includes('CI '))
+    const before = notes().length
+    await checkCi(d)
+    expect(notes().length).toBe(before)
+    run = { ...run, databaseId: 2, conclusion: 'failure', url: 'https://github.com/o/r/actions/runs/2' }
+    await checkCi(d)
+    await checkCi(d)
+    const fail = notes().slice(before)
+    expect(fail.length).toBe(1)
+    expect(String(fail[0].body.text)).toStartWith('❌ <b>CI упал</b> на <code>main</code>')
+    expect(JSON.stringify(fail[0].body.reply_markup)).toContain(`ci:fix:${sessionId}`)
+    tg.push(callbackQuery(`ci:fix:${sessionId}`, { chat: Number(group) }))
+    const m = await client.inbound(x => x.content.startsWith('CI упал на ветке main'))
+    expect(m.content).toContain('gh run view 2 --log-failed')
+    run = { ...run, databaseId: 3, conclusion: 'success' }
+    await checkCi(d)
+    expect(String(notes().at(-1)!.body.text)).toStartWith('✅ <b>CI снова зелёный</b>')
+  })
+
+  test('👥 shares of the 5-hour window by person; 🌙 quiet hours make every send silent; voice settings', async () => {
+    const { windowShares } = await import('../src/daemon/usage.ts')
+    const now = Date.now()
+    const e = (cwd: string, output: number) => ({ id: `${cwd}${output}`, ts: now - 60_000, model: 'claude-opus-5-5', input: 0, output, write5m: 0, write1h: 0, read: 0, cwd })
+    const ws = windowShares(d, { items: [{ label: '5 часов', percent: 50, resetsAt: new Date(now + 3600_000) }], breakdown: null },
+      [e(join(settings.usersDir, '222'), 3_000_000), e('/tmp/proj', 1_000_000)], now)!
+    expect(ws.shares.map(s => [s.userId, Math.round(s.percent)])).toEqual([['222', 38], [null, 13]])
+
+    d.store.set('quiet_hours', '00:00-23:59')
+    await d.bot.api.sendMessage('111', 'тихо')
+    expect(tg.callsOf('sendMessage').at(-1)!.body.disable_notification).toBe(true)
+    d.store.set('quiet_hours', 'off')
+    await d.bot.api.sendMessage('111', 'громко')
+    expect(tg.callsOf('sendMessage').at(-1)!.body.disable_notification).toBeUndefined()
+
+    process.env.TTS_PROVIDER = 'silero'
+    try {
+      tg.push(callbackQuery('hub:set'))
+      const set = await tg.waitFor('editMessageText', c => String(c.body.text).includes('Голос: xenia'))
+      const kb = JSON.stringify(set.body.reply_markup)
+      for (const cb of ['hub:tv:baya', 'hub:ts:125', 'hub:qh:2']) expect(kb).toContain(cb)
+      tg.push(callbackQuery('hub:tv:baya'))
+      tg.push(callbackQuery('hub:ts:125'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).includes('Голос: baya, скорость ×1.25'))
+      expect(prefsFor('111')).toMatchObject({ ttsVoice: 'baya', ttsSpeed: 1.25 })
+      tg.push(callbackQuery('hub:qh:2'))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '🌙 Тихие часы: 23:00–08:00')
+      expect(d.store.get('quiet_hours')).toBe('23:00-08:00')
+      d.store.set('quiet_hours', null)
+    } finally {
+      delete process.env.TTS_PROVIDER
+    }
+  })
+})
+
+describe('languages', () => {
+  test('/lang and ⚙️ switch the chat language; /menu follows it; commands per language', async () => {
+    tg.push(textMessage({ text: '/lang en' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Language: 🇬🇧 English')
+    expect(prefsFor('111').lang).toBe('en')
+    tg.push(textMessage({ text: '/menu' }))
+    const m = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Menu</b>'))
+    expect(JSON.stringify(m.body.reply_markup)).toContain('📋 Sessions')
+    tg.push(callbackQuery('hub:set'))
+    const set = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('⚙️ <b>Settings in this DM</b>'))
+    expect(JSON.stringify(set.body.reply_markup)).toContain('hub:lg:de')
+    tg.push(callbackQuery('hub:lg:de'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('⚙️ <b>Einstellungen in diesem Privatchat</b>'))
+    tg.push(textMessage({ text: '/lang ru' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Язык: 🇷🇺 Русский')
+    tg.push(textMessage({ text: '/lang auto' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Язык: как в Telegram')
+    expect(prefsFor('111').lang).toBe('')
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

@@ -11,6 +11,8 @@ import { isOwner } from '../access.ts'
 import { clip, escapeHtml } from '../format.ts'
 import type { ChatRef, Daemon } from './daemon.ts'
 import { button } from './stream.ts'
+import { locale, t as tr } from '../i18n/index.ts'
+import { inChat } from './lang.ts'
 
 export type Reminder = {
   id: string
@@ -27,6 +29,7 @@ export type Reminder = {
 // "when" parsing
 // --------------------------------------------------------------------------
 
+// Time words are parsed in Russian and English, whatever the interface language (i18n-ignore).
 const UNIT_MS: Record<string, number> = { m: 60_000, м: 60_000, h: 3_600_000, ч: 3_600_000, d: 86_400_000, д: 86_400_000 }
 
 /** Next occurrence of HH:MM (today if still ahead, else tomorrow). */
@@ -40,27 +43,31 @@ function nextTime(h: number, m: number, now: number, tomorrow = false): number |
 
 /**
  * "30m …", "1h30m …", "через 2 часа …", "18:30 …", "завтра 9:00 …",
- * "каждый день 9:00 …" → when, repeat and the rest of the text.
+ * "каждый день 9:00 …" (and in English: "in 2 hours …", "tomorrow 9:00 …",
+ * "every day 9:00 …") → when, repeat and the rest of the text. Parsing is the
+ * same in every interface language.
  */
 export function parseWhen(input: string, now = Date.now()): { at: number; daily: boolean; text: string } | null {
   const s = input.trim()
-  let m = /^((?:\d+\s*[mhdмчд])+)\s+([\s\S]+)$/i.exec(s)
+  let m = /^((?:\d+\s*[mhdмчд])+)\s+([\s\S]+)$/i.exec(s) // i18n-ignore
   if (m) {
     let ms = 0
-    for (const [, n, u] of m[1].matchAll(/(\d+)\s*([mhdмчд])/gi)) ms += Number(n) * UNIT_MS[u.toLowerCase()]
+    for (const [, n, u] of m[1].matchAll(/(\d+)\s*([mhdмчд])/gi)) ms += Number(n) * UNIT_MS[u.toLowerCase()] // i18n-ignore
     return ms > 0 ? { at: now + ms, daily: false, text: m[2].trim() } : null
   }
-  m = /^через\s+(\d+)\s*(мин[а-яё]*|час[а-яё]*|д(?:ень|ня|ней))\s+([\s\S]+)$/i.exec(s)
+  // i18n-ignore
+  m = /^(?:через|in)\s+(\d+)\s*(мин[а-яё]*|час[а-яё]*|д(?:ень|ня|ней)|min(?:ute)?s?|h(?:ou)?rs?|hours?|days?)\s+([\s\S]+)$/i.exec(s)
   if (m) {
-    const unit = m[2].toLowerCase().startsWith('мин') ? 'm' : m[2].toLowerCase().startsWith('час') ? 'h' : 'd'
+    const u = m[2].toLowerCase()
+    const unit = /^(мин|min)/.test(u) ? 'm' : /^(час|h)/.test(u) ? 'h' : 'd' // i18n-ignore
     return { at: now + Number(m[1]) * UNIT_MS[unit], daily: false, text: m[3].trim() }
   }
-  m = /^(каждый день|ежедневно|daily)\s+(\d{1,2}):(\d{2})\s+([\s\S]+)$/i.exec(s)
+  m = /^(каждый день|ежедневно|daily|every day)\s+(?:at\s+)?(\d{1,2}):(\d{2})\s+([\s\S]+)$/i.exec(s) // i18n-ignore
   if (m) {
     const at = nextTime(Number(m[2]), Number(m[3]), now)
     return at ? { at, daily: true, text: m[4].trim() } : null
   }
-  m = /^(завтра\s+)?(?:в\s+)?(\d{1,2}):(\d{2})\s+([\s\S]+)$/i.exec(s)
+  m = /^((?:завтра|tomorrow)\s+)?(?:(?:в|at)\s+)?(\d{1,2}):(\d{2})\s+([\s\S]+)$/i.exec(s) // i18n-ignore
   if (m) {
     const at = nextTime(Number(m[2]), Number(m[3]), now, !!m[1])
     return at ? { at, daily: false, text: m[4].trim() } : null
@@ -70,10 +77,10 @@ export function parseWhen(input: string, now = Date.now()): { at: number; daily:
 
 export function fmtWhen(r: Pick<Reminder, 'at' | 'daily'>, now = Date.now()): string {
   const t = new Date(r.at)
-  const time = t.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })
-  if (r.daily) return `каждый день в ${time}`
-  const day = new Date(now).toDateString() === t.toDateString() ? 'сегодня' : t.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' })
-  return `${day} в ${time}`
+  const time = t.toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+  if (r.daily) return tr('каждый день в {time}', { time })
+  const day = new Date(now).toDateString() === t.toDateString() ? tr('сегодня') : t.toLocaleDateString(locale(), { day: '2-digit', month: '2-digit' })
+  return tr('{day} в {time}', { day, time })
 }
 
 // --------------------------------------------------------------------------
@@ -131,7 +138,8 @@ export async function fireDue(d: Daemon, now = Date.now()): Promise<void> {
       chat_id: r.chatId, ...(r.threadId != null ? { thread_id: String(r.threadId) } : {}),
       user_id: r.userId, user: r.userId, ts: new Date(now).toISOString(), event: 'reminder', reminder_id: r.id,
     }
-    await d.routeText(chat, r.userId, `⏰ Напоминание (${fmtWhen(r, now)}): ${r.text}`, meta).catch(err => d.log(`reminder ${r.id} delivery failed: ${err}`))
+    const text = inChat(d, r.chatId, r.threadId, () => tr('⏰ Напоминание ({when}): {text}', { when: fmtWhen(r, now), text: r.text }))
+    await inChat(d, r.chatId, r.threadId, () => d.routeText(chat, r.userId, text, meta)).catch(err => d.log(`reminder ${r.id} delivery failed: ${err}`))
   }
 }
 
@@ -143,7 +151,7 @@ export function startReminders(d: Daemon): void {
 // Commands
 // --------------------------------------------------------------------------
 
-const USAGE = 'Формат: /remind <когда> <текст>\nКогда: 30m, 1h30m, 2d, «через 2 часа», 18:30, «завтра 9:00», «каждый день 9:00».\nПример: /remind 2h проверь CI'
+const USAGE = () => tr('Формат: /remind <когда> <текст>\nКогда: 30m, 1h30m, 2d, «через 2 часа», 18:30, «завтра 9:00», «каждый день 9:00».\nПример: /remind 2h проверь CI')
 
 function threadOf(ctx: Context): number | undefined {
   return ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined
@@ -152,10 +160,10 @@ function threadOf(ctx: Context): number | undefined {
 /** This chat's reminders (in a topic: the topic's), with a 🗑 for each. */
 export function remindersScreen(d: Daemon, chatId: string, threadId: number | undefined): { text: string; kb: InlineKeyboard } {
   const mine = listReminders(d).filter(r => r.chatId === chatId && r.threadId === threadId).sort((a, b) => a.at - b.at)
-  const lines = [`⏰ <b>Напоминания</b> (${mine.length})`]
+  const lines = [tr('⏰ <b>Напоминания</b> ({n})', { n: mine.length })]
   for (const r of mine) lines.push(`• ${fmtWhen(r)} — ${escapeHtml(r.text.length > 100 ? r.text.slice(0, 99) + '…' : r.text)}`)
-  if (!mine.length) lines.push('Нет. ' + escapeHtml(USAGE.split('\n')[0]))
-  const kb = new InlineKeyboard([...mine.slice(0, 20).map(r => [button(clip(`🗑 ${fmtWhen(r)} · ${r.text}`, 40), `rm:del:${r.id}`)]), [button('« Меню', 'hub:main')]])
+  if (!mine.length) lines.push(tr('Нет.') + ' ' + escapeHtml(USAGE().split('\n')[0]))
+  const kb = new InlineKeyboard([...mine.slice(0, 20).map(r => [button(clip(`🗑 ${fmtWhen(r)} · ${r.text}`, 40), `rm:del:${r.id}`)]), [button(tr('« Меню'), 'hub:main')]])
   return { text: lines.join('\n'), kb }
 }
 
@@ -164,9 +172,9 @@ export function registerReminderCommands(d: Daemon, bot: Bot): void {
     if (!ctx.from || !isOwner(ctx.from.id) || !ctx.chat) return
     const parsed = parseWhen(String(ctx.match ?? ''))
     const thread = threadOf(ctx)
-    if (!parsed || !parsed.text) return void ctx.reply(USAGE, { message_thread_id: thread })
+    if (!parsed || !parsed.text) return void ctx.reply(USAGE(), { message_thread_id: thread })
     const r = addReminder(d, { chatId: String(ctx.chat.id), threadId: thread, text: parsed.text, at: parsed.at, daily: parsed.daily, userId: String(ctx.from.id) })
-    await ctx.reply(`⏰ Напомню ${fmtWhen(r)}: ${r.text}`, { message_thread_id: thread, reply_markup: new InlineKeyboard([[button('🗑 Отменить', `rm:del:${r.id}`)]]) })
+    await ctx.reply(tr('⏰ Напомню {when}: {text}', { when: fmtWhen(r), text: r.text }), { message_thread_id: thread, reply_markup: new InlineKeyboard([[button(tr('🗑 Отменить'), `rm:del:${r.id}`)]]) })
   })
 
   bot.command('reminders', async ctx => {
@@ -180,13 +188,13 @@ export async function handleReminderCallback(d: Daemon, ctx: Context, data: stri
   const m = /^rm:del:([0-9a-f]+)$/.exec(data)
   if (!m) return false
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
   const ok = removeReminder(d, m[1])
-  await ctx.answerCallbackQuery({ text: ok ? '🗑 Напоминание удалено' : 'Уже нет' }).catch(() => {})
+  await ctx.answerCallbackQuery({ text: ok ? tr('🗑 Напоминание удалено') : tr('Уже нет') }).catch(() => {})
   const msg = ctx.callbackQuery?.message
-  if (msg && 'text' in msg && msg.text?.startsWith('⏰ Напомню')) await ctx.editMessageText(`${msg.text}\n\n🗑 Отменено`).catch(() => {})
+  if (msg && 'text' in msg && msg.text?.startsWith('⏰')) await ctx.editMessageText(`${msg.text}\n\n${tr('🗑 Отменено')}`).catch(() => {})
   else if (msg && ctx.chat) {
     const { text, kb } = remindersScreen(d, String(ctx.chat.id), msg.message_thread_id)
     await ctx.editMessageText(text, { parse_mode: 'HTML', reply_markup: kb }).catch(() => {})
