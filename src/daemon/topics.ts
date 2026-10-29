@@ -26,6 +26,7 @@ import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
 import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionBack, onSessionStopped } from './watchdog.ts'
+import { sendNotice } from './journal.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -693,14 +694,14 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const upd = ctx.myChatMember
     const chatId = String(upd.chat.id)
     const gone = upd.new_chat_member.status === 'left' || upd.new_chat_member.status === 'kicked'
-    const o = owner()
+    const title = ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId
     if (gone && chatId !== topicsChat() && d.extraTopicGroups().some(g => g.chatId === chatId)) {
       removeTopicGroup(d, chatId)
-      if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
+      void sendNotice(d, 'access', () => tr('⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.', { title }), () => ({ parse_mode: undefined }))
     }
     if (gone && chatId === topicsChat()) {
       disconnectGroup(d)
-      if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
+      void sendNotice(d, 'access', () => tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title }), () => ({ parse_mode: undefined }))
     }
     return next()
   })

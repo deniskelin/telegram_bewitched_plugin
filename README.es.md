@@ -235,6 +235,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `QUIET_HOURS` | `off` | Horas de silencio, p. ej. `23:00-08:00`: todo lo que envía el bot llega sin sonido. Los botones de «/menu → ⚙️» prevalecen sobre `.env` |
 | `BOT_LANGUAGE` | `ru` | Idioma de la interfaz por defecto (`ru`, `en`, `es`, `zh`, `fr`, `de`) cuando ni el chat ni el propietario eligieron uno y no se conoce el idioma de Telegram del usuario |
 | `TMUX_SESSION` | `claude` | La sesión de tmux de la sesión principal (las de usuario y proyecto tienen la suya) |
+| `JOURNAL_CHAT_ID` | — | Un grupo (id, p. ej. `-100…`) para los avisos del bot en vez del privado, cada tipo en su tema: 🛡 Acceso (bot añadido/quitado de grupos, mensajes de no usuarios), 🖥 Sesiones, 📊 Límites, 📰 Informes, ⚙️ Demonio. Lo que te espera — permisos, inicios por confirmar, peticiones de usuarios, recordatorios pedidos — sigue en el privado. El grupo necesita temas y el bot, ser admin con permiso para gestionarlos |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voz: transcripción de mensajes entrantes y respuestas con voz; ver [docs/voice.md](docs/voice.md), instalación con `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-user-<telegram id>` (sesión de usuario) o `-n claude-project-<id de grupo>-<id de tema>` (proyecto, como la carpeta); su propia sesión y ventana de tmux llevan ese nombre, así `tmux ls` muestra qué es cada una |
 

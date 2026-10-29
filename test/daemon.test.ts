@@ -1745,6 +1745,42 @@ describe('reconnects', () => {
   })
 })
 
+describe('journal (JOURNAL_CHAT_ID)', () => {
+  test('notices go to the journal group; strangers and membership changes are logged there', async () => {
+    const { warnOwner } = { warnOwner: (t: string) => d.warnOwner(t) }
+    process.env.JOURNAL_CHAT_ID = '-5300'
+    try {
+      // A daemon notice: to the journal, not the owner's DM.
+      ;(d as unknown as { lastWarn: number }).lastWarn = 0
+      warnOwner('⚠️ проверка журнала')
+      const w = await tg.waitFor('sendMessage', c => c.body.text === '⚠️ проверка журнала')
+      expect(String(w.body.chat_id)).toBe('-5300')
+      // Each kind in its own topic, created on first use.
+      const daemonTopic = await tg.waitFor('createForumTopic', c => String(c.body.chat_id) === '-5300' && c.body.name === '⚙️ Демон')
+      void daemonTopic
+      expect(w.body.message_thread_id).toBeDefined()
+
+      // Someone who is not a user writes in a DM.
+      tg.push(textMessage({ from: 777001, text: 'привет, кто ты?' }))
+      const st = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('✉️ Написал(а) не пользователь'))
+      expect(String(st.body.text)).toContain('777001')
+      expect(String(st.body.text)).toContain('привет, кто ты?')
+      await tg.waitFor('createForumTopic', c => String(c.body.chat_id) === '-5300' && c.body.name === '🛡 Доступ')
+      expect(st.body.message_thread_id).not.toBe(w.body.message_thread_id)
+
+      // The bot added to and removed from a group.
+      const member = (status: string) => ({ user: { id: 1, is_bot: true, first_name: 'bot' }, status })
+      const upd = (from: string, to: string) => ({ my_chat_member: { chat: { id: -5400, type: 'group', title: 'Чужая' }, from: { id: 111, is_bot: false, first_name: 'Owner' }, date: 0, old_chat_member: member(from), new_chat_member: member(to) } })
+      tg.push(upd('left', 'member'))
+      await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('➕ Бота добавили в группу «Чужая»'))
+      tg.push(upd('member', 'kicked'))
+      await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('➖ Бота исключили из группы «Чужая»'))
+    } finally {
+      delete process.env.JOURNAL_CHAT_ID
+    }
+  })
+})
+
 describe('session types', () => {
   const group = '-100500'
   const usersDir = process.env.USERS_DIR!

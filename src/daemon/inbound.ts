@@ -21,6 +21,7 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
+import { journal, journalText, who } from './journal.ts'
 import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
@@ -205,6 +206,12 @@ async function handleInbound(
 ): Promise<void> {
   let text = original
   const result = gate(ctx, d.botUsername)
+  // Someone who is not a user wrote in a DM (dropped, or asked to pair): the journal hears of it.
+  if ((result.action === 'drop' || result.action === 'pair') && ctx.chat?.type === 'private' && ctx.from) {
+    const from = who(ctx.from)
+    const pair = result.action === 'pair'
+    void journal(d, 'access', () => journalText.stranger(from, pair ? tr(' · просит сопряжение') : '', original || (attachment ? `[${attachment.kind}]` : '')))
+  }
   if (result.action === 'drop') return
   if (result.action === 'pair') {
     const lead = result.isResend ? 'Still pending' : 'Pairing required'

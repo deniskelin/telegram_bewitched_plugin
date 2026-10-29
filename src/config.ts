@@ -176,6 +176,8 @@ export const settings = {
 
   get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
+  /** JOURNAL_CHAT_ID: a group for the daemon's notices and events instead of the owner's DM (see journal.ts). */
+  get journalChatId() { const v = process.env.JOURNAL_CHAT_ID?.trim(); return v && /^-\d+$/.test(v) ? v : null },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },
 }
 

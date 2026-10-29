@@ -235,6 +235,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 | `QUIET_HOURS` | `off` | Quiet hours, e.g. `23:00-08:00`: everything the bot sends arrives silently. The buttons in «/menu → ⚙️» override `.env` |
 | `BOT_LANGUAGE` | `ru` | The default interface language (`ru`, `en`, `es`, `zh`, `fr`, `de`) when neither the chat nor the owner chose one and the user's Telegram language is unknown |
 | `TMUX_SESSION` | `claude` | The tmux session of the main session (user and project sessions get their own) |
+| `JOURNAL_CHAT_ID` | — | A group (id, e.g. `-100…`) for the bot's notices instead of your DM, each kind in its own topic: 🛡 Access (bot added to/removed from groups, messages from non-users), 🖥 Sessions, 📊 Limits, 📰 Reports, ⚙️ Daemon. What waits for you — permissions, launches to confirm, users' requests, reminders you asked for — stays in your DM. The group needs topics, and the bot needs to be an admin who can manage them |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voice: transcribing incoming messages and spoken replies — see [docs/voice.md](docs/voice.md), install with `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | The command for a new session. The bot adds `-n claude-user-<telegram id>` (user session) or `-n claude-project-<group id>-<topic id>` (project, like its folder); each gets its own tmux session and window of that name, so `tmux ls` shows what is what |
 
