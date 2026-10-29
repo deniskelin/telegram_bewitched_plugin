@@ -25,7 +25,7 @@ import { journal, journalText, who } from './journal.ts'
 import { handleIdleCallback } from './idle.ts'
 import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
-import { handleSessionMenu } from './menu.ts'
+import { handleSessionMenu, sessionCommandScreen } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
 import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
 import { handleReportCallback, registerReportCommands } from './reports.ts'
@@ -43,6 +43,8 @@ import { projectTitle } from './report.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+/** /clear, /compact, /model, /cost (optionally @bot): Claude Code commands, handled by the daemon. */
+const SESSION_COMMAND_RE = /^\/(clear|compact|model|cost)(?:@\w+)?(?:\s+\S+)?\s*$/i
 
 type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string; duration?: number }
 
@@ -251,6 +253,18 @@ async function handleInbound(
 
   const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
+  // Claude Code's own commands are for the session's window, not for the model: answer here, no turn spent.
+  const sc = SESSION_COMMAND_RE.exec(text)
+  if (sc && !attachment) {
+    const s = target.kind === 'session' && !target.fallback ? target.session : null
+    if (!can(from.id, 'control')) await reply(tr('Команды окна сессии — у владельца.'))
+    else if (!s) await reply(tr('Сессия здесь не запущена — команду некуда отправить.'))
+    else {
+      const screen = await sessionCommandScreen(d, s, sc[1]!.toLowerCase() as 'clear' | 'compact' | 'model' | 'cost')
+      await ctx.reply(screen.text, { parse_mode: 'HTML', message_thread_id: threadId, reply_markup: screen.kb }).catch(err => d.log(`session command failed: ${err}`))
+    }
+    return
+  }
   // Unknown commands in General are not for Claude.
   if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {

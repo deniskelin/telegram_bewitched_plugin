@@ -636,6 +636,32 @@ describe('topics', () => {
     p.close()
   })
 
+  test('/clear, /compact, /model, /cost in a session topic: answered by the daemon, never a turn for the model', async () => {
+    const s = d.sessions.get(sessionId)!
+    const thread = s.topic!.threadId
+    const before = client.msgs.filter(m => m.t === 'inbound').length
+    // Not in tmux: said so, still no turn.
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    await tg.waitFor('sendMessage', x => x.body.text === 'Сессия не в tmux — команды не отправить.' && x.body.message_thread_id === thread)
+    const pane = s.tmuxPane
+    s.tmuxPane = '%9'
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    const c = await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('Очистить разговор сессии') && x.body.message_thread_id === thread)
+    expect(JSON.stringify(c.body.reply_markup)).toContain(`sm:clrok:${sessionId}`)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/compact@test_bot' }))
+    const k = await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('Сжать разговор сессии') && x.body.message_thread_id === thread)
+    expect(JSON.stringify(k.body.reply_markup)).toContain(`sm:cmp:${sessionId}`)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/model opus' }))
+    await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('🧠 Модель для сессии') && x.body.message_thread_id === thread)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/cost' }))
+    await tg.waitFor('sendMessage', x => String(x.body.text).includes(`#${sessionId}`) && x.body.message_thread_id === thread && JSON.stringify(x.body.reply_markup ?? '').includes(`sm:g:${sessionId}:c`))
+    // A member may not; nothing of it reaches the session.
+    tg.push(textMessage({ from: 333, chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    await Bun.sleep(300)
+    expect(client.msgs.filter(m => m.t === 'inbound').length).toBe(before)
+    s.tmuxPane = pane
+  })
+
   test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
     tg.push(textMessage({ text: '/sessions' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))

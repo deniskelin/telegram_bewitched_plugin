@@ -106,6 +106,21 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
+/**
+ * /clear, /compact, /model, /cost typed in a session's chat: the daemon
+ * answers with a confirmation (or the picker, or the card) instead of passing
+ * the text to the model — a turn spent on nothing (FR-9). The buttons are the
+ * card's own: confirmed, the command is typed into the session's window.
+ */
+export async function sessionCommandScreen(d: Daemon, s: Session, cmd: 'clear' | 'compact' | 'model' | 'cost'): Promise<Screen> {
+  if (cmd === 'cost') return sessionScreen(d, s)
+  if (!s.tmuxPane) return { text: t('Сессия не в tmux — команды не отправить.'), kb: new InlineKeyboard() }
+  if (cmd === 'clear') return (await controlAction(d, s, 'clr', undefined)).screen!
+  if (cmd === 'model') return (await controlAction(d, s, 'mdl', undefined)).screen!
+  const kb = new InlineKeyboard([[button(t('✅ Да, /compact'), `sm:cmp:${s.id}`, 'primary'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
+  return { text: t('Сжать разговор сессии #{id} ({v})? Claude перескажет его коротко, место в контексте освободится.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb }
+}
+
 /** Claude Code models offered in 🧠 Модель: /model takes the id. */
 const MODELS: [string, string][] = [['opus', 'claude-opus-5-5'], ['sonnet', 'claude-sonnet-5-5'], ['haiku', 'claude-haiku-5-5'], ['fable', 'claude-fable-5-1']]
 
