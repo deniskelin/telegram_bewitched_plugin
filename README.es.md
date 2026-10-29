@@ -36,7 +36,7 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 | `claude -p` / subagentes junto al canal | ❌ lanzan su propio sondeo y rompen el canal | ✅ las sesiones pasivas no tocan los mensajes entrantes |
 | Conflicto con otro proceso de sondeo | 409 silencioso | ✅ espera y avisa al propietario por privado |
 | Temas | ❌ | ✅ supergrupo con foros, un tema por proyecto, se conecta desde el privado con `/connect_group` |
-| Panel de control | ❌ | ✅ resumen fijado en General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
+| Panel de control | ❌ | ✅ resumen fijado en General (con `JOURNAL_CHAT_ID`, en el tema «🖥 Sesiones» del diario), `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
 | Nueva sesión desde Telegram | ❌ | ✅ creas un tema → carpeta del proyecto + Claude en una ventana de tmux; `/new_session` |
 | Archivo de sesión y tema | ❌ | ✅ «🗄 Archivar» cierra la sesión y el tema; al reabrir el tema la sesión arranca de nuevo |
 | Progreso en vivo | ❌ solo «escribiendo» durante 5 s | ✅ borrador con «razonamiento» en privado (Bot API 10.2), «⏳ Trabajando…» actualizado con acciones en un tema, `/verbose 0\|1\|2` |
