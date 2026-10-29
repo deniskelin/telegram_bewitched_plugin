@@ -49,6 +49,12 @@ export async function handleEvent(d: Daemon, e: ExternalEvent): Promise<string> 
 
 // --- CI watch ---
 
+/** A project session's chat: its topic, or the ordinary group bound to it. */
+function projectChat(s: Session): { chatId: string; threadId?: number } | null {
+  if (s.group) return { chatId: s.group.chatId }
+  return s.topic ? { chatId: s.topic.chatId, threadId: s.topic.threadId } : null
+}
+
 export type CiRun = { databaseId: number; status: string; conclusion: string; name: string; displayTitle: string; url: string }
 
 /** The latest Actions run of a branch, via gh in the project folder. Replaced in tests. */
@@ -74,7 +80,7 @@ const failures = new Map<string, CiRun>()
 export async function checkCi(d: Daemon): Promise<void> {
   const seen = new Set<string>()
   for (const s of d.activeSessions()) {
-    if (!s.topic || !s.branch || d.roleOf(s) !== 'project') continue
+    if (!(s.topic || s.group) || !s.branch || d.roleOf(s) !== 'project') continue
     const key = `ci:${s.projectKey}:${s.branch}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -100,7 +106,8 @@ async function announce(d: Daemon, s: Session, run: CiRun, failed: boolean): Pro
     failures.set(s.id, run)
     row.unshift(button(tr('🛠 Починить'), `ci:fix:${s.id}`, 'primary'))
   }
-  await d.bot.api.sendMessage(s.topic!.chatId, text, { parse_mode: 'HTML', message_thread_id: s.topic!.threadId, reply_markup: new InlineKeyboard([row] as never) })
+  const where = projectChat(s)!
+  await d.bot.api.sendMessage(where.chatId, text, { parse_mode: 'HTML', ...(where.threadId != null ? { message_thread_id: where.threadId } : {}), reply_markup: new InlineKeyboard([row] as never) })
     .catch(err => d.log(`ci notice failed: ${err}`))
 }
 
@@ -120,17 +127,18 @@ export async function handleCiCallback(d: Daemon, ctx: Context, data: string): P
   }
   const s = d.sessions.get(m[1])
   const run = failures.get(m[1])
-  if (!s || !run || !s.topic) {
+  const where = s ? projectChat(s) : null
+  if (!s || !run || !where) {
     await ctx.answerCallbackQuery({ text: tr('Сессия переподключилась — напишите ей сами.') }).catch(() => {})
     return true
   }
   failures.delete(m[1])
   await ctx.answerCallbackQuery({ text: tr('🛠 Отправил сессии') }).catch(() => {})
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard([[InlineKeyboard.url('🔗 Run', run.url)]]) }).catch(() => {})
-  const chat: ChatRef = { chatId: s.topic.chatId, threadId: s.topic.threadId, isPrivate: false }
+  const chat: ChatRef = { ...where, isPrivate: false }
   const text = tr('CI упал на ветке {branch}: «{name}» ({url}). Посмотри `gh run view {databaseId} --log-failed`, найди причину, почини и запушь.', { branch: s.branch ?? '', name: run.name, url: run.url, databaseId: run.databaseId })
   await d.routeText(chat, String(ctx.from.id), text, {
-    chat_id: chat.chatId, thread_id: String(chat.threadId), user_id: String(ctx.from.id), user: d.userLabel(String(ctx.from.id)),
+    chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}), user_id: String(ctx.from.id), user: d.userLabel(String(ctx.from.id)),
     ts: new Date().toISOString(), event: 'ci_failure', run_id: String(run.databaseId),
   })
   return true

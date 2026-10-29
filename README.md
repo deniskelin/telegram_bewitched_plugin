@@ -57,6 +57,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | Quick commands | ❌ | ✅ `/macro`: your own buttons with text for the chat's session |
 | Reminders | ❌ | ✅ `/remind` and the `remind` tool, one-off and daily |
 | People | pairing code only | ✅ `/invite` from contacts, `/users`, removal with all their data |
+| Ordinary groups | through the main session | ✅ a group without topics = a project: bound from the owner's DM, its session answers in the group |
 | Interface languages | English | ✅ Russian, English, Spanish, Chinese, French, German — `/lang`, defaults to the Telegram language |
 | Tests | ❌ | ✅ unit and integration tests with a fake Bot API |
 
@@ -79,6 +80,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | **Statistics** | `/usage` — limit percentages with reset time and a bar, spending by model and session; notices at 80/95% and at the moment of reset (🔔/🔕); «🌙 Daily summary»; `/reports` — day, week, month with a chart; the session's cost on its card; `/server` — machine load, the daemon log and a restart button; 👥 who used how much of the 5-hour window, with a notice when someone takes more than `USER_SHARE_ALERT`. 🌙 Quiet hours — silent at night. |
 | **Reminders** | `/remind 2h check CI`, «tomorrow 9:00», «every day 9:00»; when due, the text arrives in the chat and to its session; a session that isn't running is started. |
 | **People** | `/invite` — pick a contact, the bot grants access, starts their session and gives a group link; `/users` and 🚫 — remove a person with their session, folder, transcripts and history. People added through `/telegram-bewitched:access` are picked up by the daemon automatically. |
+| **Groups as projects** | An ordinary group (no topics) allowed in access becomes a project: the owner gets a card in DM — new project, an existing folder or «not a project». Its session answers in the group; control from the owner's DM. |
 | **Languages** | The bot interface in 6 languages: ru, en, es, zh, fr, de. A chat's language — `/lang` or the flags in «/menu → ⚙️»; by default in DM — the user's Telegram language, otherwise `BOT_LANGUAGE`. Telegram's command menu follows the app language. |
 | **History and memory** | SQLite with full-text search, reply/quote/forward context in every message, `get_history`, `search_messages`, chat memory `save_memory`, a summary when a session connects, delivery of messages that came while the session was off. |
 
@@ -149,6 +151,16 @@ Everyone in the bot's allowlist can write to sessions and control them (buttons,
 Everything below is also available as buttons in **`/menu`** (Telegram's command menu has only `/menu`, `/sessions`, `/usage`, `/help`). Control commands (DM or General): `/sessions`, `/topics`, `/permissions` (waiting permission requests across sessions), `/send <topic> <text>`, `/broadcast <text>`, `/rename <topic> | <name>`, `/archive <topic>`, `/delete <topic>`, `/new_session <name|path>`. In any chat: `/verbose [0|1|2]` (🔕0 answer only, 🔔1 + actions, 📢2 + model text; without an argument shows the current level), `/notify_done [off|long|always]`, `/lang ru|en|es|zh|fr|de|auto`, `/remember`, `/forget`, `/voice off|mirror|always`, `/transcript on|off`, `/macro add <button> | <text>` and `/macro del <n>` (the chat's quick commands), `/remind <when> <text>` (30m, 1h30m, «in 2 hours», 18:30, «tomorrow 9:00», «every day 9:00»; Russian forms work too; when due, the text arrives in the chat and to the chat's session, and a session that isn't running is started), `/reminders`. The level is shown on session cards (the 📣 line), changed there with buttons and in the «⏳ Working… · 🔔1» header. In DM: `/server` (CPU, memory, disks, Claude Code and voice processes; «📜 Daemon logs», «♻️ Restart the daemon»), `/users` (everyone with access; 🚫 removes a user: access, session and tmux window, folder, transcripts and DM history — after a confirmation), `/invite` (invite a user: pick a contact → confirm → the bot grants access, starts their session and sends an invitation to forward), `/usage`, `/digest`, `/reports` (reports for a day, week and month with a spending chart by hour/day/week and statistics; each is switched on with a button and arrives when the period ends), `/main [id|reset]`, `/group`, `/disconnect_group`, `/status`.
 
 `/usage` (owner only): the subscription plan from `~/.claude/.credentials.json`, limit percentages (5 hours, week) with reset times, and token spending for 5 hours, a day and 7 days across all transcripts at API prices, by model and session. The percentages come from Anthropic's **undocumented** `api/oauth/usage` endpoint (the one `/usage` in Claude Code calls) with the subscription's OAuth token. It may stop working with any update; then `/usage` shows local data only. `USAGE_LIMITS=off` turns the request off. The «Who spends», «By model» and «By session» sections cover the period chosen with buttons: 5 hours, day, week or month (for 5 hours and a week «who spends» is a share of the subscription window, otherwise a share of spending).
+
+## Ordinary groups as projects
+
+A group without topics can be a project of its own — a family chat about a site, a team chat about a service.
+
+1. Add the bot to the group and allow it in the terminal: `/telegram-bewitched:access group add <id>` (the bot tells you the id when added; until then it stays silent there). By default the bot answers only when mentioned — `--no-mention` turns that off (and needs privacy mode disabled at @BotFather — see [ACCESS.md](ACCESS.md)).
+2. On the group's first message the owner gets a card in DM: «📁 New project» (`~/projects/<group name>`), «📂 Choose a project» (an existing folder) or «🚫 Not a project» (the main session answers, as before). What the group wrote waits in a queue meanwhile.
+3. The project's session starts in tmux (confirmed with «✅ Confirm launch» in your DM), answers right in the group and shows its progress there. It gets no topic.
+
+Everything else is from the owner's DM: the session card in `/sessions` (with «👥 Unbind the group»), the list in «/menu → 👥 Groups». Permission requests of a group's session go only to the owner. Reminders, `/macro`, `/event` and CI notices work in the group as in a topic.
 
 ## Session types
 

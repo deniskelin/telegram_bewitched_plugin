@@ -65,6 +65,8 @@ With the default `requireMention: true`, the bot responds only when @mentioned o
 /telegram-bewitched:access group rm -1001654782309
 ```
 
+**Groups as projects.** An allowed group that isn't the topics group can be bound to a project folder. On its first message (or when the bot is added to it) the owner gets a card in the bot's DM: a new project in `PROJECTS_DIR`, an existing folder, or «not a project» (the main session answers, as before). A bound group's messages go to that project's session, which answers in the group; permission requests of that session go to the owner's DM only. Unbind with «👥 Unbind the group» on the session card or in `/menu → 👥 Groups`. Being bound grants nothing extra: who may write is still decided by this file.
+
 **Privacy mode.** Telegram bots default to a server-side privacy mode that filters group messages before they reach your code: only @mentions and replies are delivered. This matches the default `requireMention: true`, so it's normally invisible. Using `--no-mention` requires disabling privacy mode as well: message [@BotFather](https://t.me/BotFather), send `/setprivacy`, pick your bot, choose **Disable**. Without that step, Telegram never delivers the messages regardless of local config.
 
 ## Mention detection

@@ -28,7 +28,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   const lines = list.map(s => {
     const label = sessionLabel(d, s)
     const icon = label.slice(0, label.indexOf(' '))
-    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.topic ? ` · 💬 ${escapeHtml(s.topic.name)}` : ''}`
+    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.topic ? ` · 💬 ${escapeHtml(s.topic.name)}` : s.group ? ` · 👥 ${escapeHtml(s.group.title)}` : ''}`
   })
   const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
@@ -58,6 +58,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s.tmuxPane && s.status === 'working') actions.push(button(t('⏹ Стоп'), `sm:stop:${s.id}`, 'danger'))
   if (s !== d.mainSession() && !d.userIdOf(s)) actions.push(button(t('👑 Сделать главной'), `sm:main:${s.id}`))
   if (s.topic) actions.push(button(t('🗄 В архив'), `sm:ar:${s.id}`))
+  if (s.group) actions.push(button(t('👥 Отвязать группу'), `gp:unbind:${s.group.chatId}`, 'danger'))
   if (actions.length) rows.push(actions)
   const user = d.userIdOf(s)
   if (user && user !== owner()) rows.push([button(t('🚫 Удалить пользователя'), `ur:ask:${user}`, 'danger')])
@@ -79,7 +80,7 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   rows.push((['off', 'long', 'always'] as const).map(v => button(`${p.notifyDone === v ? '• ' : ''}✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`, `sm:n:${s.id}:${v}`, p.notifyDone === v ? 'primary' : undefined)))
   rows.push([button(t('« К списку'), 'sm:list'), button('🔄', `sm:s:${s.id}`)])
 
-  const where = c.threadId != null ? t('в топике') : d.userIdOf(s) ? t('в личке пользователя') : t('в личке')
+  const where = c.threadId != null ? t('в топике') : s.group ? t('в группе') : d.userIdOf(s) ? t('в личке пользователя') : t('в личке')
   const text = `${await sessionCard(d, s)}\n\n<i>${t('Подробность прогресса и «✅ готово» {where}:', { where })}</i>`
   return { text, kb: new InlineKeyboard(rows as never) }
 }

@@ -70,6 +70,7 @@ export function sessionLabel(d: Daemon, s: Session): string {
 
 /** The chat the session answers in: its topic, its user's DMs or the owner's. Its prefs apply there. */
 export function sessionChat(d: Daemon, s: Session): { chatId: string; threadId?: number } {
+  if (s.group) return { chatId: s.group.chatId }
   if (s.topic) return { chatId: s.topic.chatId, threadId: s.topic.threadId }
   return { chatId: d.userIdOf(s) ?? owner() ?? '' }
 }
@@ -107,7 +108,8 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const head = [`${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b>${tr?.title ? ` «${escapeHtml(tr.title)}»` : ''} · ${status}`]
   const where: string[] = []
   if (s.branch && !user) where.push(`🌿 ${escapeHtml(s.branch)}`)
-  if (s.topic) {
+  if (s.group) where.push(t('👥 группа «{title}»', { title: escapeHtml(s.group.title) }))
+  else if (s.topic) {
     const link = topicLink(s.topic.chatId, s.topic.threadId)
     const name = escapeHtml(s.topic.name)
     where.push(`💬 ${link ? `<a href="${link}">${name}</a>` : name}`)

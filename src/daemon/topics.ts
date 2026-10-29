@@ -14,6 +14,7 @@ import type { TopicRow } from '../db.ts'
 import { clip, fmtDuration, safeMeta } from '../format.ts'
 import { locale, t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
+import { groupForProject } from './groups.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
@@ -52,6 +53,12 @@ function topicName(d: Daemon, chatId: string, s: Session): string {
 
 /** Find or create the session's topic in the topics group. */
 export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic']> {
+  // A project bound to an ordinary group talks there, not in a topic.
+  const g = s.passive ? null : groupForProject(d, s.projectKey)
+  if (g) {
+    s.group = g
+    return (s.topic = null)
+  }
   const chatId = d.topicsChatId
   // Only project sessions own a topic; user and main sessions live in DMs and General.
   if (!chatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
@@ -102,6 +109,7 @@ export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic
 export function sessionTarget(d: Daemon, s: Session | null): ChatRef | null {
   const user = s ? d.userIdOf(s) : null
   if (user) return s!.lastChat ?? { chatId: user, isPrivate: true }
+  if (s?.group) return { chatId: s.group.chatId, isPrivate: false }
   if (s?.topic) return { chatId: s.topic.chatId, threadId: s.topic.threadId, isPrivate: false }
   if (s?.lastChat) return s.lastChat
   const o = owner()
@@ -665,7 +673,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     await sendConnectCard(d, m[1], c).catch(err => d.log(`connect card failed: ${err}`))
   })
 
-  bot.on('my_chat_member', async ctx => {
+  bot.on('my_chat_member', async (ctx, next) => {
     const upd = ctx.myChatMember
     const chatId = String(upd.chat.id)
     const gone = upd.new_chat_member.status === 'left' || upd.new_chat_member.status === 'kicked'
@@ -674,6 +682,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
       disconnectGroup(d)
       if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
     }
+    return next()
   })
 
   // Users can create topics by hand; keep the registry in sync.
