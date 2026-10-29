@@ -237,7 +237,7 @@ claude plugin update telegram-bewitched@bewitched
 | `LAUNCH_REMIND_SEC` | `180` | Если запущенная сессия не подключилась за столько секунд (и ещё раз через 5×), владельцу приходит напоминание с «✅ Подтвердить запуск», пользователю — что его сессию подтверждают (0 — не напоминать) |
 | `TMUX_SESSION` | `claude` | Сессия tmux для новых окон |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Голос: расшифровка входящих и ответы голосом — см. [docs/voice.md](docs/voice.md), установка `bewitched voice install` |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<telegram id>` (сессия пользователя) или `-n claude-topic-<топик>` (проект); так же называется окно tmux |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Команда запуска новой сессии. Бот добавляет `-n claude-<telegram id>` (сессия пользователя) или `-n claude-<id группы>-<id топика>` (проект, как папка); так же называется окно tmux |
 
 Доступ (pairing, allowlist, группы) — как у официального плагина, см. [ACCESS.md](ACCESS.ru.md) и `/telegram-bewitched:access`.
 

@@ -236,7 +236,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `BOT_LANGUAGE` | `ru` | Idioma de la interfaz por defecto (`ru`, `en`, `es`, `zh`, `fr`, `de`) cuando ni el chat ni el propietario eligieron uno y no se conoce el idioma de Telegram del usuario |
 | `TMUX_SESSION` | `claude` | La sesión de tmux para las ventanas nuevas |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voz: transcripción de mensajes entrantes y respuestas con voz; ver [docs/voice.md](docs/voice.md), instalación con `bewitched voice install` |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-<telegram id>` (sesión de usuario) o `-n claude-topic-<tema>` (proyecto); la ventana de tmux recibe el mismo nombre |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-<telegram id>` (sesión de usuario) o `-n claude-<id de grupo>-<id de tema>` (proyecto, como la carpeta); la ventana de tmux recibe el mismo nombre |
 
 El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.es.md) y `/telegram-bewitched:access`.
 
