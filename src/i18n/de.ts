@@ -628,6 +628,9 @@ const dict: Dict = {
   "{m} мин {r} с": "{m} Min. {r} s",
   "{m} мин": "{m} Min.",
   "{h} ч {m} мин": "{h} Std. {m} Min.",
+  "⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.": "⏳ Sitzung <b>{v}</b> (Fenster {v2}) wartet auf die Bestätigung des Starts – bis dahin erreichen sie keine Nachrichten.",
+  "⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.": "⏳ Sitzung <b>{v}</b> (Fenster {v2}) wurde gestartet, hat sich aber nie verbunden. Sehen Sie nach, was auf dem Bildschirm steht.",
+  "⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.": "⏳ Ihre Sitzung wird auf dem Server noch bestätigt – die Nachricht geht nicht verloren und kommt an, sobald sie verbunden ist.",
 }
 
 export default dict
