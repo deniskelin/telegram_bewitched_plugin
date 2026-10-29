@@ -956,11 +956,14 @@ describe('remove user', () => {
     d.store.addMessage({ chat_id: '888', thread_id: null, message_id: 1, direction: 'in', from_id: '888', from_name: 'bob', date: 1, text: 'hi', kind: 'text', file_id: null, reply_to: null, quote: null, forward: null })
     d.store.addPending(userPendingKey('888'), 'queued', {})
     addReminder(d, { chatId: '888', text: 'r', at: Date.now() + 3600_000, daily: false, userId: '888' })
+    // A stand-in for Claude Code: on SIGTERM it writes its last transcript lines, then exits.
+    const claude = Bun.spawn(['bun', '-e', `const fs = require('fs'); process.on('SIGTERM', () => setTimeout(() => { fs.mkdirSync(${JSON.stringify(tr)}, { recursive: true }); fs.writeFileSync(${JSON.stringify(tr)} + '/last.jsonl', '{}'); process.exit(0) }, 300)); setInterval(() => {}, 1000)`])
+    await Bun.sleep(300)
     const killed: string[] = []
-    d.tmuxKillWindow = async t => { killed.push(t) }
+    d.tmuxKillWindow = async t => { killed.push(t); claude.kill('SIGTERM') }
     process.env.USER_SESSIONS = 'on'
     const c = new FakeClient()
-    await c.connect({ cwd: dir, projectRoot: dir, tmuxPane: '%31', claudePid: 8888 })
+    await c.connect({ cwd: dir, projectRoot: dir, tmuxPane: '%31', claudePid: claude.pid })
     const s = d.userSession('888')!
 
     tg.push(callbackQuery(`sm:s:${s.id}`))
@@ -977,7 +980,7 @@ describe('remove user', () => {
     expect(loadAccess().allowFrom).toContain('888')
 
     tg.push(callbackQuery('ur:kick:888'))
-    const res = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 <b>bob (888)</b> удалён.'))
+    const res = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 <b>bob (888)</b> удалён.'), 8000)
     expect(String(res.body.text)).toContain('✅ исключён из группы')
     expect(loadAccess().allowFrom).not.toContain('888')
     expect(killed).toEqual(['%31'])

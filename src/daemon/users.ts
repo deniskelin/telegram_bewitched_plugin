@@ -16,6 +16,7 @@ import { show } from './menu.ts'
 import { listReminders } from './reminders.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
+import { isAlive } from '../proc.ts'
 import { t } from '../i18n/index.ts'
 
 function isPrimaryOwner(ctx: Context): boolean {
@@ -47,6 +48,15 @@ function fmtSize(n: number): string {
 
 function label(d: Daemon, id: string): string {
   return d.userLabel(id)
+}
+
+const REMOVE_RECHECK_MS = 1000
+
+/** Wait up to ms for a process to exit; true when it is gone (or unknown). */
+async function waitExit(pid: number | null, ms = 10_000): Promise<boolean> {
+  if (!pid) return true
+  for (const end = Date.now() + ms; Date.now() < end; await Bun.sleep(200)) if (!isAlive(pid)) return true
+  return !isAlive(pid)
 }
 
 /** What removal will touch, for the confirmation. */
@@ -89,6 +99,8 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
   if (s?.tmuxPane) {
     d.ending.add(s.id) // planned: no "session stopped" notice
     await d.tmuxKillWindow(s.tmuxPane).then(() => done.push(t('✅ сессия #{id} и окно tmux закрыты', { id: s.id })), err => done.push(t('⚠️ окно tmux: {v}', { v: escapeHtml(String(err)) })))
+    // Claude Code writes its last transcript lines while exiting: deleting before that recreates the folder.
+    if (!(await waitExit(s.claudePid))) done.push(t('⚠️ процесс Claude Code ({pid}) ещё не завершился — транскрипты могут появиться снова', { pid: s.claudePid ?? '?' }))
   } else if (s) done.push(t('⚠️ сессия #{id} не в tmux — закройте её сами', { id: s.id }))
 
   const dir = userDir(id)
@@ -104,6 +116,9 @@ export async function removeUser(d: Daemon, id: string, o: { kick?: boolean } = 
         done.push(`⚠️ ${what}: ${escapeHtml(String(err))}`)
       }
     }
+    // A last write that raced the exit: check once more.
+    await Bun.sleep(REMOVE_RECHECK_MS)
+    if (existsSync(tr)) rmSync(tr, { recursive: true, force: true })
   }
 
   const msgs = d.store.forgetThread(id, null)
