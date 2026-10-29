@@ -1394,6 +1394,81 @@ describe('convenience', () => {
   })
 })
 
+describe('ordinary groups as projects', () => {
+  const g1 = '-200700', g2 = '-200701'
+  test('an allowed group is bound from the owner DM: new project, its session answers there; «not a project» goes to main; unbind', async () => {
+    const { loadAccess, saveAccess } = await import('../src/access.ts')
+    const { groupBinding } = await import('../src/daemon/groups.ts')
+    const a = loadAccess()
+    a.groups[g1] = { requireMention: false, allowFrom: [], allowPaired: true }
+    a.groups[g2] = { requireMention: false, allowFrom: [], allowPaired: true }
+    saveAccess(a)
+    const dir = join(settings.projectsDir, 'Test-Group')
+    const launchedBefore = launched.length
+
+    // Unbound: queued, the group hears once, the owner gets a card in DM.
+    tg.push(textMessage({ chat: Number(g1), text: 'привет, проект' }))
+    const card = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).startsWith('👥 Группа <b>Test Group</b>'))
+    expect(JSON.stringify(card.body.reply_markup)).toContain(`gp:new:${g1}`)
+    await tg.waitFor('sendMessage', c => String(c.body.chat_id) === g1 && String(c.body.text).startsWith('⏳ Владелец ещё не настроил'))
+    tg.push(textMessage({ chat: Number(g1), text: 'второе' }))
+    await Bun.sleep(300)
+    expect(tg.callsOf('sendMessage').filter(c => c.body.chat_id === '111' && String(c.body.text).startsWith('👥 Группа')).length).toBe(1)
+
+    // 📁 New project: bound, folder created, the session launched; the owner confirms in DM.
+    tg.push(callbackQuery(`gp:new:${g1}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Группа <b>Test Group</b> — проект'))
+    expect(groupBinding(d, g1)).toEqual({ dir, title: 'Test Group' })
+    expect(existsSync(dir)).toBe(true)
+    expect(launched.slice(launchedBefore)).toContain(dir)
+    await tg.waitFor('sendMessage', c => String(c.body.chat_id) === g1 && String(c.body.text).startsWith('🚀 Запускаю сессию проекта'))
+
+    // The session connects: no topic, it answers in the group, the queued messages arrive.
+    const topicsBefore = tg.callsOf('createForumTopic').length
+    const c = new FakeClient()
+    await c.connect({ cwd: dir, projectRoot: dir, claudePid: 7007 })
+    try {
+      const resume = await c.inbound(m => m.meta.event === 'session_resume')
+      expect(resume.content).toContain('привет, проект')
+      expect(resume.content).toContain('второе')
+      expect(resume.meta.chat_id).toBe(g1)
+      expect(tg.callsOf('createForumTopic').length).toBe(topicsBefore)
+      const s = [...d.sessions.values()].find(x => x.projectKey === dir)!
+      expect(s.group).toEqual({ chatId: g1, title: 'Test Group' })
+      tg.push(textMessage({ chat: Number(g1), text: 'дальше' }))
+      expect((await c.inbound(m => m.content === 'дальше')).meta.chat_id).toBe(g1)
+      expect((await c.call('reply', { chat_id: g1, text: 'ответ в группу' })).ok).toBe(true)
+      await tg.waitFor('sendMessage', x => String(x.body.chat_id) === g1 && x.body.text === 'ответ в группу')
+
+      // Permission requests of a group's project go to the owner only, never to the group.
+      c.sock.write(encode({ t: 'perm_req', request_id: 'mnopq', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
+      await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 Test-Group: Bash'))
+      expect(tg.callsOf('sendMessage').some(x => String(x.body.chat_id) === g1 && String(x.body.text).startsWith('🔐'))).toBe(false)
+
+      // The card shows the group; unbinding asks first.
+      tg.push(callbackQuery(`sm:s:${s.id}`))
+      const sc = await tg.waitFor('editMessageText', x => String(x.body.text).includes('👥 группа «Test Group»'))
+      expect(JSON.stringify(sc.body.reply_markup)).toContain(`gp:unbind:${g1}`)
+      tg.push(callbackQuery('gp:list'))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('👥 <b>Группы</b>') && String(x.body.text).includes('Test-Group'))
+      tg.push(callbackQuery(`gp:unbind:${g1}`))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('Отвязать группу <b>Test Group</b>'))
+      tg.push(callbackQuery(`gp:unbok:${g1}`))
+      await tg.waitFor('answerCallbackQuery', x => x.body.text === '🚫 Отвязано')
+      expect(groupBinding(d, g1)).toBeNull()
+    } finally {
+      c.close()
+    }
+
+    // 🚫 Not a project: what waited goes to the main session, and so does what comes next.
+    tg.push(textMessage({ chat: Number(g2), text: 'в главную' }))
+    await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).includes(`<code>${g2}</code>`))
+    tg.push(callbackQuery(`gp:none:${g2}`))
+    await tg.waitFor('editMessageText', x => String(x.body.text).includes('не проект'))
+    expect(groupBinding(d, g2)).toEqual({ dir: null, title: 'Test Group' })
+  })
+})
+
 describe('languages', () => {
   test('/lang and ⚙️ switch the chat language; /menu follows it; commands per language', async () => {
     tg.push(textMessage({ text: '/lang en' }))

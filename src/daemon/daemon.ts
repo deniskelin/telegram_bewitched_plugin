@@ -45,6 +45,8 @@ export type Session = {
   lastActivity: number
   status: 'idle' | 'working' | 'waiting'
   topic: { chatId: string; threadId: number; name: string } | null
+  /** An ordinary group bound to this session's project (groups.ts): the session answers there. */
+  group: { chatId: string; title: string } | null
   lastChat: ChatRef | null
   turn: { start: number; replied: boolean } | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
@@ -274,6 +276,7 @@ export class Daemon {
       lastActivity: Date.now(),
       status: 'idle',
       topic: null,
+      group: null,
       lastChat: null,
       turn: null,
       notes: [],

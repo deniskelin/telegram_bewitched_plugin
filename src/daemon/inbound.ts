@@ -9,7 +9,7 @@ import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { dmCommandGate, gate, isOwner, loadAccess, prefsFor } from '../access.ts'
+import { dmCommandGate, gate, isOwner, loadAccess, owner, prefsFor } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
 import { toWav16k } from '../voice/audio.ts'
@@ -30,6 +30,7 @@ import { handleInviteCallback, registerInviteCommands } from './invite.ts'
 import { handleUserCallback, registerUserCommands } from './users.ts'
 import { handleTopicMenu } from './topicmenu.ts'
 import { handleCiCallback } from './events.ts'
+import { askOwnerAboutGroup, groupBinding, groupPendingKey, handleGroupCallback, isProjectGroup, launchForGroup, registerGroupHandlers } from './groups.ts'
 import { handleMacroCallback, registerMacroCommands } from './macros.ts'
 import { addProjectRule, projectRules } from './permrules.ts'
 import { handleServerCallback, registerServerCommands } from './server.ts'
@@ -84,6 +85,10 @@ type Target =
   | { kind: 'main_offline' }
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
+  /** An ordinary group the owner hasn't decided about yet (groups.ts). */
+  | { kind: 'group_unbound'; chatId: string }
+  /** An ordinary group's project without a running session. */
+  | { kind: 'group_launch'; chatId: string; projectKey: string }
 
 function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
@@ -104,6 +109,15 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
     if (settings.userSessions) return userTarget(d, fromId)
     if (main) return { kind: 'session', session: main, fallback: true }
     return { kind: 'unbound' }
+  }
+  // An ordinary group: its project's session, or ask the owner what it is.
+  if (!chat.isPrivate && isProjectGroup(d, chatId)) {
+    const g = groupBinding(d, chatId)
+    if (!g) return { kind: 'group_unbound', chatId }
+    if (g.dir) {
+      const s = d.sessionForProject(g.dir)
+      return s ? { kind: 'session', session: s, projectKey: g.dir } : { kind: 'group_launch', chatId, projectKey: g.dir }
+    }
   }
   // DMs and General: the author's own session; without user sessions, the main one.
   if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
@@ -138,6 +152,12 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
       return
     case 'unbound':
       return
+    case 'group_unbound':
+      d.store.addPending(groupPendingKey(target.chatId), text, meta)
+      return void askOwnerAboutGroup(d, target.chatId).catch(err => d.log(`group card failed: ${err}`))
+    case 'group_launch':
+      d.store.addPending(target.projectKey, text, meta)
+      return launchForGroup(d, target.chatId, target.projectKey)
   }
 }
 
@@ -280,6 +300,17 @@ async function handleInbound(
     } : {}),
   }
 
+  if (target.kind === 'group_unbound') {
+    d.store.addPending(groupPendingKey(chatId), text, meta)
+    const asked = await askOwnerAboutGroup(d, chatId, 'title' in ctx.chat! ? ctx.chat.title : undefined).catch(() => false)
+    if (asked) await reply(tr('⏳ Владелец ещё не настроил эту группу — сообщение сохранено и дойдёт, когда он решит.'))
+    return
+  }
+  if (target.kind === 'group_launch') {
+    d.store.addPending(target.projectKey, text, meta)
+    void launchForGroup(d, chatId, target.projectKey).catch(err => d.log(`group launch failed: ${err}`))
+    return
+  }
   if (target.kind === 'offline') {
     d.store.addPending(target.projectKey, text, meta)
     await reply(tr('💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.'))
@@ -369,7 +400,8 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   if (toTopic) void d.bot.api.sendMessage(s.topic!.chatId, text, { message_thread_id: s.topic!.threadId, reply_markup: kb }).catch(err => d.log(`permission → topic failed: ${err}`))
   // A user's session asks only that user.
   const user = d.userIdOf(s)
-  const dmTo = user ? [user] : loadAccess().allowFrom
+  // A group's project asks only the owner: group members don't see or answer it.
+  const dmTo = user ? [user] : s.group ? [owner()].filter((x): x is string => !!x) : loadAccess().allowFrom
   if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
@@ -451,6 +483,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   registerServerCommands(d, bot)
   registerHubCommands(d, bot)
   registerMacroCommands(d, bot)
+  registerGroupHandlers(d, bot)
   // Pairing approvals dropped by the access skill into approved/<senderId>.
   setInterval(() => {
     let files: string[]
@@ -527,6 +560,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleHubCallback(d, ctx, data)) return
     if (await handleMacroCallback(d, ctx, data)) return
     if (await handleCiCallback(d, ctx, data)) return
+    if (await handleGroupCallback(d, ctx, data)) return
     if (await handleSessionMenu(d, ctx, data)) return
     if (await handleTopicMenu(d, ctx, data)) return
     if (await handleTopicCallback(d, ctx, data)) return
