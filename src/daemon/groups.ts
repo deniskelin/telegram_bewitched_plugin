@@ -25,6 +25,7 @@ import { inChat } from './lang.ts'
 import { attachTarget, confirmHint, endSession, idProjectDir, launchOnce, manualCmd, screenKb, sessionName } from './launch.ts'
 import { show, type Screen } from './menu.ts'
 import { button } from './stream.ts'
+import { journal, journalText, sendNotice, who } from './journal.ts'
 
 /** dir null: "not a project" — the main session answers, as before. */
 export type GroupBinding = { dir: string | null; title: string }
@@ -135,7 +136,7 @@ export async function launchForGroup(d: Daemon, chatId: string, dir: string): Pr
     return
   }
   await inChat(d, chatId, undefined, () => say(chatId, t('❌ Не удалось запустить сессию проекта. Сообщение сохранено.')))
-  if (o) await inChat(d, o, undefined, () => say(o, t('❌ Группа «{title}»: не удалось запустить сессию: {err}', { title: escapeHtml(groupBinding(d, chatId)?.title ?? chatId), err: escapeHtml(r.error) }) + manualCmd(dir, { name: sessionName(d, dir) })))
+  await sendNotice(d, 'sessions', () => t('❌ Группа «{title}»: не удалось запустить сессию: {err}', { title: escapeHtml(groupBinding(d, chatId)?.title ?? chatId), err: escapeHtml(r.error) }) + manualCmd(dir, { name: sessionName(d, dir) }))
 }
 
 /** Bind and hand over what waited: to the project (launching its session) or to the main session. */
@@ -184,9 +185,14 @@ export function registerGroupHandlers(d: Daemon, bot: Bot): void {
     const upd = ctx.myChatMember
     const chatId = String(upd.chat.id)
     const added = ['member', 'administrator'].includes(upd.new_chat_member.status) && ['left', 'kicked'].includes(upd.old_chat_member.status)
+    const gone = ['left', 'kicked'].includes(upd.new_chat_member.status) && ['member', 'administrator', 'restricted'].includes(upd.old_chat_member.status)
+    const title = ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId
+    if (chatId.startsWith('-') && chatId !== settings.journalChatId && (added || gone)) {
+      const by = who(upd.from)
+      void journal(d, 'access', () => added ? journalText.added(title, chatId, by) : journalText.removed(title, chatId, by))
+    }
     const o = owner()
-    if (added && o && chatId.startsWith('-') && !d.isTopicsChat(chatId) && !groupBinding(d, chatId)) {
-      const title = ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId
+    if (added && o && chatId.startsWith('-') && chatId !== settings.journalChatId && !d.isTopicsChat(chatId) && !groupBinding(d, chatId)) {
       if (isProjectGroup(d, chatId)) await askOwnerAboutGroup(d, chatId, title)
       else await inChat(d, o, undefined, () => d.bot.api.sendMessage(o, t('👥 Бота добавили в группу «{title}» (<code>{chat}</code>). Она не разрешена — бот там молчит. Разрешить можно в терминале:', { title: escapeHtml(title), chat: chatId }) + `\n<code>/telegram-bewitched:access group add ${chatId}</code>`, { parse_mode: 'HTML' })).catch(() => {})
     }

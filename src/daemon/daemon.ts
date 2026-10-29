@@ -21,6 +21,7 @@ import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
 import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { sendNotice } from './journal.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -503,13 +504,12 @@ export class Daemon {
     }
   }
 
-  /** DM the owner (sending works even while another process holds getUpdates). At most once per 10 min. */
+  /** Warn the owner, in the journal if there is one (sending works even while another process holds getUpdates). At most once per 10 min. */
   private lastWarn = 0
   warnOwner(text: string): void {
-    const o = owner()
-    if (!o || Date.now() - this.lastWarn < 600_000) return
+    if (Date.now() - this.lastWarn < 600_000) return
     this.lastWarn = Date.now()
-    void this.bot.api.sendMessage(o, text).catch(() => {})
+    void sendNotice(this, 'daemon', () => text, () => ({ parse_mode: undefined }))
   }
 
   isPolling(): boolean {

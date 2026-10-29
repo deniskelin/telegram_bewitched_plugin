@@ -25,6 +25,7 @@ import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
 import { inChat, inSession } from './lang.ts'
 import { projectTitle } from './report.ts'
+import { sendNotice } from './journal.ts'
 
 /**
  * session: -n <name> and the tmux name; user: whose session it was; sent: the
@@ -59,7 +60,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
     d.store.setTopicStatus(chat!, topic.thread_id, 'waiting')
     await d.bot.api.closeForumTopic(chat!, topic.thread_id).catch(err => d.log(`closeForumTopic failed: ${err}`))
   }
-  await announce(d, restart, id, tr('⚠️ Сессия <b>{v}</b> (#{id}) остановилась.', { v: escapeHtml(name), id: s.id }), !topic || topic.status !== 'active')
+  await announce(d, restart, id, () => tr('⚠️ Сессия <b>{v}</b> (#{id}) остановилась.', { v: escapeHtml(name), id: s.id }), !topic || topic.status !== 'active')
 }
 
 /**
@@ -67,7 +68,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
  * перезапуск» (when tellUser), the owner the commands and 🚀. Saved under
  * wd:<id> with the sent message ids.
  */
-async function announce(d: Daemon, r: Restart, id: string, ownerHead: string, tellUser: boolean): Promise<void> {
+async function announce(d: Daemon, r: Restart, id: string, ownerHead: () => string, tellUser: boolean): Promise<void> {
   const o = owner()
   const sent: { chat: string; id: number }[] = []
   if (tellUser && r.user && r.user !== o) {
@@ -76,10 +77,8 @@ async function announce(d: Daemon, r: Restart, id: string, ownerHead: string, te
     const m = await d.bot.api.sendMessage(user, inChat(d, user, undefined, () => tr('⚠️ Ваша сессия остановилась. Можно попросить владельца бота запустить её заново.')), { parse_mode: 'HTML', reply_markup: ask }).catch(err => { d.log(`watchdog notice failed: ${err}`); return null })
     if (m) sent.push({ chat: user, id: m.message_id })
   }
-  if (o) {
-    const m = await d.bot.api.sendMessage(o, ownerNotice(r, ownerHead), { parse_mode: 'HTML', reply_markup: runKb(id) }).catch(err => { d.log(`watchdog notice failed: ${err}`); return null })
-    if (m) sent.push({ chat: o, id: m.message_id })
-  }
+  const n = await sendNotice(d, 'sessions', () => ownerNotice(r, ownerHead()), () => ({ reply_markup: runKb(id) }))
+  if (n) sent.push({ chat: n.chat, id: n.msg.message_id })
   d.store.set(`wd:${id}`, JSON.stringify({ ...r, sent }))
 }
 
@@ -118,9 +117,7 @@ export async function renotifyStopped(d: Daemon): Promise<void> {
     for (const m of r.sent ?? []) await d.bot.api.deleteMessage(m.chat, m.id).catch(() => {})
     const user = /^(\d+)$/.exec(relative(settings.usersDir, r.dir))?.[1]
     const fresh: Restart = { ...r, user, session: sessionName(d, r.dir), sent: undefined, v: 2 }
-    const o = owner()
-    const head = o ? inChat(d, o, undefined, () => tr('⚠️ Сессия <b>{v}</b> остановилась.', { v: escapeHtml(r.name) })) : ''
-    await inChat(d, o ?? '', undefined, () => announce(d, fresh, key.slice(3), head, true))
+    await announce(d, fresh, key.slice(3), () => tr('⚠️ Сессия <b>{v}</b> остановилась.', { v: escapeHtml(r.name) }), true)
   }
 }
 
@@ -167,10 +164,11 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
   const r = JSON.parse(raw) as Restart
   if (d.activeSessions().some(s => s.cwd === r.dir)) { await answer(tr('Сессия уже работает.')); return true }
   if (m[1] === 'ask') {
-    const o = owner()
-    if (String(ctx.from.id) !== r.user || !o) { await answer(tr('Нет доступа.')); return true }
-    const req = await d.bot.api.sendMessage(o, ownerNotice(r, tr('🙋 {v} просит перезапустить свою сессию.', { v: escapeHtml(r.name) })), { parse_mode: 'HTML', reply_markup: runKb(m[2]) })
-    d.store.set(`wd:${m[2]}`, JSON.stringify({ ...r, sent: [...(r.sent ?? []), { chat: o, id: req.message_id }] }))
+    // A user's request waits for the owner: their DM.
+    const out = owner()
+    if (String(ctx.from.id) !== r.user || !out) { await answer(tr('Нет доступа.')); return true }
+    const req = await d.bot.api.sendMessage(out, inChat(d, out, undefined, () => ownerNotice(r, tr('🙋 {v} просит перезапустить свою сессию.', { v: escapeHtml(r.name) }))), { parse_mode: 'HTML', reply_markup: inChat(d, out, undefined, () => runKb(m[2])) })
+    d.store.set(`wd:${m[2]}`, JSON.stringify({ ...r, sent: [...(r.sent ?? []), { chat: out, id: req.message_id }] }))
     await answer(tr('🙋 Запрос отправлен'))
     await ctx.editMessageText(tr('⚠️ Ваша сессия остановилась.\n🙋 Запрос на перезапуск отправлен владельцу бота. Сообщения, которые вы напишете, дойдут, когда она подключится.'), { parse_mode: 'HTML' }).catch(() => {})
     return true

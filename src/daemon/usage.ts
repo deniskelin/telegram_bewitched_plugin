@@ -18,6 +18,8 @@ import { isMessageNotModified } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { commitsSince } from './git.ts'
 import { locale, k, t as tr } from '../i18n/index.ts'
+import { noticeTarget, sendNotice } from './journal.ts'
+import { inChat } from './lang.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -453,9 +455,9 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
     const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
     // The reset timer (below) already said so, on the minute; this is the fallback if it didn't run.
     if (prev.level > 0 && level === 0 && !prev.notified) {
-      await d.bot.api.sendMessage(to, tr('✅ Лимит «{v}» восстановился: {v2}% {v3}', { v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent) }), { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+      await sendNotice(d, 'limits', () => tr('✅ Лимит «{v}» восстановился: {v2}% {v3}', { v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent) }))
     } else if (level > (newWindow ? 0 : prev.level)) {
-      await d.bot.api.sendMessage(to, alertText(l, level, now), { parse_mode: 'HTML', reply_markup: alertKb(i) }).catch(err => d.log(`limit notice failed: ${err}`))
+      await sendNotice(d, 'limits', () => alertText(l, level, now), () => ({ reply_markup: alertKb(i) }))
     }
     d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
     // Over a threshold: say "tokens are back" exactly when the window resets.
@@ -515,15 +517,14 @@ export async function fireWarmup(d: Daemon, key: string): Promise<void> {
   warmupTimers.delete(key)
   if (!warmupOn(d) || d.store.get('limit_warmup_done') === key) return
   d.store.set('limit_warmup_done', key)
-  const to = owner()
   try {
     await runWarmup()
     d.log('limit warmup: the 5-hour window started')
     const ends = new Date(Date.now() + 5 * 3600_000).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
-    if (to) await d.bot.api.sendMessage(to, tr('⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.', { time: ends }), { disable_notification: true }).catch(() => {})
+    await sendNotice(d, 'limits', () => tr('⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.', { time: ends }), () => ({ parse_mode: undefined, disable_notification: true }))
   } catch (err) {
     d.log(`limit warmup failed: ${err}`)
-    if (to) await d.bot.api.sendMessage(to, tr('⚠️ Не удалось запустить окно после сброса: {err}', { err: escapeHtml(String(err instanceof Error ? err.message : err)).slice(0, 300) }), { parse_mode: 'HTML', disable_notification: true }).catch(() => {})
+    await sendNotice(d, 'limits', () => tr('⚠️ Не удалось запустить окно после сброса: {err}', { err: escapeHtml(String(err instanceof Error ? err.message : err)).slice(0, 300) }), () => ({ disable_notification: true }))
   }
 }
 
@@ -540,8 +541,7 @@ async function checkShares(d: Daemon, to: string, limits: Limits, now: number): 
     if (d.store.get(key) === windowKey) continue
     d.store.set(key, windowKey)
     const reset = ws.limit.resetsAt ? `\n${fmtReset(ws.limit.resetsAt, now)}` : ''
-    await d.bot.api.sendMessage(to, tr('👥 {v} израсходовал(а) ≈<b>{v2}%</b> окна «{v3}» (всего занято {v4}%).{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }), { parse_mode: 'HTML' })
-      .catch(err => d.log(`share notice failed: ${err}`))
+    await sendNotice(d, 'limits', () => tr('👥 {v} израсходовал(а) ≈<b>{v2}%</b> окна «{v3}» (всего занято {v4}%).{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }))
   }
 }
 
@@ -565,6 +565,7 @@ export function scheduleResetNotice(d: Daemon, label: string, resetsAt: Date, no
 
 async function fireResetNotice(d: Daemon, label: string, key: string): Promise<void> {
   resetTimers.delete(key)
+  // A reminder the owner asked for in /usage: their DM, not the journal.
   const to = owner()
   if (!to) return
   // Asked for in /usage for this window (maybe silently): done now.
@@ -757,14 +758,16 @@ export async function digestReport(d: Daemon, now = Date.now()): Promise<string>
 export function startDigest(d: Daemon): void {
   setInterval(() => {
     const at = settings.digestAt
-    const to = owner()
-    if (!at || !to) return
+    if (!at || !owner()) return
     const now = new Date()
     const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     const key = `digest:${now.toDateString()}`
     if (hm < at || d.store.get(key)) return
     d.store.set(key, '1')
-    void digestReport(d).then(text => d.bot.api.sendMessage(to, text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } }))
-      .catch(err => d.log(`digest failed: ${err}`))
+    void (async () => {
+      const to = await noticeTarget(d, 'reports')
+      if (!to) return
+      await inChat(d, to.chat, to.thread, async () => d.bot.api.sendMessage(to.chat, await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...(to.thread != null ? { message_thread_id: to.thread } : {}) }))
+    })().catch(err => d.log(`digest failed: ${err}`))
   }, 60_000).unref?.()
 }

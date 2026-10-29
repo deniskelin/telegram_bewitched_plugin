@@ -14,6 +14,8 @@ import { commitsSince } from './git.ts'
 import { button } from './stream.ts'
 import { add, collectEntries, fmtSum, fmtTok, limitsLine, ownerOf, type Entry, type Sum } from './usage.ts'
 import { locale, k, t } from '../i18n/index.ts'
+import { noticeTarget } from './journal.ts'
+import { inChat } from './lang.ts'
 
 export type Kind = 'day' | 'week' | 'month'
 const KINDS: Kind[] = ['day', 'week', 'month']
@@ -176,10 +178,11 @@ export async function buildReport(d: Daemon, p: Period): Promise<Report> {
   return { caption: `📊 ${escapeHtml(title)}`, text: lines.join('\n'), png, svg }
 }
 
-async function sendReport(d: Daemon, chatId: string, r: Report): Promise<void> {
-  if (r.png) await d.bot.api.sendPhoto(chatId, new InputFile(r.png, 'report.png'), { caption: r.caption, parse_mode: 'HTML' })
-  else await d.bot.api.sendDocument(chatId, new InputFile(Buffer.from(r.svg), 'report.svg'), { caption: r.caption, parse_mode: 'HTML' })
-  await d.bot.api.sendMessage(chatId, r.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
+async function sendReport(d: Daemon, chatId: string, r: Report, thread?: number): Promise<void> {
+  const where = thread != null ? { message_thread_id: thread } : {}
+  if (r.png) await d.bot.api.sendPhoto(chatId, new InputFile(r.png, 'report.png'), { caption: r.caption, parse_mode: 'HTML', ...where })
+  else await d.bot.api.sendDocument(chatId, new InputFile(Buffer.from(r.svg), 'report.svg'), { caption: r.caption, parse_mode: 'HTML', ...where })
+  await d.bot.api.sendMessage(chatId, r.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...where })
 }
 
 // --------------------------------------------------------------------------
@@ -204,15 +207,15 @@ export function setReport(d: Daemon, kind: Kind, on: boolean): void {
 
 /** Send the reports whose period has ended and that are switched on. */
 export async function sendDueReports(d: Daemon, now = new Date()): Promise<void> {
-  const to = owner()
-  if (!to) return
+  if (!owner()) return
   const on = reportSettings(d)
   for (const kind of KINDS) {
     if (!on[kind]) continue
     const p = lastPeriod(kind, now)
     if (d.store.get(sentKey(p))) continue
     d.store.set(sentKey(p), '1')
-    await sendReport(d, to, await buildReport(d, p)).catch(err => d.log(`report ${kind} failed: ${err}`))
+    const to = await noticeTarget(d, 'reports')
+    if (to) await inChat(d, to.chat, to.thread, async () => sendReport(d, to.chat, await buildReport(d, p), to.thread)).catch(err => d.log(`report ${kind} failed: ${err}`))
   }
 }
 
