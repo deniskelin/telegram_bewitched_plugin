@@ -12,7 +12,7 @@ import { loadAccess, owner, saveAccess } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import type { Daemon } from './daemon.ts'
-import { screenKb, sessionName } from './launch.ts'
+import { screenKb, sessionName, watchLaunch } from './launch.ts'
 import { button } from './stream.ts'
 import { t, variants } from '../i18n/index.ts'
 
@@ -99,6 +99,7 @@ export async function onUserAdded(d: Daemon, id: string): Promise<void> {
       try {
         window = await d.launchSession(dir, { name: sessionName(d, dir) })
         d.launching.set(dir, Date.now())
+        watchLaunch(d, dir, window)
         done.push(t('🚀 Сессия <code>{v}</code> запускается в tmux (окно {v2}).', { v: escapeHtml(sessionName(d, dir) ?? ''), v2: escapeHtml(window) }))
       } catch (err) {
         done.push(t('⚠️ Сессию запустить не удалось ({v}) — она запустится сама по первому сообщению.', { v: escapeHtml(String(err instanceof Error ? err.message : err)) }))

@@ -14,6 +14,8 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { inChat } from './lang.ts'
+import { isChannelsPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -148,6 +150,38 @@ export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null }
 }
 
 // --------------------------------------------------------------------------
+// A launch nobody confirmed: remind the owner
+// --------------------------------------------------------------------------
+
+/**
+ * A launched session that hasn't connected after LAUNCH_REMIND_SEC (and again
+ * after 5× that) is most likely waiting on the development-channels prompt:
+ * the owner gets a reminder with «✅ Подтвердить запуск»; a user whose own
+ * session it is hears once that it is being confirmed. Nothing is pressed.
+ */
+export function watchLaunch(d: Daemon, dir: string, win: string): void {
+  const sec = settings.launchRemindSec
+  if (sec <= 0) return
+  for (const [i, after] of [sec, sec * 5].entries()) {
+    setTimeout(() => void remindLaunch(d, dir, win, i === 0).catch(err => d.log(`launch reminder failed: ${err}`)), after * 1000).unref?.()
+  }
+}
+
+export async function remindLaunch(d: Daemon, dir: string, win: string, first: boolean): Promise<void> {
+  if (d.activeSessions().some(s => s.cwd === dir)) return
+  const raw = await d.tmuxCapture(`${settings.tmuxSession}:${win}`)
+  const o = owner()
+  if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
+  const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
+  const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
+  const text = inChat(d, o, undefined, () => isChannelsPrompt(raw)
+    ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(win) })
+    : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(win) }))
+  await say(d, o, undefined, text, inChat(d, o, undefined, () => screenKb(win)))
+  if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')))
+}
+
+// --------------------------------------------------------------------------
 // Sessions on demand: a user's DM session, a project topic without a session
 // --------------------------------------------------------------------------
 
@@ -161,7 +195,9 @@ async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Lau
   if (at && Date.now() - at < RELAUNCH_MS) return { ok: false, skipped: true, error: '' }
   d.launching.set(dir, Date.now())
   try {
-    return { ok: true, window: await d.launchSession(dir, o) }
+    const window = await d.launchSession(dir, o)
+    watchLaunch(d, dir, window)
+    return { ok: true, window }
   } catch (err) {
     d.launching.delete(dir)
     return { ok: false, skipped: false, error: String(err instanceof Error ? err.message : err) }
@@ -279,6 +315,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   let win: string
   try {
     win = await d.launchSession(dir, { name: sessionName(d, dir) })
+    watchLaunch(d, dir, win)
   } catch (err) {
     await say(d, where.chatId, where.threadId, tr('❌ Не удалось запустить сессию в tmux: {v}', { v: escapeHtml(String(err instanceof Error ? err.message : err)) }))
     return
