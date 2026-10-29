@@ -15,6 +15,7 @@ import { notify } from './tools.ts'
 import { scheduleDashboard, sessionTarget } from './topics.ts'
 import { checkContext } from './menu.ts'
 import { inChat } from './lang.ts'
+import { classify, failureHint, onLimitFailure } from './outoftokens.ts'
 import { t } from '../i18n/index.ts'
 
 const MAX_BODY = 1024 * 1024
@@ -76,13 +77,21 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     }
     case 'Stop':
     case 'StopFailure':
-      onTurnEnd(d, s, h.event === 'StopFailure', typeof data.last_assistant_message === 'string' ? data.last_assistant_message : '')
+      onTurnEnd(d, s, h.event === 'StopFailure', typeof data.last_assistant_message === 'string' ? data.last_assistant_message : '', String(data.error ?? ''))
       break
   }
   scheduleDashboard(d)
 }
 
-function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string): void {
+function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, error = ''): void {
+  if (failed && classify(error, lastText)) {
+    // Out of tokens: the pause module tells the chat and holds what comes next.
+    s.turn = null
+    s.status = 'idle'
+    d.streams.close(s, 'stop')
+    void onLimitFailure(d, s, error, lastText).catch(err => d.log(`out-of-tokens failed: ${err}`))
+    return
+  }
   const turn = s.turn
   s.turn = null
   s.status = 'idle'
@@ -96,8 +105,9 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string): vo
   if (mode === 'off') return
   if (mode === 'long' && took < settings.notifyLongSec * 1000 && !failed) return
   const head = failed ? t('❌ Ход завершился с ошибкой ({took})', { took: fmtDuration(took) }) : t('✅ Готово за {took}', { took: fmtDuration(took) })
+  const hint = failed ? failureHint(error) : null
   const body = maskSecrets(lastText.trim())
-  const text = body ? `${head}\n\n${body.length > 300 ? body.slice(0, 299) + '…' : body}` : head
+  const text = [head, hint, body ? (body.length > 300 ? body.slice(0, 299) + '…' : body) : ''].filter(Boolean).join('\n\n')
   void notify(d, s, { text }).catch(err => d.log(`done notice failed: ${err}`))
 }
 
