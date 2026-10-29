@@ -68,9 +68,9 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 | **Demonio compartido** | Un proceso sondea Telegram para todas las sesiones. Varias sesiones de Claude Code y `claude -p` funcionan con un bot sin 409 Conflict. |
 | **Temas** | Conectas un supergrupo con foros desde el privado (`/connect_group`); cada proyecto tiene su tema. En General están el panel fijado y los comandos de control. |
 | **Tipos de sesión** | 👤 una sesión por usuario (su privado y sus mensajes en General), 📂 una sesión por proyecto en su tema. Las sesiones arrancan solas con el primer mensaje; un vigilante avisa de las que se detienen y ofrece un botón para reiniciarlas. |
-| **Progreso en vivo** | Mientras Claude trabaja: en privado, un borrador nativo con un bloque de «razonamiento»; en un tema, un mensaje «⏳ Trabajando…» que se actualiza con acciones y un botón **⏹ Detener** (interrumpe el turno vía tmux). |
+| **Progreso en vivo** | La respuesta aparece mientras se escribe (en privado como borrador, en grupos dentro del mensaje de progreso), se cambia por chat en «/menu → ⚙️». Mientras Claude trabaja: en privado, un borrador nativo con un bloque de «razonamiento»; en un tema, un mensaje «⏳ Trabajando…» que se actualiza con acciones y un botón **⏹ Detener** (interrumpe el turno vía tmux). |
 | **Botones de respuesta** | La herramienta `ask_user` y `reply(buttons)`: opciones con un toque; la respuesta vuelve a la sesión. |
-| **Proyectos desde temas** | Creas un tema en el grupo → carpeta `~/projects/<nombre>` y una nueva sesión de Claude en una ventana de tmux ligada a ese tema. O `/new_session <nombre\|ruta>`. El inicio se confirma con el botón «✅ Confirmar inicio». |
+| **Proyectos desde temas** | Creas un tema en el grupo → carpeta `~/projects/<id del grupo>-<id del tema>` (por id: los nombres repetidos o cambiados no chocan; el id del grupo sin el signo menos) y una nueva sesión de Claude en una ventana de tmux ligada a ese tema. O `/new_session <nombre\|ruta>`. El inicio se confirma con el botón «✅ Confirmar inicio». |
 | **Archivo** | «🗄 Archivar» en la ficha del proyecto en `/sessions`: la sesión termina y el tema se cierra. Reabres el tema y arranca una sesión nueva. Cerrar el tema en Telegram equivale a archivarlo. |
 | **Notificaciones** | `notify` sin mensaje entrante, «✅ Listo» automático tras un turno largo, `bewitched notify` y HTTP `/notify` para scripts y CI. |
 | **Panel `/menu`** | Un mensaje con botones para todo: sesiones, temas, estadísticas, personas, recordatorios, ajustes de este chat, ayuda. El menú de comandos de Telegram solo muestra `/menu`, `/sessions`, `/usage`, `/help`. |
@@ -152,12 +152,16 @@ Todo lo siguiente también está en botones en **`/menu`** (el menú de comandos
 
 `/usage` (solo el propietario): el plan de la suscripción de `~/.claude/.credentials.json`, los porcentajes de los límites (5 horas, semana) con hora de restablecimiento y el gasto de tokens de 5 horas, un día y 7 días en todos los transcripts a precios de API, por modelo y sesión. Los porcentajes vienen del endpoint **no documentado** de Anthropic `api/oauth/usage` (el mismo que llama `/usage` en Claude Code) con el token OAuth de la suscripción. Puede dejar de funcionar con cualquier actualización; entonces `/usage` mostrará solo datos locales. `USAGE_LIMITS=off` desactiva la consulta. Las secciones «Quién gasta», «Por modelo» y «Por sesión» muestran el periodo elegido con botones: 5 horas, día, semana o mes (para 5 horas y semana, «quién gasta» es la parte de la ventana de la suscripción; si no, la parte del gasto).
 
+## Varios grupos de temas
+
+El primer grupo conectado con `/connect_group` es el principal: General, el panel fijado y las sesiones de las personas. Conecta más con el mismo `/connect_group`: serán grupos de temas adicionales (por ejemplo, proyectos de trabajo y personales). En `/topics` → «🗂 Grupos de temas» cada grupo adicional recibe carpetas (marcadas de `PROJECTS_DIR`): un proyecto dentro de ellas tiene su tema ahí y el resto va al principal; los temas creados en un grupo adicional son sus proyectos al instante. `/topics` cambia de grupo con una fila de botones; «🔌 Desconectar» quita un grupo adicional.
+
 ## Grupos normales como proyectos
 
 Un grupo sin temas puede ser un proyecto propio: un chat familiar sobre una web, un chat de equipo sobre un servicio.
 
 1. Añade el bot al grupo y permítelo en la terminal: `/telegram-bewitched:access group add <id>` (el bot te indica el id al añadirlo; hasta entonces no habla allí). Por defecto el bot solo responde cuando se le menciona; `--no-mention` lo desactiva (también hay que desactivar el privacy mode en @BotFather; ver [ACCESS.md](ACCESS.es.md)).
-2. Con el primer mensaje del grupo el propietario recibe una ficha por privado: «📁 Nuevo» (`~/projects/<nombre del grupo>`), «📂 Elegir proyecto» (una carpeta existente) o «🚫 No es proyecto» (responde la sesión principal, como antes). Lo escrito en el grupo espera en cola mientras tanto.
+2. Con el primer mensaje del grupo el propietario recibe una ficha por privado: «📁 Nuevo» (`~/projects/<id del grupo>`), «📂 Elegir proyecto» (una carpeta existente) o «🚫 No es proyecto» (responde la sesión principal, como antes). Lo escrito en el grupo espera en cola mientras tanto.
 3. La sesión del proyecto se inicia en tmux (se confirma con «✅ Confirmar inicio» en tu privado), responde directamente en el grupo y muestra ahí su progreso. No tiene tema.
 
 Todo lo demás, desde el privado del propietario: la ficha de la sesión en `/sessions` (con «👥 Desvincular el grupo»), la lista en «/menu → 👥 Grupos». Las solicitudes de permiso de la sesión de un grupo van solo al propietario. Recordatorios, `/macro`, `/event` y avisos de CI funcionan en el grupo igual que en un tema.

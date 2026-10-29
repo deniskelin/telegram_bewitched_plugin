@@ -68,9 +68,9 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | **Shared daemon** | One process polls Telegram for all sessions. Several Claude Code sessions and `claude -p` work with one bot without 409 Conflict. |
 | **Topics** | Connect a forum supergroup from DM (`/connect_group`); each project gets its own topic. General holds the pinned control panel and control commands. |
 | **Session types** | 👤 a session for each user (their DM and their messages in General), 📂 a session per project in its topic. Sessions start by themselves on the first message; a watchdog reports stopped ones and offers a restart button. |
-| **Live progress** | While Claude works: in DM — a native draft with a «thinking» block; in a topic — an updating «⏳ Working…» message with actions and a **⏹ Stop** button (interrupts the turn via tmux). |
+| **Live progress** | The answer appears as it is written (in a DM draft, in groups inside the progress message), switchable per chat in «/menu → ⚙️». While Claude works: in DM — a native draft with a «thinking» block; in a topic — an updating «⏳ Working…» message with actions and a **⏹ Stop** button (interrupts the turn via tmux). |
 | **Answer buttons** | The `ask_user` tool and `reply(buttons)`: options by tap, the answer goes back to the session. |
-| **Projects from topics** | Create a topic in the group → a `~/projects/<name>` folder and a new Claude session in a tmux window bound to that topic. Or `/new_session <name\|path>`. The launch is confirmed with the «✅ Confirm launch» button. |
+| **Projects from topics** | Create a topic in the group → a `~/projects/<group id>-<topic id>` folder (by ids, so renamed or repeated titles never clash; the group id without its minus) and a new Claude session in a tmux window bound to that topic. Or `/new_session <name\|path>`. The launch is confirmed with the «✅ Confirm launch» button. |
 | **Archive** | «🗄 Archive» on the project card in `/sessions`: the session ends, the topic closes. Reopen the topic — a new session starts. Closing the topic in Telegram is the same as archiving. |
 | **Notifications** | `notify` with no incoming message, automatic «✅ Done» after a long turn, `bewitched notify` and HTTP `/notify` for scripts and CI. |
 | **The `/menu` panel** | One message with buttons for everything: sessions, topics, statistics, people, reminders, this chat's settings, help. Telegram's command menu shows only `/menu`, `/sessions`, `/usage`, `/help`. |
@@ -152,12 +152,16 @@ Everything below is also available as buttons in **`/menu`** (Telegram's command
 
 `/usage` (owner only): the subscription plan from `~/.claude/.credentials.json`, limit percentages (5 hours, week) with reset times, and token spending for 5 hours, a day and 7 days across all transcripts at API prices, by model and session. The percentages come from Anthropic's **undocumented** `api/oauth/usage` endpoint (the one `/usage` in Claude Code calls) with the subscription's OAuth token. It may stop working with any update; then `/usage` shows local data only. `USAGE_LIMITS=off` turns the request off. The «Who spends», «By model» and «By session» sections cover the period chosen with buttons: 5 hours, day, week or month (for 5 hours and a week «who spends» is a share of the subscription window, otherwise a share of spending).
 
+## Several topic groups
+
+The first group connected with `/connect_group` is the main one: General, the pinned panel and people's sessions. Connect more with the same `/connect_group` — they become extra topic groups (for example work and personal projects). In `/topics` → «🗂 Topic groups» each extra group gets folders (checked from `PROJECTS_DIR`): a project inside one gets its topic there, everything else goes to the main group; topics created in an extra group are its projects right away. `/topics` switches between groups with a row of buttons; «🔌 Disconnect» drops an extra group.
+
 ## Ordinary groups as projects
 
 A group without topics can be a project of its own — a family chat about a site, a team chat about a service.
 
 1. Add the bot to the group and allow it in the terminal: `/telegram-bewitched:access group add <id>` (the bot tells you the id when added; until then it stays silent there). By default the bot answers only when mentioned — `--no-mention` turns that off (and needs privacy mode disabled at @BotFather — see [ACCESS.md](ACCESS.md)).
-2. On the group's first message the owner gets a card in DM: «📁 New project» (`~/projects/<group name>`), «📂 Choose a project» (an existing folder) or «🚫 Not a project» (the main session answers, as before). What the group wrote waits in a queue meanwhile.
+2. On the group's first message the owner gets a card in DM: «📁 New project» (`~/projects/<group id>`), «📂 Choose a project» (an existing folder) or «🚫 Not a project» (the main session answers, as before). What the group wrote waits in a queue meanwhile.
 3. The project's session starts in tmux (confirmed with «✅ Confirm launch» in your DM), answers right in the group and shows its progress there. It gets no topic.
 
 Everything else is from the owner's DM: the session card in `/sessions` (with «👥 Unbind the group»), the list in «/menu → 👥 Groups». Permission requests of a group's session go only to the owner. Reminders, `/macro`, `/event` and CI notices work in the group as in a topic.

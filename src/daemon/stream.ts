@@ -20,6 +20,8 @@ import { t } from '../i18n/index.ts'
 
 const MAX_LINES = 12
 const MAX_TEXT = 1500
+/** The streamed answer may be longer: it becomes the reply. */
+const MAX_ANSWER = 3500
 const DRAFT_KEEPALIVE_MS = 20_000
 const TYPING_MS = 4_000
 
@@ -29,6 +31,8 @@ type Stream = {
   draftId: number
   lines: string[]
   text: string
+  /** Text since the last tool call: the answer as it is written. */
+  answer: string
   progressMsgId: number | null
   dirty: boolean
   lastFlush: number
@@ -69,6 +73,7 @@ export class Streams {
       draftId: 1 + Math.floor(Math.random() * 2_000_000_000),
       lines: [],
       text: '',
+      answer: '',
       progressMsgId: null,
       dirty: false,
       lastFlush: 0,
@@ -117,6 +122,7 @@ export class Streams {
   onTool(s: Session, line: string): void {
     const st = this.map.get(s.id)
     if (!st || st.closed) return
+    if (st.answer) { st.answer = ''; st.dirty = true }
     if (prefsFor(st.chat.chatId, st.chat.threadId).verbose < 1) return
     st.lines.push(line)
     if (st.lines.length > 50) st.lines.splice(0, st.lines.length - 50)
@@ -127,8 +133,10 @@ export class Streams {
   onText(s: Session, delta: string): void {
     const st = this.map.get(s.id)
     if (!st || st.closed) return
-    if (prefsFor(st.chat.chatId, st.chat.threadId).verbose < 2) return
-    st.text = (st.text + delta).slice(-8000)
+    const p = prefsFor(st.chat.chatId, st.chat.threadId)
+    if (p.streamAnswer) st.answer = (st.answer + delta).slice(-8000)
+    if (p.verbose >= 2) st.text = (st.text + delta).slice(-8000)
+    if (!p.streamAnswer && p.verbose < 2) return
     st.dirty = true
     this.schedule(s, st)
   }
@@ -147,8 +155,9 @@ export class Streams {
     const lines = st.lines.slice(-MAX_LINES)
     const hidden = st.lines.length - lines.length
     const thinking = (hidden > 0 ? t('… ещё {hidden}\n', { hidden }) : '') + lines.join('\n')
-    let body = maskSecrets(st.text.trim())
-    if (body.length > MAX_TEXT) body = '…' + body.slice(-MAX_TEXT)
+    // The answer being written wins over the model's running commentary.
+    let body = maskSecrets((st.answer || st.text).trim())
+    if (body.length > (st.answer ? MAX_ANSWER : MAX_TEXT)) body = '…' + body.slice(-(st.answer ? MAX_ANSWER : MAX_TEXT))
     return { thinking, body }
   }
 

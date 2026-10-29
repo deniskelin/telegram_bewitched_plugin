@@ -39,6 +39,8 @@ export type Prefs = {
   ttsVoice?: string
   /** Speech rate, 0.5–2 (1 = as synthesized). */
   ttsSpeed?: number
+  /** Stream the answer as it is written (the model writes it as text, then reply with use_last_message). */
+  streamAnswer?: boolean
   /** Interface language of the chat (ru, en, es, zh, fr, de); unset — the user's Telegram language or BOT_LANGUAGE. */
   lang?: string
 }
@@ -156,7 +158,7 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '' }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const

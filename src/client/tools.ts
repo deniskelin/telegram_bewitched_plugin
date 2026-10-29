@@ -27,7 +27,8 @@ export const TOOLS = [
       properties: {
         chat_id: chatId,
         message_thread_id: threadId,
-        text: { type: 'string' },
+        text: { type: 'string', description: 'The message. Omit it with use_last_message.' },
+        use_last_message: { type: 'boolean', description: 'Send the text you wrote since your last tool call as the reply (the user already watched it stream). Use when the inbound message has stream_answer="true".' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block only when replying to an earlier message.' },
         files: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths. Images go as photos, other types as documents. Max 50MB each.' },
         format: {
@@ -38,7 +39,7 @@ export const TOOLS = [
         buttons: optionsSchema,
         voice: { type: 'boolean', description: 'Also send the text as a voice message (TTS). The chat\'s /voice mode may voice replies on its own; this forces it.' },
       },
-      required: ['text'],
+      required: [],
     },
   },
   {

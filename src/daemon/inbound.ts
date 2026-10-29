@@ -93,7 +93,7 @@ type Target =
 function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
   const { chatId, threadId } = chat
-  if (chatId === d.topicsChatId && threadId != null) {
+  if (d.isTopicsChat(chatId) && threadId != null) {
     const t = d.store.topic(chatId, threadId)
     if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
@@ -120,7 +120,7 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
     }
   }
   // DMs and General: the author's own session; without user sessions, the main one.
-  if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
+  if (settings.userSessions && (chat.isPrivate || d.isTopicsChat(chatId))) return userTarget(d, fromId)
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
 }
 
@@ -242,7 +242,7 @@ async function handleInbound(
   const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
   // Unknown commands in General are not for Claude.
-  if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
+  if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
     await reply(tr('Этот топик не привязан к проекту, а главная сессия не запущена.'))
     return
@@ -403,7 +403,7 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   const text = `🔐 ${s.projectName}: ${p.tool_name}`
   const kb = permissionKb(p.request_id, p.tool_name, true)
   const mode = settings.permissionsTo
-  const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
+  const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict(s.topic.chatId)
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
   if (toTopic) void d.bot.api.sendMessage(s.topic!.chatId, text, { message_thread_id: s.topic!.threadId, reply_markup: kb }).catch(err => d.log(`permission → topic failed: ${err}`))
   // A user's session asks only that user.

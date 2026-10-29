@@ -59,10 +59,12 @@ export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic
     s.group = g
     return (s.topic = null)
   }
-  const chatId = d.topicsChatId
   // Only project sessions own a topic; user and main sessions live in DMs and General.
-  if (!chatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
+  if (!d.topicsChatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
   const { key, kind } = topicKey(s)
+  // An existing topic in any group wins; a new one goes to the group whose folders hold the project (FR-3).
+  const home = d.topicChats().find(c => d.store.topicForProject(c, key))
+  const chatId = home ?? d.topicsChatFor(s.projectKey)!
   let row = d.store.topicForProject(chatId, key)
   // Closed by the bot while the session was down: open it again.
   if (row && row.status === 'waiting') {
@@ -339,13 +341,19 @@ async function sendConnectCard(d: Daemon, code: string, c: ConnectState): Promis
   })
 }
 
-export async function connectGroup(d: Daemon, chatId: string): Promise<void> {
+/** Connect a forum group: the first becomes the main one; more become extra topic groups (FR-3). */
+export async function connectGroup(d: Daemon, chatId: string, title = chatId): Promise<void> {
   const a = loadAccess()
   const o = owner(a)
   if (!o) throw new Error('no owner paired')
   const prev = d.topicsChatId
   a.groups[chatId] = { requireMention: false, allowFrom: [], allowPaired: true }
   saveAccess(a)
+  if (prev && prev !== chatId) {
+    const list = d.extraTopicGroups().filter(g => g.chatId !== chatId)
+    d.setExtraTopicGroups([...list, { chatId, title, paths: [] }])
+    return
+  }
   d.store.set('topics_chat_id', chatId)
   if (prev !== chatId) d.store.set('dashboard_msg_id', null)
   for (const s of d.activeSessions()) {
@@ -354,6 +362,12 @@ export async function connectGroup(d: Daemon, chatId: string): Promise<void> {
   }
   dashLast = 0
   scheduleDashboard(d)
+}
+
+/** Drop an extra topic group: its projects' topics will be made in the main group from now on. */
+export function removeTopicGroup(d: Daemon, chatId: string): void {
+  d.setExtraTopicGroups(d.extraTopicGroups().filter(g => g.chatId !== chatId))
+  for (const s of d.sessions.values()) if (s.topic?.chatId === chatId) s.topic = null
 }
 
 export function disconnectGroup(d: Daemon): void {
@@ -678,6 +692,10 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const chatId = String(upd.chat.id)
     const gone = upd.new_chat_member.status === 'left' || upd.new_chat_member.status === 'kicked'
     const o = owner()
+    if (gone && chatId !== topicsChat() && d.extraTopicGroups().some(g => g.chatId === chatId)) {
+      removeTopicGroup(d, chatId)
+      if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
+    }
     if (gone && chatId === topicsChat()) {
       disconnectGroup(d)
       if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
@@ -688,7 +706,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   // Users can create topics by hand; keep the registry in sync.
   bot.on('message:forum_topic_created', async (ctx, next) => {
     const chat = String(ctx.chat.id)
-    if (chat === topicsChat() && ctx.from?.id !== d.botId && ctx.message.message_thread_id != null) {
+    if (d.isTopicsChat(chat) && ctx.from?.id !== d.botId && ctx.message.message_thread_id != null) {
       d.store.upsertTopic({
         chat_id: chat, thread_id: ctx.message.message_thread_id, name: ctx.message.forum_topic_created.name,
         kind: 'manual', project_key: null, status: 'active', created_at: Date.now(), last_activity_at: Date.now(),
@@ -700,7 +718,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.on('message:forum_topic_closed', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
+    if (d.isTopicsChat(chat) && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status !== 'archived') {
         const stuck = await archiveTopic(d, chat, thread, { alreadyClosed: true }).catch(() => [])
@@ -714,7 +732,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.on('message:forum_topic_reopened', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
+    if (d.isTopicsChat(chat) && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status === 'archived') await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off', alreadyOpen: true }).catch(err => d.log(`unarchive failed: ${err}`))
     }
@@ -724,7 +742,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const chat = String(ctx.chat.id)
     const name = ctx.message.forum_topic_edited.name
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && name && thread != null && ctx.from?.id !== d.botId) {
+    if (d.isTopicsChat(chat) && name && thread != null && ctx.from?.id !== d.botId) {
       const t = d.store.topic(chat, thread)
       if (t) d.store.upsertTopic({ ...t, name, last_activity_at: Date.now() })
     }
@@ -745,7 +763,9 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
     await answer(tr('Нет доступа.'))
     return true
   }
-  const chat = d.topicsChatId
+  // Pressed in a topics group (main or extra): that group; from the DM or General: the main one.
+  const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')
+  const chat = d.isTopicsChat(pressedIn) ? pressedIn : d.topicsChatId
   const edit = (text: string) => ctx.editMessageText(text).catch(() => {})
 
   try {
@@ -831,9 +851,12 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
       } else if (action === 'ok') {
         const { problems, title } = await checkGroup(d, c.chatId)
         if (problems.length) { await sendConnectCard(d, arg, c); return true }
-        await connectGroup(d, c.chatId)
+        const extra = !!d.topicsChatId && d.topicsChatId !== c.chatId
+        await connectGroup(d, c.chatId, title)
         d.store.set(`connect:${arg}`, null)
-        await edit(tr('✅ Группа «{title}» подключена. Топики проектов: {n}.', { title, n: d.activeSessions().filter(s => s.topic).length }))
+        await edit(extra
+          ? tr('✅ Группа «{title}» подключена как дополнительная группа топиков. Укажите её папки проектов: /topics → «🗂 Группы топиков»; топики, созданные в ней, сразу станут её проектами.', { title })
+          : tr('✅ Группа «{title}» подключена. Топики проектов: {n}.', { title, n: d.activeSessions().filter(s => s.topic).length }))
       }
     } else if (ns === 'fg') {
       if (action === 'ok') {

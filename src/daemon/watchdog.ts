@@ -73,7 +73,8 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     return true
   }
   if (m[1] === 'topic') {
-    const chat = d.topicsChatId
+    const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')
+    const chat = d.isTopicsChat(pressedIn) ? pressedIn : d.topicsChatId
     const t = chat ? d.store.topic(chat, Number(m[2])) : null
     if (!chat || !t?.project_key) { await answer(tr('Топик не привязан к проекту.')); return true }
     await answer(tr('🚀 Запускаю'))
