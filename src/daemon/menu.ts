@@ -13,7 +13,7 @@ import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
-import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
+import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sessionShortName, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
@@ -25,10 +25,10 @@ export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.u
 
 export async function sessionsList(d: Daemon): Promise<Screen> {
   const list = sortedSessions(d)
-  const lines = list.map(s => {
+  const lines = list.map((s, i) => {
     const label = sessionLabel(d, s)
     const icon = label.slice(0, label.indexOf(' '))
-    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
+    return `${i + 1}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
   })
   const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
@@ -40,7 +40,8 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
 
   const rows: Btn[][] = []
   for (const [i, s] of list.entries()) {
-    const b = button(clip(`${sessionLabel(d, s)} ${statusLabel(s).slice(0, 2)}`, 40), `sm:s:${s.id}`)
+    // The number from the list, the name and the status dot: the rest is in the text above.
+    const b = button(`${i + 1}. ${clip(sessionShortName(d, s), 30)} ${statusLabel(s).slice(0, 2)}`, `sm:s:${s.id}`)
     if (i % 2 === 0) rows.push([b])
     else rows.at(-1)!.push(b)
   }
@@ -49,39 +50,59 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
-export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
+/** Sub-menus of a session card: c — 🤖 Claude, n — 🔔 notifications, m — ⚙️ management. */
+export type CardGroup = 'c' | 'n' | 'm'
+
+/**
+ * A session's card: the card text and a short keyboard — stop, screen, the
+ * three groups, Git, the topic — or, with group, that group's buttons and
+ * « Назад to the card.
+ */
+export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): Promise<Screen> {
   const c = sessionChat(d, s)
   const p = prefsFor(c.chatId, c.threadId)
   const rows: Btn[][] = []
-
-  const actions: Btn[] = []
-  if (s.tmuxPane && s.status === 'working') actions.push(button(t('⏹ Стоп'), `sm:stop:${s.id}`, 'danger'))
-  if (s !== d.mainSession() && !d.userIdOf(s)) actions.push(button(t('👑 Сделать главной'), `sm:main:${s.id}`))
-  if (s.topic) actions.push(button(t('🗄 В архив'), `sm:ar:${s.id}`))
-  if (s.group) actions.push(button(t('👥 Отвязать группу'), `gp:unbind:${s.group.chatId}`, 'danger'))
-  if (actions.length) rows.push(actions)
+  const back = [button(t('« Назад'), `sm:s:${s.id}`)]
   const user = d.userIdOf(s)
-  if (user && user !== owner()) rows.push([button(t('🚫 Удалить пользователя'), `ur:ask:${user}`, 'danger')])
-  const look: Btn[] = []
-  if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) look.push(button(t('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`))
-  if (s.branch) look.push(button('🌿 Git', `sm:git:${s.id}`))
-  if (look.length) rows.push(look)
-  const perms: Btn[] = []
-  if (s.alwaysAllow.size) perms.push(button(t('♾ Снова спрашивать'), `sm:aar:${s.id}`))
-  if (projectRules(d, s.projectKey).length) perms.push(button(t('📌 Правила проекта'), `sm:prm:${s.id}`))
-  if (perms.length) rows.push(perms)
-  if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button(t('🧠 Модель'), `sm:mdl:${s.id}`)])
-  if (s.tmuxPane) rows.push([button(t('🕘 Прошлые разговоры'), `sm:hist:${s.id}`), button(t('⚡ Быстрые команды'), `mc:list:${s.id}`)])
-  const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
-  if (link) rows.push([InlineKeyboard.url(clip(t('💬 Открыть топик «{name}»', { name: s.topic!.name }), 40), link)])
+  let text = await sessionCard(d, s)
 
-  // The current value is marked; tapping it again does nothing harmful.
-  rows.push(([0, 1, 2] as const).map(v => button(`${p.verbose === v ? '• ' : ''}${verboseBadge(v)}`, `sm:v:${s.id}:${v}`, p.verbose === v ? 'primary' : undefined)))
-  rows.push((['off', 'long', 'always'] as const).map(v => button(`${p.notifyDone === v ? '• ' : ''}✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`, `sm:n:${s.id}:${v}`, p.notifyDone === v ? 'primary' : undefined)))
-  rows.push([button(t('« К списку'), 'sm:list'), button('🔄', `sm:s:${s.id}`)])
-
-  const where = c.threadId != null ? t('в топике') : s.group ? t('в группе') : d.userIdOf(s) ? t('в личке пользователя') : t('в личке')
-  const text = `${await sessionCard(d, s)}\n\n<i>${t('Подробность прогресса и «✅ готово» {where}:', { where })}</i>`
+  if (group === 'c') {
+    if (s.tmuxPane) {
+      rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button(t('🧠 Модель'), `sm:mdl:${s.id}`)])
+      rows.push([button(t('🕘 Прошлые разговоры'), `sm:hist:${s.id}`), button(t('⚡ Быстрые команды'), `mc:list:${s.id}`)])
+    } else text += `\n\n<i>${t('Сессия не в tmux — команды не отправить.')}</i>`
+    rows.push(back)
+  } else if (group === 'n') {
+    // The current value is marked; tapping it again does nothing harmful.
+    rows.push(([0, 1, 2] as const).map(v => button(`${p.verbose === v ? '• ' : ''}${verboseBadge(v)}`, `sm:v:${s.id}:${v}`, p.verbose === v ? 'primary' : undefined)))
+    rows.push((['off', 'long', 'always'] as const).map(v => button(`${p.notifyDone === v ? '• ' : ''}✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`, `sm:n:${s.id}:${v}`, p.notifyDone === v ? 'primary' : undefined)))
+    rows.push(back)
+    const where = c.threadId != null ? t('в топике') : s.group ? t('в группе') : user ? t('в личке пользователя') : t('в личке')
+    text += `\n\n<i>${t('Подробность прогресса и «✅ готово» {where}:', { where })}</i>`
+  } else if (group === 'm') {
+    const actions: Btn[] = []
+    if (s !== d.mainSession() && !user) actions.push(button(t('👑 Сделать главной'), `sm:main:${s.id}`))
+    if (s.topic) actions.push(button(t('🗄 В архив'), `sm:ar:${s.id}`))
+    if (actions.length) rows.push(actions)
+    if (s.group) rows.push([button(t('👥 Отвязать группу'), `gp:unbind:${s.group.chatId}`, 'danger')])
+    if (user && user !== owner()) rows.push([button(t('🚫 Удалить пользователя'), `ur:ask:${user}`, 'danger')])
+    const perms: Btn[] = []
+    if (s.alwaysAllow.size) perms.push(button(t('♾ Снова спрашивать'), `sm:aar:${s.id}`))
+    if (projectRules(d, s.projectKey).length) perms.push(button(t('📌 Правила проекта'), `sm:prm:${s.id}`))
+    if (perms.length) rows.push(perms)
+    if (rows.length === 0) text += `\n\n<i>${t('Для этой сессии здесь ничего нет.')}</i>`
+    rows.push(back)
+  } else {
+    const top: Btn[] = []
+    if (s.tmuxPane && s.status === 'working') top.push(button(t('⏹ Стоп'), `sm:stop:${s.id}`, 'danger'))
+    if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) top.push(button(t('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`))
+    if (top.length) rows.push(top)
+    rows.push([button(t('🤖 Claude'), `sm:g:${s.id}:c`), button(t('🔔 Уведомления'), `sm:g:${s.id}:n`)])
+    rows.push([...(s.branch ? [button('🌿 Git', `sm:git:${s.id}`)] : []), button(t('⚙️ Управление'), `sm:g:${s.id}:m`)])
+    const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
+    if (link) rows.push([InlineKeyboard.url(clip(t('💬 Открыть топик «{name}»', { name: s.topic!.name }), 40), link)])
+    rows.push([button(t('« К списку'), 'sm:list'), button('🔄', `sm:s:${s.id}`)])
+  }
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
@@ -96,11 +117,11 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   if (!s.tmuxPane) return { toast: t('Сессия не в tmux — команды не отправить.') }
   if (action === 'mdl') {
     const rows = MODELS.map(([alias, id]) => [button(`🧠 ${id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${alias}`)])
-    rows.push([button(t('« Назад'), `sm:s:${s.id}`)])
+    rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
     return { screen: { text: t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb: new InlineKeyboard(rows) } }
   }
   if (action === 'clr') {
-    const kb = new InlineKeyboard([[button(t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:s:${s.id}`)]])
+    const kb = new InlineKeyboard([[button(t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
     return { screen: { text: t('Очистить разговор сессии #{id} ({v})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb } }
   }
   if (s.turn || s.status !== 'idle') return { toast: t('Сессия работает — дождитесь конца хода или нажмите ⏹.') }
@@ -129,7 +150,7 @@ async function historyScreen(s: Session): Promise<Screen> {
     if (!current) rows.push([button(clip(`${when(c.mtime)} ${c.prompt || '…'}`, 40), `sm:rs:${s.id}:${dashless(c.id)}`)])
   }
   if (!list.length) lines.push(t('Транскриптов этой папки нет.'))
-  rows.push([button(t('« Назад'), `sm:s:${s.id}`)])
+  rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
   return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }
 
@@ -138,7 +159,7 @@ function rulesScreen(d: Daemon, s: Session): Screen {
   const rules = projectRules(d, s.projectKey)
   const lines = [t('📌 <b>Без вопросов в проекте</b> {v}', { v: escapeHtml(projectTitle(s)) }), rules.length ? t('Эти инструменты разрешаются сами в любой сессии проекта, и после перезапуска тоже. ❌ — снова спрашивать.') : t('Правил нет.')]
   const rows: Btn[][] = rules.slice(0, 20).map((t, i) => [button(clip(`❌ ${t}`, 40), `sm:prmd:${s.id}:${i}`)])
-  rows.push([button(t('« Назад'), `sm:s:${s.id}`)])
+  rows.push([button(t('« Назад'), `sm:g:${s.id}:m`)])
   return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }
 
@@ -162,7 +183,7 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -189,6 +210,11 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   let toast: string | undefined
+  if (action === 'g' && (value === 'c' || value === 'n' || value === 'm')) {
+    await answer()
+    await show(ctx, await sessionScreen(d, s, value))
+    return true
+  }
   if (action === 'git') {
     await answer()
     await show(ctx, await gitScreen(s))
@@ -259,7 +285,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     toast = t('👑 Главная → #{id}', { id: s.id })
   } else if (action === 'ar' && s.topic) {
     await answer()
-    const kb = new InlineKeyboard([[button(t('✅ Да, в архив'), `sm:arok:${s.id}`, 'danger'), button(t('Отмена'), `sm:s:${s.id}`)]])
+    const kb = new InlineKeyboard([[button(t('✅ Да, в архив'), `sm:arok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:m`)]])
     await show(ctx, { text: t('Архивировать «{v}»? Сессия #{id} будет закрыта, топик — закрыт.', { v: escapeHtml(s.topic.name), id: s.id }), kb })
     return true
   } else if (action === 'arok' && s.topic) {
@@ -278,7 +304,9 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     setPref(c.threadId != null ? `${c.chatId}:${c.threadId}` : c.chatId, { notifyDone: value })
     toast = t('✅ готово: {v}', { v: t(NOTIFY_DONE_INFO[value]) })
   }
-  await show(ctx, await sessionScreen(d, s))
+  // Stay in the group the button was in.
+  const group: CardGroup | undefined = action === 'v' || action === 'n' ? 'n' : action === 'aar' || action === 'main' ? 'm' : ['cmp', 'clr', 'clrok', 'model'].includes(action) ? 'c' : undefined
+  await show(ctx, await sessionScreen(d, s, group))
   await answer(toast)
   return true
 }

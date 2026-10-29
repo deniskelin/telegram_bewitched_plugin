@@ -228,6 +228,12 @@ export class Daemon {
     return i?.username ? `@${i.username} (${userId})` : userId
   }
 
+  /** Just the name: first and last name, else @username, else the id — for buttons. */
+  userShortName(userId: string): string {
+    const i = this.userInfo(userId)
+    return [i?.first, i?.last].filter(Boolean).join(' ') || this.store.get(`user_name:${userId}`) || this.store.lastSenderName(userId) || (i?.username ? `@${i.username}` : userId)
+  }
+
   userSession(userId: string): Session | null {
     const list = this.activeSessions().filter(s => this.userIdOf(s) === userId)
     list.sort((a, b) => b.connectedAt - a.connectedAt)

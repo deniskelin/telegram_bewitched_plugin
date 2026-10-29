@@ -70,6 +70,13 @@ export function projectTitle(s: Session): string {
   return s.topic?.name.replace(/^🗄 /, '') || s.group?.title || s.projectName
 }
 
+/** Главная, the user's name or the project's title, no icon: for buttons. */
+export function sessionShortName(d: Daemon, s: Session): string {
+  const user = d.userIdOf(s)
+  if (user) return d.userShortName(user)
+  return s === d.mainSession() ? t('Главная') : projectTitle(s)
+}
+
 /** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
 export function sessionLabel(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
@@ -194,7 +201,7 @@ export async function passiveBlock(d: Daemon): Promise<string | null> {
   return t('👻 <b>Без канала</b> ({length}) — сообщений не получают\n', { length: list.length }) + items.join('\n')
 }
 
-/** Footer of the /sessions list. */
+/** Footer of the /sessions list. With user sessions a main one that isn't running is no news. */
 export function footer(d: Daemon): string {
-  return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() ? '' : t(' · главная не запущена')}`
+  return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() || settings.userSessions ? '' : t(' · главная не запущена')}`
 }

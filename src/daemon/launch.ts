@@ -7,6 +7,7 @@
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { execFile } from 'child_process'
+import { createHash } from 'crypto'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
@@ -183,18 +184,66 @@ export function watchLaunch(d: Daemon, dir: string, win: string): void {
   }
 }
 
+/**
+ * Launch reminders of a dir, under lr:<hash of dir>: off — the owner said
+ * «🔕 Не напоминать» (kept until «🔔 Напоминать»); sent — the reminders in the
+ * owner's DM, deleted once the session connects.
+ */
+type RemindState = { dir: string; off?: boolean; sent?: { chat: string; id: number }[] }
+
+function remindKey(dir: string): string {
+  return createHash('sha1').update(dir).digest('hex').slice(0, 10)
+}
+
+function remindState(d: Daemon, key: string): RemindState | null {
+  try { return JSON.parse(d.store.get(`lr:${key}`) ?? '') as RemindState } catch { return null }
+}
+
 export async function remindLaunch(d: Daemon, dir: string, win: string, first: boolean): Promise<void> {
   if (d.activeSessions().some(s => s.cwd === dir)) return
   const raw = await d.tmuxCapture(windowTarget(win))
   const o = owner()
   if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
-  const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
-  const text = inChat(d, o, undefined, () => isStartupPrompt(raw)
-    ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) })
-    : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) }))
-  await say(d, o, undefined, text, inChat(d, o, undefined, () => screenKb(win)))
+  const key = remindKey(dir)
+  const st = remindState(d, key) ?? { dir }
+  if (!st.off) {
+    const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
+    const text = inChat(d, o, undefined, () => isStartupPrompt(raw)
+      ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) })
+      : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) }))
+    const kb = inChat(d, o, undefined, () => screenKb(win).row(button(tr('🔕 Не напоминать'), `lr:off:${key}`)))
+    const m = await d.bot.api.sendMessage(o, text, { parse_mode: 'HTML', reply_markup: kb }).catch(err => { d.log(`launch notice failed: ${err}`); return null })
+    if (m) d.store.set(`lr:${key}`, JSON.stringify({ ...st, sent: [...(st.sent ?? []), { chat: o, id: m.message_id }] }))
+  }
   if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')))
+}
+
+/** The session connected: its launch reminders are done with (🔕 stays). */
+export function onLaunchConnected(d: Daemon, dir: string): void {
+  const key = remindKey(dir)
+  const st = remindState(d, key)
+  if (!st?.sent?.length) return
+  for (const m of st.sent) void d.bot.api.deleteMessage(m.chat, m.id).catch(() => {})
+  d.store.set(`lr:${key}`, st.off ? JSON.stringify({ dir: st.dir, off: true }) : null)
+}
+
+/** lr:off:<key> — no more launch reminders for that dir; lr:on:<key> — again. Owner only. */
+async function handleRemindCallback(d: Daemon, ctx: Context, m: RegExpExecArray): Promise<void> {
+  const st = remindState(d, m[2])
+  if (!st) { await ctx.answerCallbackQuery({ text: tr('Уже неактуально.') }).catch(() => {}); return }
+  const here = ctx.callbackQuery?.message
+  if (m[1] === 'off') {
+    // The other reminders go; this one says they are off, with a way back.
+    for (const s of st.sent ?? []) if (!here || s.id !== here.message_id) void d.bot.api.deleteMessage(s.chat, s.id).catch(() => {})
+    d.store.set(`lr:${m[2]}`, JSON.stringify({ dir: st.dir, off: true, sent: here ? [{ chat: String(here.chat.id), id: here.message_id }] : [] }))
+    await ctx.answerCallbackQuery({ text: tr('🔕 Больше не напомню') }).catch(() => {})
+    await ctx.editMessageText(tr('🔕 Напоминания о запуске <code>{v}</code> отключены.', { v: escapeHtml(st.dir) }), { parse_mode: 'HTML', reply_markup: new InlineKeyboard([[button(tr('🔔 Напоминать'), `lr:on:${m[2]}`)]]) }).catch(() => {})
+    return
+  }
+  d.store.set(`lr:${m[2]}`, JSON.stringify({ ...st, off: false }))
+  await ctx.answerCallbackQuery({ text: tr('🔔 Напоминания включены') }).catch(() => {})
+  await ctx.editMessageText(tr('🔔 Напоминания о запуске <code>{v}</code> включены.', { v: escapeHtml(st.dir) }), { parse_mode: 'HTML' }).catch(() => {})
 }
 
 // --------------------------------------------------------------------------
@@ -399,12 +448,14 @@ export async function onManualTopic(d: Daemon, chatId: string, threadId: number,
 }
 
 export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^np:(ok|no):(\d+)$/.exec(data)
+  const lr = /^lr:(off|on):([0-9a-f]{10})$/.exec(data)
+  const m = lr ?? /^np:(ok|no):(\d+)$/.exec(data)
   if (!m) return false
   if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
+  if (lr) { await handleRemindCallback(d, ctx, lr); return true }
   await ctx.answerCallbackQuery().catch(() => {})
   // The offer is posted in the topic itself: its group (main or extra).
   const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')

@@ -18,7 +18,7 @@ import { groupForProject } from './groups.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
-import { endSession, launchForTopic, onManualTopic, startProject } from './launch.ts'
+import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProject } from './launch.ts'
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
 import { limitsLine } from './usage.ts'
@@ -163,6 +163,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   d.launching.delete(s.projectKey)
   d.launching.delete(s.cwd)
   onSessionBack(d, s.cwd)
+  onLaunchConnected(d, s.cwd)
   try {
     await ensureTopic(d, s)
   } catch (err) {

@@ -116,7 +116,7 @@ export async function handleMacroCallback(d: Daemon, ctx: Context, data: string)
     const s = d.sessions.get(m[8])
     if (!s) { await answer(t('Сессия уже отключена.')); return true }
     await answer()
-    await show(ctx, macrosScreen(d, sessionChat(d, s), `sm:s:${s.id}`))
+    await show(ctx, macrosScreen(d, sessionChat(d, s), `sm:g:${s.id}:c`))
     return true
   }
   const chatId = m[2] ?? m[5]
