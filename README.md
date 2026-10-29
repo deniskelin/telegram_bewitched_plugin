@@ -72,12 +72,17 @@ Telegram-канал для Claude Code — форк [официального п
 
 ## Установка
 
+1. Создайте бота у [@BotFather](https://t.me/BotFather) (`/newbot`) и скопируйте токен.
+2. В Claude Code:
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <токен>
 ```
 
-Токен бота: `/telegram-bewitched:configure <токен>`. Если раньше стоял официальный плагин, `.env` и `access.json` скопируются из `~/.claude/channels/telegram/` автоматически при первом запуске.
+   Если раньше стоял официальный плагин, `.env` и `access.json` скопируются из `~/.claude/channels/telegram/` автоматически при первом запуске.
+3. Запустите сессию с каналом (см. «Запуск»), напишите боту в личку — он ответит 6-символьным кодом — и в Claude Code выполните `/telegram-bewitched:access pair <код>`. Первый сопряжённый становится владельцем. Подробнее — [ACCESS.md](ACCESS.md).
 
 **Официальный плагин и форк не должны опрашивать один токен одновременно.** Отключите официальный (`/plugin disable telegram@claude-plugins-official`) или запускайте Claude без его `--channels`. Если демон видит работающий официальный плагин с тем же токеном, он ждёт, а не дерётся за опрос.
 
@@ -92,13 +97,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 Первая сессия сама запускает демон. Он продолжает работать после закрытия сессий, чтобы пульт и `/notify` отвечали всегда.
 
+Команды CLI запускаются из папки плагина: после установки из маркетплейса это `~/.claude/plugins/cache/bewitched/telegram-bewitched/<версия>/` (или клон репозитория).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<версия>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot в crontab
 bun bin/bewitched.ts voice install           # голос, см. docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "сборка упала"
 bun bin/bewitched.ts event --topic myproj --source ci "деплой упал: …"   # в топик и сессии проекта
 ```
+
+## Обновление
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Затем перезапустите сессии Claude Code (клиент и хуки берутся из новой версии) и демон — командой из папки **новой** версии: `bun bin/bewitched.ts daemon restart`. Кнопка «♻️ Перезапустить демон» в `/server` перезапускает ту версию, что уже работает. Если ставили `install-cron`, повторите его из новой папки — запись заменится.
 
 ## Топики в супергруппе
 

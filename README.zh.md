@@ -72,12 +72,17 @@ Claude Code 的 Telegram 频道——[官方插件](https://github.com/anthropic
 
 ## 安装
 
+1. 在 [@BotFather](https://t.me/BotFather) 创建机器人（`/newbot`）并复制令牌。
+2. 在 Claude Code 中：
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <令牌>
 ```
 
-机器人令牌：`/telegram-bewitched:configure <令牌>`。如果之前装过官方插件，首次启动时会自动从 `~/.claude/channels/telegram/` 复制 `.env` 和 `access.json`。
+   如果之前装过官方插件，首次启动时会自动从 `~/.claude/channels/telegram/` 复制 `.env` 和 `access.json`。
+3. 启动带频道的会话（见「运行」），在私聊中给机器人发消息——它会回复一个 6 位代码——然后在 Claude Code 中运行 `/telegram-bewitched:access pair <代码>`。第一个配对的用户成为所有者。详见 [ACCESS.md](ACCESS.md)（英文）。
 
 **官方插件和本分支不能同时轮询同一个令牌。** 请禁用官方插件（`/plugin disable telegram@claude-plugins-official`），或运行 Claude 时不带它的 `--channels`。如果守护进程发现官方插件正在用同一个令牌运行，它会等待，而不是争抢轮询。
 
@@ -92,13 +97,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 第一个会话会启动守护进程。会话关闭后它仍继续运行，因此控制面板和 `/notify` 始终可用。
 
+命令行命令需在插件文件夹中运行：从市场安装后，该文件夹是 `~/.claude/plugins/cache/bewitched/telegram-bewitched/<版本>/`（或仓库的克隆）。
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<版本>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # 在 crontab 中添加 @reboot
 bun bin/bewitched.ts voice install           # 语音，见 docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "构建失败"
 bun bin/bewitched.ts event --topic myproj --source ci "部署失败：…"   # 发到项目话题和会话
 ```
+
+## 更新
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+然后重启 Claude Code 会话（客户端和钩子来自新版本），并在**新**版本的文件夹中重启守护进程：`bun bin/bewitched.ts daemon restart`。`/server` 中的「♻️ 重启守护进程」按钮重启的是当前正在运行的版本。如果用过 `install-cron`，请在新文件夹中再运行一次——旧记录会被替换。
 
 ## 超级群组中的话题
 
