@@ -4,6 +4,7 @@
  * sessions connected over the unix socket.
  */
 
+import { holdIfPaused } from './outoftokens.ts'
 import type { Socket } from 'bun'
 import { Bot, GrammyError } from 'grammy'
 import { randomBytes } from 'crypto'
@@ -266,6 +267,8 @@ export class Daemon {
       content = session.notes.map(n => `[${n}]`).join('\n') + '\n\n' + content
       session.notes = []
     }
+    // Out of tokens: the message waits for the reset (outoftokens.ts).
+    if (from && holdIfPaused(this, session, content, meta, from)) return
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     this.send(session, { t: 'inbound', content, meta })

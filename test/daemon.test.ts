@@ -688,6 +688,34 @@ describe('topics', () => {
     await client.call('reply', { chat_id: group, text: 'ок' })
   })
 
+  test('out of tokens: the failed turn and new messages get a localized notice, are held, and reach the session at the reset', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    const { classify, parseReset, pauseOf, release } = await import('../src/daemon/outoftokens.ts')
+    expect(classify('rate_limit', "You've hit your limit · resets 2:20pm (Europe/Moscow)")).toBe('subscription')
+    expect(classify('rate_limit', 'API Error: 429 {"type":"rate_limit_error"}')).toBe('rate')
+    expect(classify('billing_error', 'Credit balance is too low')).toBe('billing')
+    expect(classify('server_error', 'API Error: 500')).toBeNull()
+    expect(new Date(parseReset('resets 2:20pm', new Date(2026, 9, 29, 9, 0).getTime())!).getHours()).toBe(14)
+    await hook('Stop', {})
+    tg.push(textMessage({ chat: Number(group), text: 'сделай отчёт', thread }))
+    await client.inbound(x => x.content === 'сделай отчёт')
+    await hook('StopFailure', { error: 'rate_limit', last_assistant_message: 'Claude AI usage limit reached|' + Math.floor(Date.now() / 1000 + 3600) })
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏸ Закончились токены подписки Claude. Ход прервался'))
+    expect(pauseOf(d)?.kind).toBe('subscription')
+    tg.push(textMessage({ chat: Number(group), text: 'и ещё вот это', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).includes('Сообщение записал. Отвечу сразу после сброса лимита в'))
+    await release(d)
+    const m = await client.inbound(x => x.content.includes('и ещё вот это'))
+    expect(m.content).toContain('Пока токенов не было')
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('▶️ Лимит восстановился'))
+    expect(pauseOf(d)).toBeNull()
+    await client.call('reply', { chat_id: group, text: 'ок' })
+  })
+
   test('long turn without reply sends a done notice on Stop', async () => {
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',

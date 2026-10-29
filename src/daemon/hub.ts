@@ -5,6 +5,7 @@
  * /usage, /server, /users, /reports; each has a way back here.
  */
 
+import { pauseBadge } from './outoftokens.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { k, lang, LANG_NAMES, LANGS, normLang, t, withLang } from '../i18n/index.ts'
@@ -36,7 +37,10 @@ export function mainScreen(d: Daemon): Screen {
   const lines = [t('🎛 <b>Меню</b>'), t('Сессий: {n}', { n: sessions.length }) + (d.permissions.size ? t(' · 🔐 ждут разрешения: {n}', { n: d.permissions.size }) : '')]
   const limits = limitsLine()
   if (limits) lines.push(limits)
+  const pause = pauseBadge(d)
+  if (pause) lines.push(pause)
   const kb: Btn[][] = [
+    ...(pause ? [[button(t('▶️ Продолжить сейчас'), 'tok:go')]] : []),
     [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list'), button(t('👥 Группы'), 'gp:list')],
     [button(t('📊 Статистика'), 'hub:stats'), button(t('👥 Люди'), 'hub:people')],
     [button(t('⏰ Напоминания'), 'hub:rem'), button(t('⚡ Быстрые команды'), 'hub:mc')],

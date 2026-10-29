@@ -21,6 +21,7 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
+import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
@@ -561,6 +562,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return
+    if (await handleTokensCallback(d, ctx, data)) return
     if (await handleReminderCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
