@@ -502,10 +502,19 @@ export function setRunWarmup(f: () => Promise<void>): void {
   runWarmup = f
 }
 
+/**
+ * One window, one key: resets_at comes back a few hundred ms apart between
+ * calls (16:19:59.8, then 16:20:00.1), and keyed by the exact time every
+ * check scheduled one more timer — six «tokens are back» at one reset.
+ */
+export function windowKey(at: Date): string {
+  return new Date(Math.round(at.getTime() / 60_000) * 60_000).toISOString()
+}
+
 const warmupTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 export function scheduleWarmup(d: Daemon, resetsAt: Date, now = Date.now()): void {
-  const key = resetsAt.toISOString()
+  const key = windowKey(resetsAt)
   if (warmupTimers.has(key) || resetsAt.getTime() < now - 60_000) return
   // A minute after resets_at: the API counts the new window by then.
   const t = setTimeout(() => void fireWarmup(d, key), Math.max(0, resetsAt.getTime() + 60_000 - now))
@@ -534,12 +543,12 @@ async function checkShares(d: Daemon, to: string, limits: Limits, now: number): 
   if (pct <= 0) return
   const ws = windowShares(d, limits, collectEntries(now, 1), now)
   if (!ws) return
-  const windowKey = ws.limit.resetsAt?.toISOString() ?? ''
+  const winKey = ws.limit.resetsAt ? windowKey(ws.limit.resetsAt) : ''
   for (const sh of ws.shares) {
     if (!sh.userId || sh.userId === to || sh.percent < pct) continue
     const key = `share_alert:${sh.userId}`
-    if (d.store.get(key) === windowKey) continue
-    d.store.set(key, windowKey)
+    if (d.store.get(key) === winKey) continue
+    d.store.set(key, winKey)
     const reset = ws.limit.resetsAt ? `\n${fmtReset(ws.limit.resetsAt, now)}` : ''
     await sendNotice(d, 'limits', () => tr('👥 {v} израсходовал(а) ≈<b>{v2}%</b> окна «{v3}» (всего занято {v4}%).{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }))
   }
@@ -556,7 +565,7 @@ const resetTimers = new Map<string, ReturnType<typeof setTimeout>>()
  * so the API already counts the new window). Idempotent per window.
  */
 export function scheduleResetNotice(d: Daemon, label: string, resetsAt: Date, now = Date.now()): void {
-  const key = `${label}|${resetsAt.toISOString()}`
+  const key = `${label}|${windowKey(resetsAt)}`
   if (resetTimers.has(key) || resetsAt.getTime() < now - 60_000) return
   const t = setTimeout(() => void fireResetNotice(d, label, key), Math.max(0, resetsAt.getTime() + 30_000 - now))
   t.unref?.()
@@ -568,9 +577,12 @@ async function fireResetNotice(d: Daemon, label: string, key: string): Promise<v
   // A reminder the owner asked for in /usage: their DM, not the journal.
   const to = owner()
   if (!to) return
+  // Once per window, whatever timers there were.
+  if (d.store.get(`limit_reset_done:${label}`) === key) return
+  d.store.set(`limit_reset_done:${label}`, key)
   // Asked for in /usage for this window (maybe silently): done now.
   const req = parseRequest(d.store.get(`limit_notify:${label}`))
-  const mine = req?.at === key.split('|')[1]
+  const mine = req != null && windowKey(new Date(req.at)) === key.split('|')[1]
   const silent = mine && req.silent
   if (mine) d.store.set(`limit_notify:${label}`, null)
   // «выкл» in /usage: no notice for this window.
@@ -590,7 +602,7 @@ function parseRequest(raw: string | null): { at: string; silent: boolean; off: b
 
 /** "🔔 Напомнить о сбросе" / "🔕 Тихо" in /usage: remembered in the store, so a restart keeps it. */
 export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false, off = false): void {
-  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${off ? '|off' : silent ? '|silent' : ''}`)
+  d.store.set(`limit_notify:${label}`, `${windowKey(resetsAt)}${off ? '|off' : silent ? '|silent' : ''}`)
   scheduleResetNotice(d, label, resetsAt)
 }
 
@@ -614,7 +626,7 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
   for (const [i, it] of (l?.limits.items ?? []).entries()) {
     if (!it.resetsAt) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
-    const asked = req?.at === it.resetsAt.toISOString() && !req.off ? req : null
+    const asked = req && windowKey(new Date(req.at)) === windowKey(it.resetsAt) && !req.off ? req : null
     rows.push([
       seg(!asked, tr('{v}: выкл', { v: tr(it.label) }), `lr:${i}:x`),
       seg(!!asked && !asked.silent, '🔔', `lr:${i}`),
