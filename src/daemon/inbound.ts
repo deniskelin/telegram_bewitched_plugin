@@ -23,9 +23,11 @@ import { handleLaunchCallback, launchForTopic, launchUserSession } from './launc
 import { handleWatchdogCallback } from './watchdog.ts'
 import { journal, journalText, who } from './journal.ts'
 import { handleIdleCallback } from './idle.ts'
+import { handleShortcutCallback, withoutModel } from './shortcuts.ts'
+import { handleVoiceForbiddenCallback } from './tools.ts'
 import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
-import { handleSessionMenu } from './menu.ts'
+import { handleSessionMenu, sessionCommandScreen } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
 import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
 import { handleReportCallback, registerReportCommands } from './reports.ts'
@@ -43,6 +45,8 @@ import { projectTitle } from './report.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
+/** /clear, /compact, /model, /cost (optionally @bot): Claude Code commands, handled by the daemon. */
+const SESSION_COMMAND_RE = /^\/(clear|compact|model|cost)(?:@\w+)?(?:\s+\S+)?\s*$/i
 
 type AttachmentMeta = { kind: string; file_id: string; size?: number; mime?: string; name?: string; duration?: number }
 
@@ -251,6 +255,18 @@ async function handleInbound(
 
   const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
+  // Claude Code's own commands are for the session's window, not for the model: answer here, no turn spent.
+  const sc = SESSION_COMMAND_RE.exec(text)
+  if (sc && !attachment) {
+    const s = target.kind === 'session' && !target.fallback ? target.session : null
+    if (!can(from.id, 'control')) await reply(tr('Команды окна сессии — у владельца.'))
+    else if (!s) await reply(tr('Сессия здесь не запущена — команду некуда отправить.'))
+    else {
+      const screen = await sessionCommandScreen(d, s, sc[1]!.toLowerCase() as 'clear' | 'compact' | 'model' | 'cost')
+      await ctx.reply(screen.text, { parse_mode: 'HTML', message_thread_id: threadId, reply_markup: screen.kb }).catch(err => d.log(`session command failed: ${err}`))
+    }
+    return
+  }
   // Unknown commands in General are not for Claude.
   if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
@@ -355,6 +371,11 @@ async function handleInbound(
     const run = ctx.from && can(ctx.from.id, 'control') ? new InlineKeyboard([[button(tr('🚀 Запустить'), `wd:topic:${threadId}`, 'success')]]) : undefined
     await reply(tr('⏳ Сессия проекта не подключена — сообщение в очереди.'), run)
     return
+  }
+  // FR-9: what the daemon can answer itself never wakes the session.
+  if (!target.fallback && !msg.forward_origin && !imagePath && !(attachment && !isSpeech(attachment.kind))) {
+    const handled = await withoutModel(d, ctx, text, target.session, { chatId, threadId, messageId: msg.message_id, from: from.id }, (s2, t2) => d.deliver(s2, t2, meta, chat))
+    if (handled) return
   }
   // The project session will see what the main session answered for it.
   if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
@@ -571,6 +592,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleIdleCallback(d, ctx, data)) return
+    if (await handleShortcutCallback(d, ctx, data)) return
+    if (await handleVoiceForbiddenCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return

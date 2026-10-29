@@ -413,6 +413,12 @@ describe('topics', () => {
       // The same replies: today's cost in the session card and in the daily digest.
       const { sessionCostLine, digestReport } = await import('../src/daemon/usage.ts')
       expect(sessionCostLine(d.sessions.get(sessionId)!)).toBe('💸 сегодня $0.50 · 3.0 млн ток.')
+      // 🔢 the cost of one turn: the same entries since it began; almost all of it cache reads.
+      const { turnCostLine } = await import('../src/daemon/usage.ts')
+      const ses = d.sessions.get(sessionId)!
+      expect(turnCostLine(ses, Date.now() - 60_000)).toBe('🔢 Ход: 3.0 млн ток. · кэш 100% · $0.50')
+      expect(turnCostLine(ses, Date.now() - 60_000, Date.now(), true)).toMatch(/^🔢 \*\*Ход\*\* · .+\n3\.0 млн ток\. · кэш 100% · \*\*\$0\.50\*\*$/)
+      expect(turnCostLine(ses, Date.now() + 60_000)).toBeNull()
       const digest = await digestReport(d)
       expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
       expect(digest).toContain('📂 proj · $0.50')
@@ -634,6 +640,86 @@ describe('topics', () => {
     expect(text).toContain(`<code>${settings.launchCmd} `)
     expect(text.indexOf('👻')).toBeGreaterThan(text.indexOf('👑 <b>Главная</b>'))
     p.close()
+  })
+
+  test('/clear, /compact, /model, /cost in a session topic: answered by the daemon, never a turn for the model', async () => {
+    const s = d.sessions.get(sessionId)!
+    const thread = s.topic!.threadId
+    const before = client.msgs.filter(m => m.t === 'inbound').length
+    // Not in tmux: said so, still no turn.
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    await tg.waitFor('sendMessage', x => x.body.text === 'Сессия не в tmux — команды не отправить.' && x.body.message_thread_id === thread)
+    const pane = s.tmuxPane
+    s.tmuxPane = '%9'
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    const c = await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('Очистить разговор сессии') && x.body.message_thread_id === thread)
+    expect(JSON.stringify(c.body.reply_markup)).toContain(`sm:clrok:${sessionId}`)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/compact@test_bot' }))
+    const k = await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('Сжать разговор сессии') && x.body.message_thread_id === thread)
+    expect(JSON.stringify(k.body.reply_markup)).toContain(`sm:cmp:${sessionId}`)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/model opus' }))
+    await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('🧠 Модель для сессии') && x.body.message_thread_id === thread)
+    tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/cost' }))
+    await tg.waitFor('sendMessage', x => String(x.body.text).includes(`#${sessionId}`) && x.body.message_thread_id === thread && JSON.stringify(x.body.reply_markup ?? '').includes(`sm:g:${sessionId}:c`))
+    // A member may not; nothing of it reaches the session.
+    tg.push(textMessage({ from: 333, chat: Number(s.topic!.chatId), thread, text: '/clear' }))
+    await Bun.sleep(300)
+    expect(client.msgs.filter(m => m.t === 'inbound').length).toBe(before)
+    s.tmuxPane = pane
+  })
+
+  test('FR-9: status, stop, «ок», double sends and Claude Code commands never wake the session', async () => {
+    const s = d.sessions.get(sessionId)!
+    const chat = s.topic!.chatId
+    const thread = s.topic!.threadId
+    const inbound = () => client.msgs.filter(m => m.t === 'inbound').length
+    const say = (text: string, from = 111) => tg.push(textMessage({ from, chat: Number(chat), thread, text }))
+    const out = (text: string) => d.store.addMessage({ chat_id: chat, thread_id: thread, message_id: 70000 + Math.floor(Math.random() * 9999), direction: 'out', from_id: '999', from_name: 'bot', date: Math.floor(Date.now() / 1000), text, kind: 'text', file_id: null, reply_to: null, quote: null, forward: null })
+    const before = inbound()
+    const status = s.status
+    s.status = 'idle'
+
+    say('статус')
+    await tg.waitFor('sendMessage', c => String(c.body.text).includes(`#${sessionId}, активность`) && c.body.message_thread_id === thread)
+
+    out('Готово, всё сделал.')
+    say('ок')
+    await tg.waitFor('setMessageReaction', c => JSON.stringify(c.body.reaction).includes('👌'))
+
+    const pane = s.tmuxPane
+    s.tmuxPane = '%9'
+    s.status = 'working'
+    say('стоп')
+    await Bun.sleep(300)
+    expect(s.notes.some(n => n.includes('⏹'))).toBe(true)
+    s.status = 'idle'
+
+    const typed: string[] = []
+    const ty = d.tmuxType
+    d.tmuxType = async (_t, text) => { typed.push(text) }
+    say('/context')
+    const offer = await tg.waitFor('sendMessage', c => String(c.body.text).includes('похоже на команду Claude Code'))
+    const id = /fx:type:([0-9a-f]{8})/.exec(JSON.stringify(offer.body.reply_markup))![1]
+    tg.push(callbackQuery(`fx:type:${id}`, { chat: Number(chat) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '➡️ /context')
+    expect(typed).toEqual(['/context'])
+    d.tmuxType = ty
+    s.tmuxPane = pane
+    expect(inbound()).toBe(before)
+
+    // A question was asked: «ок» is an answer and goes; the same text again at once is a double tap.
+    out('Сделать так?')
+    say('ок!')
+    // (After ⏹ the session gets a note about it in front of the next message.)
+    await client.inbound(m => m.content.endsWith('ок!'))
+    say('проверка дубля')
+    say('проверка дубля')
+    await Bun.sleep(400)
+    expect(client.msgs.filter(m => m.t === 'inbound' && (m as Inbound).content === 'проверка дубля').length).toBe(1)
+    expect(d.store.get('fr9:saved')).toBeTruthy()
+    s.status = status
+    s.turn = null
+    s.notes = []
   })
 
   test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
@@ -1181,6 +1267,18 @@ describe('voice', () => {
       await client.call('reply_voice', { text: 'Ответ **голосом**, подробности в `коде`' })
       await tg.waitFor('sendVoice', () => tg.callsOf('sendVoice').length >= 2)
       expect(ttsBody).toBeNull()
+
+      // FR-9: voice forbidden by the recipient's privacy — the text goes, the chat hears why once, voice is off for it.
+      tg.failures.set('sendVoice', { code: 400, description: 'Bad Request: VOICE_MESSAGES_FORBIDDEN' })
+      const vr = await client.call('reply', { text: 'ответ при запрете голоса', voice: true })
+      expect(vr.ok).toBe(true)
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🔇 Telegram не даёт боту присылать вам голосовые') && JSON.stringify(c.body.reply_markup).includes(`vf:retry:${group}`))
+      await tg.waitFor('sendMessage', c => c.body.text === 'ответ при запрете голоса')
+      expect(d.store.get(`voice_forbidden:${group}`)).toBe('1')
+      tg.failures.delete('sendVoice')
+      tg.push(callbackQuery(`vf:retry:${group}`, { chat: Number(group) }))
+      await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔁'))
+      expect(d.store.get(`voice_forbidden:${group}`)).toBeNull()
 
       // A text message: back to text answers.
       tg.push(textMessage({ chat: Number(group), thread, text: 'а теперь текстом' }))

@@ -20,6 +20,7 @@ import { commitsSince } from './git.ts'
 import { locale, k, t as tr } from '../i18n/index.ts'
 import { noticeTarget, sendNotice } from './journal.ts'
 import { inChat } from './lang.ts'
+import { savedLine } from './shortcuts.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -420,6 +421,8 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
   const none = tr('ничего')
   out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
   out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
+  const noModel = savedLine(d)
+  if (noModel) out.push(noModel)
   if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>'))
   out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
   return out.join('\n\n')
@@ -739,6 +742,25 @@ function startOfDay(now: number): number {
 }
 
 /** "💸 сегодня $1.23 · 4.5 млн ток." for a session card; null before its first reply today. */
+/**
+ * What one turn of a session cost: its transcript entries since the turn
+ * began. «🔢 18 тыс. ток. · кэш 96% · $0.05»; null when nothing was counted.
+ */
+export function turnCostLine(s: Session, since: number, now = Date.now(), rich = false): string | null {
+  const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
+  let read = 0
+  for (const e of collectEntries(now, 1)) {
+    if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
+    add(sum, e)
+    read += e.read
+  }
+  if (!sum.tokens) return null
+  const cache = Math.round((read / sum.tokens) * 100)
+  const vars = { v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2), took: fmtDuration(now - since) }
+  // Rich (Markdown) for sendRichMessage, plain text if that fails.
+  return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}% · **${cost}**', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}% · ${cost}', vars)
+}
+
 export function sessionCostLine(s: Session, now = Date.now()): string | null {
   const since = startOfDay(now)
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }

@@ -3,13 +3,13 @@
  * outbound traffic shares one Bot instance (rate limits, history, streams).
  */
 
-import { InputFile, InlineKeyboard } from 'grammy'
+import { InputFile, InlineKeyboard, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { extname, join } from 'path'
-import { assertAllowedChat, assertSendable, loadAccess, owner, prefsFor } from '../access.ts'
+import { assertAllowedChat, assertSendable, can, loadAccess, owner, prefsFor, setPref } from '../access.ts'
 import { INBOX_DIR, MEMORY_DIR, settings } from '../config.ts'
-import { chunk } from '../format.ts'
+import { chunk, escapeHtml } from '../format.ts'
 import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
@@ -21,6 +21,7 @@ import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, session
 import { t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
 import { projectTitle } from './report.ts'
+import { sendNotice } from './journal.ts'
 
 const MAX_CHUNK_LIMIT = 4096
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
@@ -133,21 +134,27 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const ids: number[] = []
 
   // By voice: asked for, or the chat's /voice mode (always / mirror on a spoken message).
-  const voice = wantsVoice(d, c, args.voice === true) ? await voiceFor(d, text, c) : null
+  let voice = wantsVoice(d, c, args.voice === true) ? await voiceFor(d, text, c) : null
   if (voice && settings.voiceWithText === 'caption' && format === 'text' && text.length <= 1024 && !/```/.test(text)) {
-    const id = await sendVoiceMsg(d, s, c, voice, { caption: text, replyTo: replyMode !== 'off' ? replyTo : undefined })
-    recordOut(d, c, id, text)
-    ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
-    finishReply(d, s, c)
-    return idsResult(ids)
+    const id = await voiceOrForbidden(d, s, c, voice, { caption: text, replyTo: replyMode !== 'off' ? replyTo : undefined })
+    if (id) {
+      recordOut(d, c, id, text)
+      ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
+      finishReply(d, s, c)
+      return idsResult(ids)
+    }
+    voice = null
   }
   // Voice only, unless the text has something a voice can't carry (code).
   if (voice && settings.voiceWithText === 'none' && !/```/.test(text)) {
-    const id = await sendVoiceMsg(d, s, c, voice, { replyTo: replyMode !== 'off' ? replyTo : undefined })
-    recordOut(d, c, id, text)
-    ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
-    finishReply(d, s, c)
-    return idsResult(ids)
+    const id = await voiceOrForbidden(d, s, c, voice, { replyTo: replyMode !== 'off' ? replyTo : undefined })
+    if (id) {
+      recordOut(d, c, id, text)
+      ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
+      finishReply(d, s, c)
+      return idsResult(ids)
+    }
+    voice = null
   }
 
   await withTopicRetry(d, s, c, async cc => {
@@ -178,12 +185,22 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
         ids.push(sent.message_id)
         recordOut(d, cc, sent.message_id, parts[i])
       } catch (err) {
-        if (i === 0) throw err
+        if (i === 0) {
+          // The chat is gone for the bot (blocked, deleted, deactivated): the owner hears it, once per chat.
+          if (/bot was blocked|chat not found|user is deactivated|bot was kicked/i.test(String(err)) && !d.store.get(`chat_gone:${cc.chatId}`)) {
+            d.store.set(`chat_gone:${cc.chatId}`, String(Date.now()))
+            void sendNotice(d, 'access', () => tr('🚫 Не могу писать в чат <code>{chat}</code> ({who}): {err}', { chat: cc.chatId, who: escapeHtml(d.userLabel(cc.chatId)), err: escapeHtml(String(err instanceof Error ? err.message : err).slice(0, 200)) }))
+          }
+          throw err
+        }
         throw new Error(`reply failed after ${ids.length} of ${parts.length} chunk(s) sent: ${err instanceof Error ? err.message : err}`)
       }
     }
   })
-  if (voice) ids.push(await sendVoiceMsg(d, s, c, voice, {}))
+  if (voice) {
+    const id = await voiceOrForbidden(d, s, c, voice, {})
+    if (id) ids.push(id)
+  }
   ids.push(...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
   finishReply(d, s, c)
   return idsResult(ids)
@@ -193,6 +210,8 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
 
 function wantsVoice(d: Daemon, c: ChatRef, asked: boolean): boolean {
   if (!ttsEnabled()) return false
+  // Telegram refused voice to this chat (the user's privacy settings): text until «🔁 Проверить снова».
+  if (d.store.get(`voice_forbidden:${c.chatId}`)) return false
   if (asked) return true
   const mode = prefsFor(c.chatId, c.threadId).voice
   return mode === 'always' || (mode === 'mirror' && d.lastSpeech.get(`${c.chatId}:${c.threadId ?? 0}`) === true)
@@ -227,6 +246,40 @@ async function sendVoiceMsg(d: Daemon, s: Session, c: ChatRef, v: Voice, o: { ca
     id = sent.message_id
   })
   return id
+}
+
+/**
+ * Send a voice reply; when the recipient's privacy settings forbid voice
+ * messages (400 VOICE_MESSAGES_FORBIDDEN) the daemon remembers it, explains
+ * once with buttons and returns null — the caller sends the text instead.
+ * No turn of the model goes to it (FR-9).
+ */
+async function voiceOrForbidden(d: Daemon, s: Session, c: ChatRef, v: Voice, o: { caption?: string; replyTo?: number }): Promise<number | null> {
+  try {
+    return await sendVoiceMsg(d, s, c, v, o)
+  } catch (err) {
+    if (!/VOICE_MESSAGES_FORBIDDEN/.test(String(err))) throw err
+    d.store.set(`voice_forbidden:${c.chatId}`, '1')
+    const kb = new InlineKeyboard([[button(tr('🔇 Выключить голос'), `vf:off:${c.chatId}`), button(tr('🔁 Проверить снова'), `vf:retry:${c.chatId}`, 'primary')]])
+    await inChat(d, c.chatId, c.threadId, () => d.bot.api.sendMessage(c.chatId, tr('🔇 Telegram не даёт боту присылать вам голосовые — отвечаю текстом. Разрешить: Настройки → Конфиденциальность → Голосовые сообщения → Исключения → добавить бота. Или выключить голос в ответах:'), { ...threadOpt(c), reply_markup: kb }))
+      .catch(e => d.log(`voice forbidden notice failed: ${e}`))
+    return null
+  }
+}
+
+/** vf:off:<chat> — no voice in this chat; vf:retry:<chat> — try voice again. */
+export async function handleVoiceForbiddenCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const m = /^vf:(off|retry):(-?\d+)$/.exec(data)
+  if (!m) return false
+  if (!ctx.from || String(ctx.from.id) !== m[2] && !can(ctx.from.id, 'control')) {
+    await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+    return true
+  }
+  d.store.set(`voice_forbidden:${m[2]}`, null)
+  if (m[1] === 'off') setPref(m[2], { voice: 'off' })
+  await ctx.answerCallbackQuery({ text: m[1] === 'off' ? tr('🔇 Ответы — текстом') : tr('🔁 Попробую голос в следующем ответе') }).catch(() => {})
+  await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+  return true
 }
 
 async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>): Promise<string> {

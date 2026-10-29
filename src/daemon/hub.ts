@@ -97,6 +97,7 @@ function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Sc
     (['off', 'long', 'always'] as const).map(v => button(mark(p.notifyDone === v, `✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`), `hub:n:${v}`, p.notifyDone === v ? 'primary' : undefined)),
     (['off', 'mirror', 'always'] as const).map(v => button(mark(p.voice === v, `🔊 ${v === 'off' ? t('текст') : v === 'mirror' ? t('зеркально') : t('всегда')}`), `hub:vo:${v}`, p.voice === v ? 'primary' : undefined)),
     [button(mark(p.transcript, t('🎤 показывать')), 'hub:tr:on', p.transcript ? 'primary' : undefined), button(mark(!p.transcript, t('🎤 скрывать')), 'hub:tr:off', !p.transcript ? 'primary' : undefined)],
+    [button(mark(!p.turnCost, t('🔢 расход: скрыт')), 'hub:tc:off', !p.turnCost ? 'primary' : undefined), button(mark(p.turnCost, t('🔢 после каждого хода')), 'hub:tc:on', p.turnCost ? 'primary' : undefined)],
   ]
   if (ttsEnabled()) {
     const voice = p.ttsVoice || settings.ttsVoice
@@ -209,7 +210,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       screen = settingsScreen(d, c)
       break
     }
-    case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': case 'sa': {
+    case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': case 'sa': case 'tc': {
       const c = place(ctx)
       const key = c.threadId != null ? `${c.chatId}:${c.threadId}` : c.chatId
       if (action === 'v' && ['0', '1', '2'].includes(value ?? '')) setPref(key, { verbose: Number(value) as 0 | 1 | 2 })
@@ -217,6 +218,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       if (action === 'vo' && (value === 'off' || value === 'mirror' || value === 'always')) setPref(key, { voice: value })
       if (action === 'tr' && (value === 'on' || value === 'off')) setPref(key, { transcript: value === 'on' })
       if (action === 'sa' && (value === 'on' || value === 'off')) setPref(key, { streamAnswer: value === 'on' })
+      if (action === 'tc' && (value === 'on' || value === 'off')) setPref(key, { turnCost: value === 'on' })
       if (action === 'tv' && (SILERO_VOICES as readonly string[]).includes(value ?? '')) setPref(key, { ttsVoice: value })
       if (action === 'ts' && SPEEDS.some(v => Math.round(v * 100) === Number(value))) setPref(key, { ttsSpeed: Number(value) / 100 })
       toast = t('Сохранено')
