@@ -634,13 +634,19 @@ describe('topics', () => {
     const s = d.sessions.get(sessionId)!
     const key = `${s.topic!.chatId}:${s.topic!.threadId}`
     tg.push(callbackQuery(`sm:s:${sessionId}`))
+    const top = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && JSON.stringify(c.body.reply_markup ?? '').includes(`sm:g:${sessionId}:n`))
+    expect(String(top.body.text)).toContain('📂 <b>proj</b>')
+    // The card keeps the groups; their buttons are one tap deeper.
+    expect(JSON.stringify(top.body.reply_markup)).toContain(`sm:g:${sessionId}:c`)
+    expect(JSON.stringify(top.body.reply_markup)).toContain(`sm:g:${sessionId}:m`)
+    expect(JSON.stringify(top.body.reply_markup)).not.toContain(`sm:v:${sessionId}`)
+    tg.push(callbackQuery(`sm:g:${sessionId}:n`))
     const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && String(c.body.text).includes('в топике'))
-    expect(String(card.body.text)).toContain('📂 <b>proj</b>')
     const ckb = JSON.stringify(card.body.reply_markup)
     expect(ckb).toContain(`sm:v:${sessionId}:2`)
     expect(ckb).toContain(`sm:n:${sessionId}:always`)
-    expect(ckb).toContain(`sm:ar:${sessionId}`)
     expect(ckb).toContain('• 🔔1')
+    expect(ckb).toContain(`"sm:s:${sessionId}"`)
 
     tg.push(callbackQuery(`sm:v:${sessionId}:2`))
     await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('• 📢2'))
@@ -650,6 +656,8 @@ describe('topics', () => {
     expect(prefsFor(s.topic!.chatId, s.topic!.threadId).notifyDone).toBe('always')
     setPref(key, { verbose: 1, notifyDone: 'long' })
 
+    tg.push(callbackQuery(`sm:g:${sessionId}:m`))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes(`sm:ar:${sessionId}`))
     tg.push(callbackQuery(`sm:ar:${sessionId}`))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Архивировать «proj»'))
     tg.push(callbackQuery(`sm:s:${sessionId}`))
@@ -782,7 +790,7 @@ describe('topics', () => {
     expect(await client.wait(m => m.t === 'perm' && m.request_id === 'cdefg')).toMatchObject({ behavior: 'allow' })
     expect(asks()).toBe(before)
 
-    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    tg.push(callbackQuery(`sm:g:${sessionId}:m`))
     const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes('♾ без вопросов: Edit'))
     expect(JSON.stringify(card.body.reply_markup)).toContain(`sm:aar:${sessionId}`)
     tg.push(callbackQuery(`sm:aar:${sessionId}`))
@@ -1053,7 +1061,7 @@ describe('remove user', () => {
     await c.connect({ cwd: dir, projectRoot: dir, tmuxPane: '%31', claudePid: claude.pid })
     const s = d.userSession('888')!
 
-    tg.push(callbackQuery(`sm:s:${s.id}`))
+    tg.push(callbackQuery(`sm:g:${s.id}:m`))
     await tg.waitFor('editMessageText', x => String(x.body.text).includes(`#${s.id}`) && JSON.stringify(x.body.reply_markup ?? '').includes('ur:ask:888'))
     tg.push(callbackQuery('ur:ask:888'))
     const conf = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚫 Удалить <b>bob (888)</b>?'))
@@ -1386,7 +1394,7 @@ describe('convenience', () => {
     const typed: string[] = []
     d.tmuxType = async (t, text) => { typed.push(`${t} ${text}`) }
     try {
-      tg.push(callbackQuery(`sm:s:${s.id}`))
+      tg.push(callbackQuery(`sm:g:${s.id}:c`))
       const card = await tg.waitFor('editMessageText', x => String(x.body.text).includes(`#${s.id}`) && JSON.stringify(x.body.reply_markup).includes('sm:hist'))
       expect(JSON.stringify(card.body.reply_markup)).toContain(`mc:list:${s.id}`)
       tg.push(callbackQuery(`sm:hist:${s.id}`))
@@ -1422,7 +1430,7 @@ describe('convenience', () => {
     client.sock.write(encode({ t: 'perm_req', request_id: 'jkmno', tool_name: 'Write', description: 'write b', input_preview: '{}' }))
     expect(await client.wait(m => m.t === 'perm' && m.request_id === 'jkmno')).toMatchObject({ behavior: 'allow' })
     expect(asks()).toBe(before)
-    tg.push(callbackQuery(`sm:s:${sessionId}`))
+    tg.push(callbackQuery(`sm:g:${sessionId}:m`))
     const card = await tg.waitFor('editMessageText', c => String(c.body.text).includes('📌 без вопросов в проекте: Write'))
     expect(JSON.stringify(card.body.reply_markup)).toContain(`sm:prm:${sessionId}`)
     tg.push(callbackQuery(`sm:prmd:${sessionId}:0`))
@@ -1572,8 +1580,8 @@ describe('ordinary groups as projects', () => {
       await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 Test Group: Bash'))
       expect(tg.callsOf('sendMessage').some(x => String(x.body.chat_id) === g1 && String(x.body.text).startsWith('🔐'))).toBe(false)
 
-      // The card shows the group; unbinding asks first.
-      tg.push(callbackQuery(`sm:s:${s.id}`))
+      // The card shows the group; unbinding (in ⚙️) asks first.
+      tg.push(callbackQuery(`sm:g:${s.id}:m`))
       const sc = await tg.waitFor('editMessageText', x => String(x.body.text).includes('👥 группа «Test Group»'))
       expect(JSON.stringify(sc.body.reply_markup)).toContain(`gp:unbind:${g1}`)
       tg.push(callbackQuery('gp:list'))
