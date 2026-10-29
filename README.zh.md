@@ -36,7 +36,7 @@ tmux 中的 Claude Code 会话：👤 每人一个（~/user/<id>）· 📂 每�
 | 频道旁的 `claude -p` / 子代理 | ❌ 启动自己的轮询并弄崩频道 | ✅ 被动会话不触碰传入消息 |
 | 与其他轮询进程冲突 | 静默 409 | ✅ 等待，并私信通知所有者 |
 | 话题 | ❌ | ✅ 论坛超级群组，每个项目一个话题，在私聊中用 `/connect_group` 连接 |
-| 控制面板 | ❌ | ✅ General 中的置顶摘要，`/sessions`、`/topics`、`/send`、`/broadcast`、`/rename`、`/archive`、`/delete`、`/main` |
+| 控制面板 | ❌ | ✅ General 中的置顶摘要（设置 `JOURNAL_CHAT_ID` 时在日志的「🖥 会话」话题中），`/sessions`、`/topics`、`/send`、`/broadcast`、`/rename`、`/archive`、`/delete`、`/main` |
 | 从 Telegram 新建会话 | ❌ | ✅ 新建话题 → 项目文件夹 + 在 tmux 窗口中运行的 Claude；`/new_session` |
 | 会话与话题归档 | ❌ | ✅「🗄 归档」关闭会话和话题；重新打开话题会再次启动会话 |
 | 实时进度 | ❌ 仅 5 秒的「正在输入」 | ✅ 私聊中带「思考」的草稿（Bot API 10.2），话题中不断更新的「⏳ 工作中…」及操作，`/verbose 0\|1\|2` |

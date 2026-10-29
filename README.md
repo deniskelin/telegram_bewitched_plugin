@@ -36,7 +36,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | `claude -p` / subagents next to the channel | ❌ start their own poller and break the channel | ✅ passive sessions don't touch incoming messages |
 | Conflict with another poller | silent 409 | ✅ waits and tells the owner in DM |
 | Topics | ❌ | ✅ forum supergroup, a topic per project, connected from DM with `/connect_group` |
-| Control panel | ❌ | ✅ pinned summary in General, `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
+| Control panel | ❌ | ✅ pinned summary in General (with `JOURNAL_CHAT_ID` — in the journal's «🖥 Sessions» topic), `/sessions`, `/topics`, `/send`, `/broadcast`, `/rename`, `/archive`, `/delete`, `/main` |
 | New session from Telegram | ❌ | ✅ create a topic → a project folder + Claude in a tmux window; `/new_session` |
 | Session and topic archive | ❌ | ✅ «🗄 Archive» closes the session and the topic; reopening the topic starts the session again |
 | Live progress | ❌ only «typing» for 5 s | ✅ a draft with «thinking» in DM (Bot API 10.2), an updating «⏳ Working…» with actions in a topic, `/verbose 0\|1\|2` |

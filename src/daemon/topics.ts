@@ -26,7 +26,7 @@ import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
 import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionBack, onSessionStopped } from './watchdog.ts'
-import { sendNotice } from './journal.ts'
+import { journalChat, noticeTarget, sendNotice } from './journal.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -276,23 +276,63 @@ export function scheduleDashboard(d: Daemon): void {
   }, wait)
 }
 
-async function updateDashboard(d: Daemon): Promise<void> {
-  const chatId = d.topicsChatId
-  if (!chatId) return
-  const text = renderDashboard(d)
-  const id = Number(d.store.get('dashboard_msg_id')) || null
-  if (id) {
+/** Where the dashboard message is: chat, topic (if any), message id. */
+type DashboardMsg = { chat: string; thread?: number; id: number }
+
+function dashboardMsg(d: Daemon): DashboardMsg | null {
+  try {
+    const v = JSON.parse(d.store.get('dashboard_msg') ?? 'null') as DashboardMsg | null
+    if (v) return v
+  } catch { /* fall through */ }
+  // Before 1.5.11: just an id, in General of the topics group.
+  const id = Number(d.store.get('dashboard_msg_id'))
+  return id && d.topicsChatId ? { chat: d.topicsChatId, id } : null
+}
+
+function setDashboardMsg(d: Daemon, m: DashboardMsg | null): void {
+  d.store.set('dashboard_msg', m ? JSON.stringify(m) : null)
+  d.store.set('dashboard_msg_id', null)
+}
+
+/** The group's dashboard is gone with the group (it was in its General). */
+function forgetDashboardIn(d: Daemon, chatId: string | null): void {
+  if (chatId && dashboardMsg(d)?.chat === chatId) setDashboardMsg(d, null)
+}
+
+/**
+ * Where the pinned dashboard lives: with a journal (JOURNAL_CHAT_ID) in its
+ * «🖥 Сессии» topic, next to the session notices; otherwise in General of the
+ * topics group.
+ */
+async function dashboardPlace(d: Daemon): Promise<{ chat: string; thread?: number } | null> {
+  if (journalChat(d)) return noticeTarget(d, 'sessions')
+  return d.topicsChatId ? { chat: d.topicsChatId } : null
+}
+
+export async function updateDashboard(d: Daemon): Promise<void> {
+  const at = await dashboardPlace(d)
+  if (!at) return
+  const text = inChat(d, at.chat, at.thread, () => renderDashboard(d))
+  let cur = dashboardMsg(d)
+  if (cur && (cur.chat !== at.chat || cur.thread !== at.thread)) {
+    // Moved (journal switched on or off): the old message goes.
+    await d.bot.api.unpinChatMessage(cur.chat, cur.id).catch(() => {})
+    await d.bot.api.deleteMessage(cur.chat, cur.id).catch(() => {})
+    setDashboardMsg(d, null)
+    cur = null
+  }
+  if (cur) {
     try {
-      await d.bot.api.editMessageText(chatId, id, text)
+      await d.bot.api.editMessageText(cur.chat, cur.id, text)
       return
     } catch (err) {
       if (isMessageNotModified(err)) return
     }
   }
   try {
-    const msg = await d.bot.api.sendMessage(chatId, text, { disable_notification: true })
-    d.store.set('dashboard_msg_id', String(msg.message_id))
-    await d.bot.api.pinChatMessage(chatId, msg.message_id, { disable_notification: true }).catch(() => {})
+    const msg = await d.bot.api.sendMessage(at.chat, text, { disable_notification: true, ...(at.thread != null ? { message_thread_id: at.thread } : {}) })
+    setDashboardMsg(d, { chat: at.chat, ...(at.thread != null ? { thread: at.thread } : {}), id: msg.message_id })
+    await d.bot.api.pinChatMessage(at.chat, msg.message_id, { disable_notification: true }).catch(() => {})
   } catch (err) {
     d.log(`dashboard update failed: ${err}`)
   }
@@ -358,7 +398,7 @@ export async function connectGroup(d: Daemon, chatId: string, title = chatId): P
     return
   }
   d.store.set('topics_chat_id', chatId)
-  if (prev !== chatId) d.store.set('dashboard_msg_id', null)
+  if (prev !== chatId) forgetDashboardIn(d, prev)
   for (const s of d.activeSessions()) {
     s.topic = null
     await ensureTopic(d, s).catch(err => d.log(`topic for ${s.projectKey} failed: ${err}`))
@@ -374,8 +414,8 @@ export function removeTopicGroup(d: Daemon, chatId: string): void {
 }
 
 export function disconnectGroup(d: Daemon): void {
+  forgetDashboardIn(d, d.topicsChatId)
   d.store.set('topics_chat_id', null)
-  d.store.set('dashboard_msg_id', null)
   for (const s of d.sessions.values()) s.topic = null
 }
 
