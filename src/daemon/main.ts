@@ -135,7 +135,7 @@ void d.startPolling(bot => {
   // A short menu: everything else is a button in /menu (old commands still work).
   // One list per language (Telegram shows the one for the user's app language), plus the default.
   const commands = () => [
-    { command: 'menu', description: t('Меню: сессии, статистика, люди, настройки') },
+    { command: 'menu', description: t('Меню: сессии, группы, статистика, люди, настройки') },
     { command: 'sessions', description: t('Сессии') },
     { command: 'usage', description: t('Лимиты подписки и расход') },
     { command: 'help', description: t('Помощь') },

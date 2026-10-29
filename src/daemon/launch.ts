@@ -195,7 +195,7 @@ const RELAUNCH_MS = 10 * 60_000
 type Launch = { ok: true; window: string } | { ok: false; skipped: boolean; error: string }
 
 /** Launch once per dir until that session connects (or RELAUNCH_MS passes). */
-async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Launch> {
+export async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Launch> {
   const at = d.launching.get(dir)
   if (at && Date.now() - at < RELAUNCH_MS) return { ok: false, skipped: true, error: '' }
   d.launching.set(dir, Date.now())

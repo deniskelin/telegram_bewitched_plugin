@@ -37,7 +37,7 @@ export function mainScreen(d: Daemon): Screen {
   const limits = limitsLine()
   if (limits) lines.push(limits)
   const kb: Btn[][] = [
-    [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list')],
+    [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list'), button(t('👥 Группы'), 'gp:list')],
     [button(t('📊 Статистика'), 'hub:stats'), button(t('👥 Люди'), 'hub:people')],
     [button(t('⏰ Напоминания'), 'hub:rem'), button(t('⚡ Быстрые команды'), 'hub:mc')],
     [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('❓ Помощь'), 'hub:help')],
@@ -113,6 +113,7 @@ export function helpScreen(): Screen {
     t('/send &lt;топик&gt; &lt;текст&gt;, /broadcast &lt;текст&gt; — написать в сессии'),
     t('/remember — сохранить память чата, /forget — стереть историю'),
     t('/new_session &lt;имя|путь&gt; — новый проект'),
+    t('Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы'),
     t('/lang — язык интерфейса в этом чате'),
     '',
     t('Голосовые расшифровываются, ответы — голосом на голосовое (⚙️ Настройки чата).'),
