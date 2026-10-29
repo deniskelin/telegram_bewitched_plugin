@@ -16,6 +16,8 @@ import { scheduleDashboard, sessionTarget } from './topics.ts'
 import { checkContext } from './menu.ts'
 import { inChat } from './lang.ts'
 import { classify, failureHint, onLimitFailure } from './outoftokens.ts'
+import { turnCostLine } from './usage.ts'
+import { sendRich } from '../tg.ts'
 import { t } from '../i18n/index.ts'
 
 const MAX_BODY = 1024 * 1024
@@ -97,6 +99,7 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
   s.status = 'idle'
   d.streams.close(s, 'stop')
   void checkContext(d, s).catch(err => d.log(`context check failed: ${err}`))
+  if (turn) reportTurnCost(d, s, turn.start)
   if (!turn || turn.replied) return
   const target = sessionTarget(d, s)
   if (!target) return
@@ -109,6 +112,33 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
   const body = maskSecrets(lastText.trim())
   const text = [head, hint, body ? (body.length > 300 ? body.slice(0, 299) + '…' : body) : ''].filter(Boolean).join('\n\n')
   void notify(d, s, { text }).catch(err => d.log(`done notice failed: ${err}`))
+}
+
+/**
+ * «🔢 Расход хода» (a chat setting, off by default): after the turn, a silent
+ * line under the bot's last message there with what the turn cost. Read from
+ * the transcript — the model is not asked. The transcript lags the Stop hook
+ * a little, hence the wait.
+ */
+function reportTurnCost(d: Daemon, s: Session, start: number): void {
+  const target = sessionTarget(d, s)
+  if (!target || !prefsFor(target.chatId, target.threadId).turnCost) return
+  const end = Date.now()
+  setTimeout(() => void (async () => {
+    const [rich, plain] = inChat(d, target.chatId, target.threadId, () => [turnCostLine(s, start, end, true), turnCostLine(s, start, end)])
+    if (!rich || !plain) return
+    const last = d.store.history(target.chatId, target.threadId ?? null, 10).filter(m => m.direction === 'out' && m.date * 1000 >= start - 1000).at(-1)
+    const extra = {
+      disable_notification: true,
+      ...(target.threadId != null ? { message_thread_id: target.threadId } : {}),
+      ...(last ? { reply_parameters: { message_id: last.message_id, allow_sending_without_reply: true } } : {}),
+    }
+    try {
+      await sendRich(d.bot, target.chatId, rich, extra)
+    } catch {
+      await d.bot.api.sendMessage(target.chatId, plain, extra).catch(err => d.log(`turn cost failed: ${err}`))
+    }
+  })(), 2000).unref?.()
 }
 
 export function startHttp(d: Daemon): void {
