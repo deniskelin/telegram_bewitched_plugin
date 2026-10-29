@@ -1891,6 +1891,36 @@ describe('session types', () => {
     m.close(); b.close()
   })
 
+  test('💤 suspension: presets per kind in /menu; a suspended member session gets 🙋, the owner 🚀', async () => {
+    const { idleMin } = await import('../src/daemon/idle.ts')
+    const { announceSuspended } = await import('../src/daemon/watchdog.ts')
+    for (const k of ['user', 'owner', 'project']) d.store.set(`idle:${k}`, null)
+    // The owner's own session: a week by default; the others from .env (0 here).
+    expect(idleMin(d, 'owner')).toBe(10080)
+    expect(idleMin(d, 'user')).toBe(0)
+    tg.push(callbackQuery('hub:idle'))
+    const sc = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('💤 <b>Приостановка сессий</b>'))
+    const rows = (sc.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard
+    expect(rows.slice(0, 3).map(r => r.length)).toEqual([5, 5, 5])
+    expect(rows[1].find(b => b.text.startsWith('•'))!.callback_data).toBe('ix:owner:4')
+    tg.push(callbackQuery('ix:user:2'))
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.reply_markup ?? '').includes('"• сутки","callback_data":"ix:user:2"'))
+    expect(idleMin(d, 'user')).toBe(1440)
+    tg.push(callbackQuery('ix:project:1', { from: 333 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+
+    const m = new FakeClient()
+    await m.connect({ cwd: `${usersDir}/333`, projectRoot: `${usersDir}/333`, claudePid: 7777 })
+    const s = [...d.sessions.values()].find(x => x.claudePid === 7777)!
+    await announceSuspended(d, s, 'сутки')
+    const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && String(c.body.text).startsWith('💤 Ваша сессия приостановлена: сутки'))
+    expect(JSON.stringify(mine.body.reply_markup)).toContain('🙋 Запросить запуск')
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('приостановлена: сутки'))
+    expect(JSON.stringify(own.body.reply_markup)).toContain('wd:run:')
+    m.close()
+    d.store.set('idle:user', null)
+  })
+
   test('permission requests of a user session go only to that user', async () => {
     u.sock.write(encode({ t: 'perm_req', request_id: 'uvwxy', tool_name: 'Write', description: 'write', input_preview: '{}' }))
     await tg.waitFor('sendMessage', c => c.body.text === '🔐 111: Write' && String(c.body.chat_id) === '111')

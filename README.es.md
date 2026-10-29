@@ -182,7 +182,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 - **La sesión de usuario arranca sola.** El primer mensaje del usuario → el demonio crea `~/user/<id>`, inicia Claude en su propia sesión de tmux `claude-user-<id>` ( con `--continue` si ya hubo conversaciones); el mensaje espera en cola y llega cuando la sesión se conecta.
 - **Tema de proyecto sin sesión** (`TOPIC_NO_SESSION=launch`): un mensaje inicia la sesión del proyecto. Si no se puede iniciar, el bot publica el comando para iniciarla a mano y cierra el tema hasta que la sesión se conecte.
 - **Vigilante.** Una sesión se fue sola (no por archivo ni por inactividad) → al minuto el dueño recibe por privado «⚠️ La sesión … se detuvo», con los comandos para reiniciarla y el botón «🚀 Iniciar». El tema del proyecto recibe solo el aviso, sin comandos ni botones, y queda cerrado hasta que la sesión se reconecte; un miembro cuya propia sesión se detuvo recibe el botón «🙋 Pedir reinicio», que pasa la solicitud al dueño.
-- **Cierre de sesiones inactivas:** `USER_IDLE_MIN` y `PROJECT_IDLE_MIN`, por defecto `0` (nunca). Una sesión inactiva no gasta tokens, solo memoria.
+- **💤 Suspensión de sesiones inactivas** (`/menu → 💤`): una fila por tipo — sesiones propias de los usuarios, la del dueño, las de proyectos — «nunca · 12 h · día · 3 días · semana». El siguiente mensaje vuelve a iniciar una sesión suspendida. El miembro recibe «💤 Tu sesión está suspendida» con «🙋 Pedir inicio»; el dueño (diario «🖥 Sesiones»), comandos y 🚀; un tema de proyecto, una línea. Por defecto: la sesión del dueño, una semana; las demás, `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0`: nunca). Una sesión inactiva no gasta tokens, solo memoria.
 
 ### Qué hay que hacer a mano
 
@@ -220,6 +220,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `USERS_DIR` | `~/user` | Dónde están las carpetas de las sesiones de usuario (`<USERS_DIR>/<user_id>`) |
 | `USER_IDLE_MIN` | `0` | Cerrar la sesión de usuario tras N minutos inactiva (0: nunca) |
 | `PROJECT_IDLE_MIN` | `0` | Cerrar la sesión de proyecto tras N minutos inactiva (0: nunca) |
+| `OWNER_IDLE_MIN` | `10080` | Cerrar la sesión propia del dueño tras N minutos inactiva (una semana; 0: nunca). `/menu → 💤` sustituye a las tres |
 | `TOPIC_NO_SESSION` | `launch` | Tema de proyecto sin sesión: `launch`: iniciarla, `main`: responde la principal, `queue`: solo cola |
 | `WATCHDOG_GRACE_SEC` | `60` | Cuántos segundos tras detenerse una sesión se avisa |
 | `MAIN_DIR` | `~` | Carpeta de la sesión principal (con `USER_SESSIONS=off`: privados y General) |

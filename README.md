@@ -182,7 +182,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 - **A user session starts by itself.** A user's first message → the daemon creates `~/user/<id>`, starts Claude in its own tmux session `claude-user-<id>` ( with `--continue` if there were conversations already); the message waits in the queue and arrives after the session connects.
 - **A project topic without a session** (`TOPIC_NO_SESSION=launch`): a message starts the project session. If the start fails, the bot posts a command for a manual start and closes the topic until the session connects.
 - **Watchdog.** A session went away by itself (not archive, not timeout) → a minute later the owner gets «⚠️ Session … has stopped» in DM, with restart commands and a «🚀 Start» button. The project topic gets the notice without commands or buttons and is closed until the session reconnects; a member whose own session stopped gets a «🙋 Ask for a restart» button, which forwards the request to the owner.
-- **Closing idle sessions:** `USER_IDLE_MIN` and `PROJECT_IDLE_MIN`, default `0` — never. An idle session spends no tokens, only memory.
+- **💤 Suspending idle sessions** (`/menu → 💤`): a row per kind — users' own sessions, the owner's own session, project sessions — «never · 12 h · a day · 3 days · a week». A suspended session starts again with the next message. The member gets «💤 Your session is suspended» with «🙋 Ask to start» (the request goes to the owner); the owner (journal «🖥 Sessions») gets the commands and 🚀; a project topic gets one line. The notices go once the session is back. Defaults: the owner's own session a week, others from `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0` — never). An idle session spends no tokens, only memory.
 
 ### What you do by hand
 
@@ -220,6 +220,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 | `USERS_DIR` | `~/user` | Where user session folders live (`<USERS_DIR>/<user_id>`) |
 | `USER_IDLE_MIN` | `0` | Close a user session after N idle minutes (0 — never) |
 | `PROJECT_IDLE_MIN` | `0` | Close a project session after N idle minutes (0 — never) |
+| `OWNER_IDLE_MIN` | `10080` | Close the owner's own session after N idle minutes (a week; 0 — never). `/menu → 💤` overrides all three |
 | `TOPIC_NO_SESSION` | `launch` | A project topic without a session: `launch` — start it, `main` — the main session answers, `queue` — only queue |
 | `WATCHDOG_GRACE_SEC` | `60` | How many seconds after a session stops to report it |
 | `MAIN_DIR` | `~` | The main session's folder (with `USER_SESSIONS=off` — DMs and General) |

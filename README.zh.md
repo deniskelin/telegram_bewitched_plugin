@@ -182,7 +182,7 @@ claude plugin update telegram-bewitched@bewitched
 - **用户会话自动启动。** 用户的第一条消息 → 守护进程创建 `~/user/<id>`，在独立的 tmux 会话 `claude-user-<id>`（如果之前已有对话则带 `--continue`）中启动 Claude；消息在队列中等待，会话连接后送达。
 - **没有会话的项目话题**（`TOPIC_NO_SESSION=launch`）：消息会启动项目会话。如果启动失败，机器人会发出手动启动的命令，并在会话连接前关闭话题。
 - **看门狗。** 会话自行退出（不是归档也不是超时）→ 一分钟后所有者私聊收到「⚠️ 会话……已停止」，附重启命令和「🚀 启动」按钮。项目话题只收到通知，没有命令和按钮，并在会话重新连接前保持关闭；自己的会话停止的成员会收到「🙋 请求重启」按钮，请求会转给所有者。
-- **关闭空闲会话：** `USER_IDLE_MIN` 和 `PROJECT_IDLE_MIN`，默认 `0`——从不关闭。空闲会话不消耗 token，只占内存。
+- **💤 暂停空闲会话**（`/menu → 💤`）：每类一行——用户的个人会话、所有者的个人会话、项目会话——「从不 · 12 小时 · 一天 · 3 天 · 一周」。下一条消息会重新启动已暂停的会话。成员收到「💤 您的会话已暂停」及「🙋 请求启动」；所有者（日志「🖥 会话」）收到命令和 🚀；项目话题收到一行说明。默认：所有者会话一周，其余取 `USER_IDLE_MIN` / `PROJECT_IDLE_MIN`（`0`——从不）。空闲会话不消耗 token，只占内存。
 
 ### 需要手动完成的事
 
@@ -220,6 +220,7 @@ claude plugin update telegram-bewitched@bewitched
 | `USERS_DIR` | `~/user` | 用户会话文件夹所在位置（`<USERS_DIR>/<user_id>`） |
 | `USER_IDLE_MIN` | `0` | 用户会话空闲 N 分钟后关闭（0——从不） |
 | `PROJECT_IDLE_MIN` | `0` | 项目会话空闲 N 分钟后关闭（0——从不） |
+| `OWNER_IDLE_MIN` | `10080` | 所有者个人会话空闲 N 分钟后关闭（一周；0——从不）。`/menu → 💤` 覆盖这三项 |
 | `TOPIC_NO_SESSION` | `launch` | 没有会话的项目话题：`launch`——启动会话，`main`——由主会话回答，`queue`——只排队 |
 | `WATCHDOG_GRACE_SEC` | `60` | 会话停止后多少秒发出通知 |
 | `MAIN_DIR` | `~` | 主会话的文件夹（`USER_SESSIONS=off` 时负责私聊和 General） |

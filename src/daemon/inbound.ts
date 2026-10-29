@@ -22,6 +22,7 @@ import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
 import { journal, journalText, who } from './journal.ts'
+import { handleIdleCallback } from './idle.ts'
 import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
@@ -569,6 +570,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
+    if (await handleIdleCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return
