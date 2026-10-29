@@ -58,14 +58,23 @@ function shellArg(s: string): string {
 export function sortedSessions(d: Daemon): Session[] {
   const main = d.mainSession()
   const rank = (s: Session) => (s === main ? 0 : d.userIdOf(s) ? 1 : 2)
-  return d.activeSessions().sort((a, b) => rank(a) - rank(b) || a.projectName.localeCompare(b.projectName))
+  return d.activeSessions().sort((a, b) => rank(a) - rank(b) || projectTitle(a).localeCompare(projectTitle(b)))
+}
+
+/**
+ * What a project is called for people: its topic or group title — the folder
+ * is named by ids (idProjectDir) and says nothing. A folder made by hand, with
+ * no topic or group, keeps its own name.
+ */
+export function projectTitle(s: Session): string {
+  return s.topic?.name.replace(/^🗄 /, '') || s.group?.title || s.projectName
 }
 
 /** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
 export function sessionLabel(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
   if (user) return `👤 ${d.userLabel(user)}`
-  return s === d.mainSession() ? t('👑 Главная') : `📂 ${s.projectName}`
+  return s === d.mainSession() ? t('👑 Главная') : `📂 ${projectTitle(s)}`
 }
 
 /** The chat the session answers in: its topic, its user's DMs or the owner's. Its prefs apply there. */

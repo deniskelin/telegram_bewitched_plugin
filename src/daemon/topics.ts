@@ -24,7 +24,7 @@ import { topicsList } from './topicmenu.ts'
 import { limitsLine } from './usage.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
-import { sessionLabel, sortedSessions, statusLabel } from './report.ts'
+import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
@@ -569,7 +569,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const s = d.sessions.get(arg)
     if (!s || s.passive) return void ctx.reply(tr('Сессия не найдена. /sessions — список.'))
     d.store.set('main_dir', s.projectKey)
-    await ctx.reply(tr('👑 Главная сессия теперь #{id} · {name} ({dir}).', { id: s.id, name: s.projectName, dir: s.projectKey }))
+    await ctx.reply(tr('👑 Главная сессия теперь #{id} · {name} ({dir}).', { id: s.id, name: projectTitle(s), dir: s.projectKey }))
   }
   bot.command('main', mainCommand)
   bot.command('use', mainCommand)

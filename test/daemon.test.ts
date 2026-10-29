@@ -1530,7 +1530,7 @@ describe('ordinary groups as projects', () => {
 
       // Permission requests of a group's project go to the owner only, never to the group.
       c.sock.write(encode({ t: 'perm_req', request_id: 'mnopq', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
-      await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 200700: Bash'))
+      await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 Test Group: Bash'))
       expect(tg.callsOf('sendMessage').some(x => String(x.body.chat_id) === g1 && String(x.body.text).startsWith('🔐'))).toBe(false)
 
       // The card shows the group; unbinding asks first.

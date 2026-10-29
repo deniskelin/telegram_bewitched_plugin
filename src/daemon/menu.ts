@@ -13,7 +13,7 @@ import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
-import { footer, passiveBlock, sessionCard, sessionChat, sessionLabel, sortedSessions, statusLabel } from './report.ts'
+import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
@@ -28,7 +28,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   const lines = list.map(s => {
     const label = sessionLabel(d, s)
     const icon = label.slice(0, label.indexOf(' '))
-    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.topic ? ` · 💬 ${escapeHtml(s.topic.name)}` : s.group ? ` · 👥 ${escapeHtml(s.group.title)}` : ''}`
+    return `${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
   })
   const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
@@ -97,11 +97,11 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   if (action === 'mdl') {
     const rows = MODELS.map(([alias, id]) => [button(`🧠 ${id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${alias}`)])
     rows.push([button(t('« Назад'), `sm:s:${s.id}`)])
-    return { screen: { text: t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(s.projectName) }), kb: new InlineKeyboard(rows) } }
+    return { screen: { text: t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb: new InlineKeyboard(rows) } }
   }
   if (action === 'clr') {
     const kb = new InlineKeyboard([[button(t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:s:${s.id}`)]])
-    return { screen: { text: t('Очистить разговор сессии #{id} ({v})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.', { id: s.id, v: escapeHtml(s.projectName) }), kb } }
+    return { screen: { text: t('Очистить разговор сессии #{id} ({v})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb } }
   }
   if (s.turn || s.status !== 'idle') return { toast: t('Сессия работает — дождитесь конца хода или нажмите ⏹.') }
   const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
@@ -120,7 +120,7 @@ function when(ms: number): string {
 /** 🕘 The project's conversations, newest first; the current one is marked. */
 async function historyScreen(s: Session): Promise<Screen> {
   const list = await listConversations(s.cwd)
-  const lines = [t('🕘 <b>Разговоры</b> · {v}', { v: escapeHtml(s.projectName) }), t('Выбранный продолжится в этой же сессии командой <code>/resume</code> — без перезапуска.'), '']
+  const lines = [t('🕘 <b>Разговоры</b> · {v}', { v: escapeHtml(projectTitle(s)) }), t('Выбранный продолжится в этой же сессии командой <code>/resume</code> — без перезапуска.'), '']
   const rows: Btn[][] = []
   for (const c of list) {
     const current = c.id === s.claude.sessionId
@@ -136,7 +136,7 @@ async function historyScreen(s: Session): Promise<Screen> {
 /** 📌 Tools allowed for the project for good, each with a button to ask again. */
 function rulesScreen(d: Daemon, s: Session): Screen {
   const rules = projectRules(d, s.projectKey)
-  const lines = [t('📌 <b>Без вопросов в проекте</b> {v}', { v: escapeHtml(s.projectName) }), rules.length ? t('Эти инструменты разрешаются сами в любой сессии проекта, и после перезапуска тоже. ❌ — снова спрашивать.') : t('Правил нет.')]
+  const lines = [t('📌 <b>Без вопросов в проекте</b> {v}', { v: escapeHtml(projectTitle(s)) }), rules.length ? t('Эти инструменты разрешаются сами в любой сессии проекта, и после перезапуска тоже. ❌ — снова спрашивать.') : t('Правил нет.')]
   const rows: Btn[][] = rules.slice(0, 20).map((t, i) => [button(clip(`❌ ${t}`, 40), `sm:prmd:${s.id}:${i}`)])
   rows.push([button(t('« Назад'), `sm:s:${s.id}`)])
   return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
@@ -146,7 +146,7 @@ async function gitScreen(s: Session): Promise<Screen> {
   const back = [button(t('« Назад'), `sm:s:${s.id}`), button('🔄', `sm:git:${s.id}`)]
   const g = await gitInfo(s.cwd)
   if (!g) return { text: t('🌿 <code>{v}</code> — не git-репозиторий.', { v: escapeHtml(s.cwd) }), kb: new InlineKeyboard([back]) }
-  const parts = [`🌿 <b>Git</b> · ${escapeHtml(s.projectName)}`, `<pre>${escapeHtml(g.status)}</pre>`]
+  const parts = [`🌿 <b>Git</b> · ${escapeHtml(projectTitle(s))}`, `<pre>${escapeHtml(g.status)}</pre>`]
   if (g.log) parts.push(t('Последние коммиты:\n<pre>{v}</pre>', { v: escapeHtml(g.log) }))
   if (g.pr) parts.push(`🔀 PR <a href="${escapeHtml(g.pr.url)}">#${g.pr.number}</a> · ${escapeHtml(g.pr.state.toLowerCase())} · ${escapeHtml(g.pr.title)}`)
   let text = parts.join('\n')
@@ -229,7 +229,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     const name = `${s.projectName}${s.branch ? `-${s.branch.replace(/[^\w.-]+/g, '_')}` : ''}.diff`
     const thread = ctx.callbackQuery?.message?.message_thread_id
     await ctx.replyWithDocument(new InputFile(Buffer.from(diff), name), {
-      caption: `📄 git diff HEAD · ${s.projectName} · ${t('{n} файл(ов)', { n: diff.split('\n').filter(l => /^diff --git/.test(l)).length })}`,
+      caption: `📄 git diff HEAD · ${projectTitle(s)} · ${t('{n} файл(ов)', { n: diff.split('\n').filter(l => /^diff --git/.test(l)).length })}`,
       ...(thread ? { message_thread_id: thread } : {}),
     })
     return true

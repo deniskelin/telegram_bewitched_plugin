@@ -37,6 +37,7 @@ import { addProjectRule, projectRules } from './permrules.ts'
 import { handleServerCallback, registerServerCommands } from './server.ts'
 import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
 import { t as tr } from '../i18n/index.ts'
+import { projectTitle } from './report.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -401,7 +402,7 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   }
   s.status = 'waiting'
   d.onSessionsChanged()
-  const text = `🔐 ${s.projectName}: ${p.tool_name}`
+  const text = `🔐 ${projectTitle(s)}: ${p.tool_name}`
   const kb = permissionKb(p.request_id, p.tool_name, true)
   const mode = settings.permissionsTo
   const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict(s.topic.chatId)
@@ -531,7 +532,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
       await ctx.reply([
         tr('Сопряжено как {v}.', { v: ctx.from!.username ? `@${ctx.from!.username}` : senderId }),
         tr('Демон: pid {pid}, опрос {v}, аптайм {v2} мин.', { pid: process.pid, v: d.isPolling() ? tr('идёт') : tr('не идёт'), v2: Math.round(process.uptime() / 60) }),
-        tr('Сессий: {length}{v}.', { length: list.length, v: list.length ? ` (${list.map(s => `#${s.id} ${s.projectName}`).join(', ')})` : '' }),
+        tr('Сессий: {length}{v}.', { length: list.length, v: list.length ? ` (${list.map(s => `#${s.id} ${projectTitle(s)}`).join(', ')})` : '' }),
         tr('Группа топиков: {v}.', { v: d.topicsChatId ?? tr('не подключена') }),
       ].join('\n'))
       return

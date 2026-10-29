@@ -19,6 +19,7 @@ import { isMessageNotModified } from '../tg.ts'
 import type { Daemon } from './daemon.ts'
 import { button } from './stream.ts'
 import { locale, k, t } from '../i18n/index.ts'
+import { projectTitle } from './report.ts'
 
 const LINES = 40
 const MAX_CHARS = 3500
@@ -207,7 +208,7 @@ async function runConfirm(d: Daemon, ctx: Context, code: string, target: string)
   const r = await confirmLaunch(d, target, () => edit(d, ctx, code, false, progress))
   if (r.result === 'connected') {
     const s = d.sessions.get(r.sessionId)
-    const done = t('✅ Сессия #{id} подключилась — можно писать.', { id: r.sessionId }) + (s ? ` ${s.projectName}` : '')
+    const done = t('✅ Сессия #{id} подключилась — можно писать.', { id: r.sessionId }) + (s ? ` ${projectTitle(s)}` : '')
     await ctx.editMessageText(done, { reply_markup: new InlineKeyboard([[button(t('✖️ Закрыть'), `tx:${code}:z`)]]) }).catch(() => {})
     return
   }

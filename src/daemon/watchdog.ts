@@ -21,6 +21,7 @@ import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
 import { inSession } from './lang.ts'
+import { projectTitle } from './report.ts'
 
 /** session: -n <name> and the tmux window name. */
 type Restart = { dir: string; resume: string | null; name: string; session?: string }
@@ -36,7 +37,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
   if (d.activeSessions().some(o => o.projectKey === s.projectKey)) return // restarted meanwhile
   const role = d.roleOf(s)
   const user = d.userIdOf(s)
-  const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? tr('👑 главная') : `📂 ${s.projectName}`
+  const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? tr('👑 главная') : `📂 ${projectTitle(s)}`
   const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey) }
   const id = randomBytes(4).toString('hex')
   d.store.set(`wd:${id}`, JSON.stringify(restart))
