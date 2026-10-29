@@ -226,6 +226,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 | `CONTEXT_WARN_PCT` | `80` | Offer `/compact` in the session's chat at this context fill (0 — never) |
 | `DIGEST_AT` | `21:00` | When to send the owner the «🌙 Daily summary» (spending, commits, limits); `off` — never. On request — `/digest` |
 | `LIMIT_ALERTS` | `80,95` | Subscription limit notice thresholds in percent; `off` — no notices. A window that crossed a threshold gets «✅ Tokens are back» exactly at the reset; in `/usage` the same can be ordered with 🔔 for any window |
+| `LIMIT_WARMUP` | `off` | `on`: a minute after the 5-hour window resets, send a tiny `claude -p` request (haiku) so the next window starts right away instead of when work resumes. Also the ⚡ button in `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | How often to check limits (minutes, 0 — never) |
 | `USAGE_LIMITS` | `on` | `/usage`: ask the undocumented Anthropic endpoint for limit percentages (`off` — local data only) |
 | `USER_SHARE_ALERT` | `40` | Tell the owner when another user took this many percent of the 5-hour window (once per window; 0 — never). Works together with `LIMIT_ALERTS` |

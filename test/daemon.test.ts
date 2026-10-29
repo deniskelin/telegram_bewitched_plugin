@@ -1555,6 +1555,27 @@ describe('several topic groups (FR-3)', () => {
   })
 })
 
+describe('limit warmup', () => {
+  test('⚡ on: a tiny request right after the 5-hour reset, once per window; limit notices refresh and delete', async () => {
+    const { scheduleWarmup, setRunWarmup, warmupOn, fireWarmup } = await import('../src/daemon/usage.ts')
+    let runs = 0
+    setRunWarmup(async () => { runs++ })
+    expect(warmupOn(d)).toBe(false)
+    tg.push(callbackQuery('us:w:on'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⚡ Окно будет запускаться сразу после сброса')
+    expect(warmupOn(d)).toBe(true)
+    const at = new Date(Date.now() - 59_990)
+    scheduleWarmup(d, at)
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚡ Новое окно «5 часов» запущено'))
+    expect(runs).toBe(1)
+    await fireWarmup(d, at.toISOString())
+    expect(runs).toBe(1)
+    tg.push(callbackQuery('la:x', { messageId: 4242 }))
+    await tg.waitFor('deleteMessage', c => c.body.message_id === 4242)
+    d.store.set('limit_warmup', null)
+  })
+})
+
 describe('languages', () => {
   test('/lang and ⚙️ switch the chat language; /menu follows it; commands per language', async () => {
     tg.push(textMessage({ text: '/lang en' }))

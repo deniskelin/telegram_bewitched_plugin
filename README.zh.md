@@ -226,6 +226,7 @@ claude plugin update telegram-bewitched@bewitched
 | `CONTEXT_WARN_PCT` | `80` | 上下文占用达到此值时，在会话聊天中建议 `/compact`（0——从不） |
 | `DIGEST_AT` | `21:00` | 何时给所有者发送「🌙 每日总结」（消耗、提交、额度）；`off`——不发送。按需：`/digest` |
 | `LIMIT_ALERTS` | `80,95` | 订阅额度通知阈值（百分比）；`off`——不通知。越过阈值的窗口会在重置的那一刻收到「✅ token 已恢复」；在 `/usage` 中也可以用 🔔 为任意窗口订阅 |
+| `LIMIT_WARMUP` | `off` | `on`：5 小时窗口重置一分钟后发送一个极小的 `claude -p` 请求（haiku），让下一个窗口立即开始。也可用 `/usage` 中的 ⚡ 按钮 |
 | `LIMIT_CHECK_MIN` | `10` | 检查额度的频率（分钟，0——从不） |
 | `USAGE_LIMITS` | `on` | `/usage`：向 Anthropic 未公开文档的端点请求额度百分比（`off`——只用本地数据） |
 | `USER_SHARE_ALERT` | `40` | 当其他用户占用 5 小时窗口达到此百分比时通知所有者（每个窗口一次；0——从不）。与 `LIMIT_ALERTS` 一起生效 |
