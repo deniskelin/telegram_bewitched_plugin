@@ -389,6 +389,16 @@ describe('topics', () => {
       expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
       expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
       expect(text).not.toContain('📂 sub')
+      expect(text).toContain('🗂 <b>По сессиям</b>, 7 дней')
+
+      // The period of the sections: buttons, remembered; a day shows shares of spending.
+      const { usageReport } = await import('../src/daemon/usage.ts')
+      d.store.set('usage_period', 'd')
+      const day = await usageReport(d)
+      expect(day).toContain('🧠 <b>По моделям</b>, сутки')
+      expect(day).toContain('👥 <b>Кто тратит</b>, сутки')
+      expect(day).toMatch(/📂 проекты и главная: 100% расхода · \$0\.50/)
+      d.store.set('usage_period', null)
       // The same replies: today's cost in the session card and in the daily digest.
       const { sessionCostLine, digestReport } = await import('../src/daemon/usage.ts')
       expect(sessionCostLine(d.sessions.get(sessionId)!)).toBe('💸 сегодня $0.50 · 3.0 млн ток.')
@@ -541,16 +551,17 @@ describe('topics', () => {
 
       // /usage offers 🔔 per limit; pressing it remembers the request.
       const kb = JSON.stringify(usageKeyboard(d))
-      expect(kb).toContain('🔔 Напомнить о сбросе: 5 часов')
+      expect(kb).toContain('"🔔 5 часов"')
+      expect(kb).toContain('us:p:h5')
       tg.push(callbackQuery('lr:0'))
       await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔔 Напомню'))
       expect(d.store.get('limit_notify:5 часов')).toBeTruthy()
-      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Напомнить о сбросе: 5 часов')
+      expect(JSON.stringify(usageKeyboard(d))).toContain('"✅ 5 часов"')
       // 🔕: the same reminder, delivered without sound.
       tg.push(callbackQuery('lr:0:s'))
       await tg.waitFor('answerCallbackQuery', c => String(c.body.text).startsWith('🔕 Тихо напомню'))
       expect(d.store.get('limit_notify:5 часов')).toEndWith('|silent')
-      expect(JSON.stringify(usageKeyboard(d))).toContain('✅ Тихо')
+      expect(JSON.stringify(usageKeyboard(d))).toMatch(/"🔔 5 часов".*"✅ 5 часов"/)
       const { requestResetNotice } = await import('../src/daemon/usage.ts')
       requestResetNotice(d, 'Тихий', new Date(Date.now() - 29_900), true)
       const quiet = await tg.waitFor('sendMessage', c => String(c.body.text).includes('лимит «Тихий» сброшен'))

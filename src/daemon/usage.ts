@@ -12,6 +12,7 @@ import { escapeHtml, fmtDuration } from '../format.ts'
 import { InlineKeyboard, type Context } from 'grammy'
 import { owner } from '../access.ts'
 import { button } from './stream.ts'
+import { isMessageNotModified } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { commitsSince } from './git.ts'
 import { locale, k, t as tr } from '../i18n/index.ts'
@@ -329,6 +330,11 @@ export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = 
   const limit = limits.items.find(l => l.label === LIMIT_LABELS.session)
   if (!limit) return null
   const start = limit.resetsAt ? limit.resetsAt.getTime() - 5 * 3600_000 : now - 5 * 3600_000
+  return { limit, shares: sharesSince(d, entries, start, limit.percent) }
+}
+
+/** Cost by person since start; percent = scale × their part of the cost (scale 100: share of spending). */
+export function sharesSince(d: Daemon, entries: Entry[], start: number, scale = 100): Share[] {
   const by = new Map<string, Share>()
   let total = 0
   for (const e of entries) {
@@ -341,12 +347,23 @@ export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = 
     total += cost
     by.set(key, sh)
   }
-  if (total <= 0) return { limit, shares: [] }
-  const shares = [...by.values()].map(sh => ({ ...sh, percent: limit.percent * sh.cost / total })).sort((a, b) => b.cost - a.cost)
-  return { limit, shares }
+  if (total <= 0) return []
+  return [...by.values()].map(sh => ({ ...sh, percent: scale * sh.cost / total })).sort((a, b) => b.cost - a.cost)
 }
 
-export async function usageReport(d: Daemon, now = Date.now()): Promise<string> {
+/** The period of the «who spends», «by model» and «by session» sections of /usage, chosen with buttons. */
+export type Period = 'h5' | 'd' | 'w' | 'm'
+export const PERIODS: Period[] = ['h5', 'd', 'w', 'm']
+const PERIOD_MS: Record<Period, number> = { h5: 5 * 3600_000, d: 86_400_000, w: 7 * 86_400_000, m: 30 * 86_400_000 }
+const PERIOD_NAME: Record<Period, string> = { h5: k('5 часов'), d: k('сутки'), w: k('7 дней'), m: k('30 дней') }
+const PERIOD_BUTTON: Record<Period, string> = { h5: k('5 ч'), d: k('День'), w: k('Неделя'), m: k('Месяц') }
+
+export function usagePeriod(d: Daemon): Period {
+  const v = d.store.get('usage_period') as Period | null
+  return v && PERIODS.includes(v) ? v : 'w'
+}
+
+export async function usageReport(d: Daemon, now = Date.now(), period: Period = usagePeriod(d)): Promise<string> {
   const oauth = readOAuth()
   const plan = planName(oauth)
   const out: string[] = [tr('📊 <b>Подписка</b>: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })]
@@ -359,7 +376,7 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
     out.push(`<blockquote>${lines.join('\n')}</blockquote>`)
   }
 
-  const entries = collectEntries(now)
+  const entries = collectEntries(now, 31)
   const windows: [string, number][] = [[tr('5 часов'), 5 * 3600_000], [tr('Сутки'), 86_400_000], [tr('7 дней'), 7 * 86_400_000]]
   const sums = windows.map(([label, ms]) => {
     const s: Sum = { tokens: 0, cost: 0, unpriced: 0 }
@@ -368,15 +385,25 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   })
   out.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: sums.join('\n') }))
   if (!entries.length) return out.join('\n\n')
-  const ws = typeof limits === 'string' ? null : windowShares(d, limits, entries, now)
-  if (ws?.shares.length) {
-    out.push(tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)\n<blockquote>{v3}</blockquote>', { v: escapeHtml(tr(ws.limit.label)), v2: Math.round(ws.limit.percent), v3: ws.shares.map(sh =>
-      `${escapeHtml(sh.who)}: ≈${Math.round(sh.percent)}% · $${sh.cost.toFixed(2)}`).join('\n') }))
+  const since = now - PERIOD_MS[period]
+  const name = tr(PERIOD_NAME[period])
+  // For 5 hours and a week the share is of the subscription window (its own start), otherwise of the spending.
+  const window = typeof limits === 'string' ? null : limits.items.find(l => l.label === (period === 'h5' ? LIMIT_LABELS.session : period === 'w' ? LIMIT_LABELS.weekly_all : ''))
+  const windowStart = window?.resetsAt ? window.resetsAt.getTime() - PERIOD_MS[period] : since
+  const shares = window ? sharesSince(d, entries, windowStart, window.percent) : sharesSince(d, entries, since)
+  if (shares.length) {
+    const head = window
+      ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(tr(window.label)), v2: Math.round(window.percent) })
+      : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
+    const line = (sh: Share) => window ? tr('{who}: ≈{p}% окна · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
+      : tr('{who}: {p}% расхода · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
+    out.push(`${head}\n<blockquote>${shares.map(line).join('\n')}</blockquote>`)
   }
 
   const group = (key: (e: Entry) => string) => {
     const m = new Map<string, Sum>()
     for (const e of entries) {
+      if (e.ts < since) continue
       const k = key(e)
       const s = m.get(k) ?? { tokens: 0, cost: 0, unpriced: 0 }
       add(s, e)
@@ -386,8 +413,10 @@ export async function usageReport(d: Daemon, now = Date.now()): Promise<string> 
   }
   const models = group(e => e.model.replace(/^claude-/, ''))
   const owners = group(e => ownerOf(d, e.cwd))
-  out.push(tr('🧠 <b>По моделям</b>, 7 дней\n<blockquote>{v}</blockquote>', { v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') }))
-  out.push(tr('🗂 <b>По сессиям</b>, 7 дней\n<blockquote expandable>{v}</blockquote>', { v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') }))
+  const none = tr('ничего')
+  out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
+  out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
+  if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>'))
   out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
   return out.join('\n\n')
 }
@@ -507,26 +536,41 @@ function rescheduleRequested(d: Daemon): void {
 /** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
 export function usageKeyboard(d: Daemon): InlineKeyboard {
   const l = lastLimits()
-  const rows: ReturnType<typeof button>[][] = (l?.limits.items ?? []).flatMap((it, i) => {
-    if (!it.resetsAt) return []
+  const period = usagePeriod(d)
+  const rows: ReturnType<typeof button>[][] = [
+    PERIODS.map(p => button(`${p === period ? '• ' : ''}${tr(PERIOD_BUTTON[p])}`, `us:p:${p}`, p === period ? 'primary' : undefined)),
+  ]
+  // Short labels: a phone shows about 15 characters of a half-width button.
+  for (const [i, it] of (l?.limits.items ?? []).entries()) {
+    if (!it.resetsAt) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req?.at === it.resetsAt.toISOString() ? req : null
-    return [[
-      button(tr('{v} Напомнить о сбросе: {label}', { v: asked && !asked.silent ? '✅' : '🔔', label: tr(it.label) }), `lr:${i}`),
-      button(tr('{v} Тихо', { v: asked?.silent ? '✅' : '🔕' }), `lr:${i}:s`),
-    ]]
-  })
+    rows.push([
+      button(`${asked && !asked.silent ? '✅' : '🔔'} ${tr(it.label)}`, `lr:${i}`),
+      button(`${asked?.silent ? '✅' : '🔕'} ${tr(it.label)}`, `lr:${i}:s`),
+    ])
+  }
   rows.push([button(tr('« Статистика'), 'hub:stats')])
   return new InlineKeyboard(rows)
 }
 
+/** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const p = /^us:p:(h5|d|w|m)$/.exec(data)
   const m = /^lr:(\d+)(:s)?$/.exec(data)
-  if (!m) return false
+  if (!m && !p) return false
   if (!ctx.from || String(ctx.from.id) !== owner()) {
     await ctx.answerCallbackQuery({ text: tr('Только для владельца подписки.') }).catch(() => {})
     return true
   }
+  if (p) {
+    d.store.set('usage_period', p[1])
+    await ctx.answerCallbackQuery({ text: tr('📊 Собираю…') }).catch(() => {})
+    await ctx.editMessageText(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
+      .catch(err => { if (!isMessageNotModified(err)) d.log(`usage period: ${err}`) })
+    return true
+  }
+  if (!m) return true
   const it = lastLimits()?.limits.items[Number(m[1])]
   if (!it?.resetsAt) {
     await ctx.answerCallbackQuery({ text: tr('Данные о лимитах устарели — откройте /usage заново.') }).catch(() => {})
