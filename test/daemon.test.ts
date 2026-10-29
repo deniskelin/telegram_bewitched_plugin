@@ -1331,6 +1331,20 @@ describe('convenience', () => {
     expect(tg.callsOf('sendMessage').slice(before).map(c => c.body.chat_id)).toEqual(['111'])
     await remindLaunch(d, dir, '8', true)
     expect(tg.callsOf('sendMessage').length).toBe(before + 1)
+
+    // 🔕: the other reminder goes, this one says «off», and no more come; 🔔 brings them back.
+    const off = /lr:off:([0-9a-f]{10})/.exec(JSON.stringify(owner.body.reply_markup))![1]
+    const deletes = tg.callsOf('deleteMessage').length
+    tg.push(callbackQuery(`lr:off:${off}`, { messageId: 1 }))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🔕 Напоминания о запуске'))
+    await tg.waitFor('deleteMessage', () => tg.callsOf('deleteMessage').length > deletes)
+    const quiet = tg.callsOf('sendMessage').length
+    await remindLaunch(d, dir, '9', false)
+    expect(tg.callsOf('sendMessage').length).toBe(quiet)
+    tg.push(callbackQuery(`lr:on:${off}`))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🔔 Напоминания о запуске'))
+    await remindLaunch(d, dir, '9', false)
+    expect(tg.callsOf('sendMessage').length).toBe(quiet + 1)
   })
 
   test('📜 daemon log and ♻️ restart after a confirmation; the new daemon edits the message', async () => {
