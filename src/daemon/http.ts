@@ -14,6 +14,8 @@ import { handleEvent, type ExternalEvent } from './events.ts'
 import { notify } from './tools.ts'
 import { scheduleDashboard, sessionTarget } from './topics.ts'
 import { checkContext } from './menu.ts'
+import { inChat } from './lang.ts'
+import { t } from '../i18n/index.ts'
 
 const MAX_BODY = 1024 * 1024
 
@@ -34,6 +36,13 @@ export function handleHook(d: Daemon, h: HookEvent): void {
   if (h.claudePid == null) return
   const s = d.sessionByClaudePid(h.claudePid)
   if (!s || s.passive) return
+  // Progress, notices and the context warning go to the session's chat: its language.
+  const c = sessionTarget(d, s)
+  if (c) return inChat(d, c.chatId, c.threadId, () => onHook(d, s, h))
+  onHook(d, s, h)
+}
+
+function onHook(d: Daemon, s: Session, h: HookEvent): void {
   const data = h.data
   if (typeof data.session_id === 'string') s.claude.sessionId = data.session_id
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
@@ -52,7 +61,7 @@ export function handleHook(d: Daemon, h: HookEvent): void {
     }
     case 'PostToolUseFailure': {
       const name = String(data.tool_name ?? '')
-      if (name && !isOwnTool(name)) d.streams.onTool(s, `⚠️ ${summarizeTool(name, data.tool_input as Record<string, unknown>)} — ошибка`)
+      if (name && !isOwnTool(name)) d.streams.onTool(s, t('⚠️ {tool} — ошибка', { tool: summarizeTool(name, data.tool_input as Record<string, unknown>) }))
       break
     }
     case 'MessageDisplay': {
@@ -82,7 +91,7 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string): vo
   const took = Date.now() - turn.start
   if (mode === 'off') return
   if (mode === 'long' && took < settings.notifyLongSec * 1000 && !failed) return
-  const head = failed ? `❌ Ход завершился с ошибкой (${fmtDuration(took)})` : `✅ Готово за ${fmtDuration(took)}`
+  const head = failed ? t('❌ Ход завершился с ошибкой ({took})', { took: fmtDuration(took) }) : t('✅ Готово за {took}', { took: fmtDuration(took) })
   const body = maskSecrets(lastText.trim())
   const text = body ? `${head}\n\n${body.length > 300 ? body.slice(0, 299) + '…' : body}` : head
   void notify(d, s, { text }).catch(err => d.log(`done notice failed: ${err}`))

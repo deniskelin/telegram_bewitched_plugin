@@ -14,9 +14,11 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { inChat } from './lang.ts'
 import { isChannelsPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
+import { t as tr } from '../i18n/index.ts'
 
 /** Folder name from a topic name: letters/digits (any script), dot, dash, underscore. */
 export function slugify(name: string): string {
@@ -172,11 +174,11 @@ export async function remindLaunch(d: Daemon, dir: string, win: string, first: b
   if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
   const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
-  const text = isChannelsPrompt(raw)
-    ? `⏳ Сессия <b>${escapeHtml(who)}</b> (окно ${escapeHtml(win)}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.`
-    : `⏳ Сессия <b>${escapeHtml(who)}</b> (окно ${escapeHtml(win)}) запущена, но так и не подключилась. Посмотрите, что на экране.`
-  await say(d, o, undefined, text, screenKb(win))
-  if (first && user && user !== o) await say(d, user, undefined, '⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')
+  const text = inChat(d, o, undefined, () => isChannelsPrompt(raw)
+    ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(win) })
+    : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(win) }))
+  await say(d, o, undefined, text, inChat(d, o, undefined, () => screenKb(win)))
+  if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')))
 }
 
 // --------------------------------------------------------------------------
@@ -211,12 +213,12 @@ function hasTranscripts(dir: string): boolean {
 }
 
 function confirmHint(win: string): string {
-  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «✅ Подтвердить запуск» — прямо из Telegram.`
+  return tr('<pre>tmux attach -t {v}:{v2}</pre>и примите экран подтверждения каналов. Или кнопкой «✅ Подтвердить запуск» — прямо из Telegram.', { v: escapeHtml(settings.tmuxSession), v2: escapeHtml(win) })
 }
 
 /** "👁 Экран" for a freshly launched window: its screen with keys to accept the channels prompt. */
 export function screenKb(win: string): InlineKeyboard {
-  return new InlineKeyboard([[button('✅ Подтвердить запуск', `tx:w${win}:c`, 'success'), button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
+  return new InlineKeyboard([[button(tr('✅ Подтвердить запуск'), `tx:w${win}:c`, 'success'), button(tr('👁 Экран и клавиши'), `tx:w${win}`, 'primary')]])
 }
 
 export function manualCmd(dir: string, o: LaunchOptions = {}): string {
@@ -234,20 +236,20 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
   const r = await launchOnce(d, dir, { continue: cont, name: sessionName(d, dir) })
   const o = owner()
   if (!r.ok && r.skipped) {
-    await say(d, where.chatId, where.threadId, '⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.')
+    await say(d, where.chatId, where.threadId, tr('⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.'))
     return
   }
   if (!r.ok) {
-    await say(d, where.chatId, where.threadId, `❌ Не удалось запустить вашу сессию: ${escapeHtml(r.error)}\nСообщение сохранено. Запустить вручную:${manualCmd(dir, { continue: cont, name: sessionName(d, dir) })}`)
-    if (o && o !== userId) await say(d, o, undefined, `❌ Не удалось запустить сессию пользователя ${escapeHtml(name)} (${userId}): ${escapeHtml(r.error)}${manualCmd(dir, { continue: cont, name: sessionName(d, dir) })}`)
+    await say(d, where.chatId, where.threadId, tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
+    if (o && o !== userId) await say(d, o, undefined, tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
     return
   }
   const self = o === userId
   await say(d, where.chatId, where.threadId, self
-    ? `🚀 Запускаю вашу сессию в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`
-    : '🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.', self ? screenKb(r.window) : undefined)
+    ? tr('🚀 Запускаю вашу сессию в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(r.window), v2: confirmHint(r.window) })
+    : tr('🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.'), self ? screenKb(r.window) : undefined)
   if (o && !self) {
-    await say(d, o, undefined, `🚀 ${escapeHtml(name)} (${userId}) написал(а) боту — запускаю сессию пользователя в <code>${escapeHtml(dir)}</code>. Подтвердите:${confirmHint(r.window)}`, screenKb(r.window))
+    await say(d, o, undefined, tr('🚀 {v} ({userId}) написал(а) боту — запускаю сессию пользователя в <code>{v2}</code>. Подтвердите:{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(dir), v3: confirmHint(r.window) }), screenKb(r.window))
   }
 }
 
@@ -258,17 +260,17 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
  */
 export async function launchForTopic(d: Daemon, chatId: string, threadId: number, projectKey: string): Promise<void> {
   const launchable = !projectKey.includes('#') && existsSync(projectKey)
-  const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: 'папки проекта нет' }
+  const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: tr('папки проекта нет') }
   if (!r.ok && r.skipped) {
-    await say(d, chatId, threadId, '⏳ Сессия проекта уже запускается — сообщение в очереди.')
+    await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'))
     return
   }
   if (r.ok) {
-    await say(d, chatId, threadId, `🚀 Запускаю сессию проекта в tmux (окно ${escapeHtml(r.window)}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:${confirmHint(r.window)}`, screenKb(r.window))
+    await say(d, chatId, threadId, tr('🚀 Запускаю сессию проекта в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(r.window), v2: confirmHint(r.window) }), screenKb(r.window))
     return
   }
   const dir = projectKey.replace(/#.*$/, '')
-  await say(d, chatId, threadId, `❌ Не удалось запустить сессию проекта: ${escapeHtml(r.error)}\nСообщение сохранено. Запустите вручную:${manualCmd(dir, { name: sessionName(d, dir) })}Топик закрыт, пока сессия не подключится.`)
+  await say(d, chatId, threadId, tr('❌ Не удалось запустить сессию проекта: {v}\nСообщение сохранено. Запустите вручную:{v2}Топик закрыт, пока сессия не подключится.', { v: escapeHtml(r.error), v2: manualCmd(dir, { name: sessionName(d, dir) }) }))
   d.store.setTopicStatus(chatId, threadId, 'waiting')
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }
@@ -307,7 +309,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
     })
   }
   if (d.sessionForProject(dir)) {
-    await say(d, where.chatId, where.threadId, `📁 <code>${escapeHtml(dir)}</code> уже открыт в сессии — пишите сюда.`)
+    await say(d, where.chatId, where.threadId, tr('📁 <code>{v}</code> уже открыт в сессии — пишите сюда.', { v: escapeHtml(dir) }))
     return
   }
   let win: string
@@ -315,16 +317,16 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
     win = await d.launchSession(dir, { name: sessionName(d, dir) })
     watchLaunch(d, dir, win)
   } catch (err) {
-    await say(d, where.chatId, where.threadId, `❌ Не удалось запустить сессию в tmux: ${escapeHtml(String(err instanceof Error ? err.message : err))}`)
+    await say(d, where.chatId, where.threadId, tr('❌ Не удалось запустить сессию в tmux: {v}', { v: escapeHtml(String(err instanceof Error ? err.message : err)) }))
     return
   }
   const sess = settings.tmuxSession
   await say(d, where.chatId, where.threadId, [
-    `🚀 ${created ? 'Создал проект' : 'Проект'} <code>${escapeHtml(dir)}</code>, запускаю Claude в tmux: окно ${escapeHtml(win)}.`,
+    tr('🚀 {v} <code>{v2}</code>, запускаю Claude в tmux: окно {v3}.', { v: created ? tr('Создал проект') : tr('Проект'), v2: escapeHtml(dir), v3: escapeHtml(win) }),
     '',
-    'Подтвердите запуск каналов в терминале:',
+    tr('Подтвердите запуск каналов в терминале:'),
     `<pre>tmux attach -t ${escapeHtml(sess)}</pre>`,
-    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «✅ Подтвердить запуск» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
+    tr('Затем <code>Ctrl+B</code>, <code>{v}</code> — и примите экран подтверждения. Или кнопкой «✅ Подтвердить запуск» — прямо отсюда. После этого сессия подключится к {v2}.', { v: escapeHtml(win), v2: bindThread != null ? tr('этому топику') : tr('новому топику проекта') }),
   ].join('\n'), screenKb(win))
 }
 
@@ -336,13 +338,13 @@ export async function onManualTopic(d: Daemon, chatId: string, threadId: number,
   if (!dir) return
   const other = d.store.topicForProject(chatId, dir)
   if (other && other.thread_id !== threadId && other.status === 'active') {
-    await say(d, chatId, threadId, `📁 Проект <code>${escapeHtml(dir)}</code> уже привязан к топику «${escapeHtml(other.name)}». Этот топик оставляю без проекта.`)
+    await say(d, chatId, threadId, tr('📁 Проект <code>{v}</code> уже привязан к топику «{v2}». Этот топик оставляю без проекта.', { v: escapeHtml(dir), v2: escapeHtml(other.name) }))
     return
   }
   if (mode === 'ask') {
-    await d.bot.api.sendMessage(chatId, `Создать проект ${dir} и запустить в нём сессию Claude?`, {
+    await d.bot.api.sendMessage(chatId, tr('Создать проект {dir} и запустить в нём сессию Claude?', { dir }), {
       message_thread_id: threadId,
-      reply_markup: new InlineKeyboard([[button('🚀 Создать', `np:ok:${threadId}`, 'success'), button('Не надо', `np:no:${threadId}`)]]),
+      reply_markup: new InlineKeyboard([[button(tr('🚀 Создать'), `np:ok:${threadId}`, 'success'), button(tr('Не надо'), `np:no:${threadId}`)]]),
     }).catch(err => d.log(`project offer failed: ${err}`))
     return
   }
@@ -353,14 +355,14 @@ export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string
   const m = /^np:(ok|no):(\d+)$/.exec(data)
   if (!m) return false
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
   await ctx.answerCallbackQuery().catch(() => {})
   const chat = d.topicsChatId
   const thread = Number(m[2])
   if (m[1] === 'no' || !chat) {
-    await ctx.editMessageText('Ок, без проекта.').catch(() => {})
+    await ctx.editMessageText(tr('Ок, без проекта.')).catch(() => {})
     return true
   }
   const t = d.store.topic(chat, thread)
@@ -376,7 +378,7 @@ export function registerLaunchCommands(d: Daemon, bot: Bot): void {
     const inControl = ctx.chat.type === 'private' || (String(ctx.chat.id) === d.topicsChatId && !ctx.message?.is_topic_message)
     if (!inControl) return
     const dir = projectPath(ctx.match ?? '')
-    if (!dir) return void ctx.reply('Формат: /new_session <имя проекта или путь>\nИмя → папка в ' + settings.projectsDir)
+    if (!dir) return void ctx.reply(tr('Формат: /new_session <имя проекта или путь>\nИмя → папка в ') + settings.projectsDir)
     await startProject(d, dir, { chatId: String(ctx.chat.id) })
   })
 }

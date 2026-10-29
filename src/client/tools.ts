@@ -161,6 +161,7 @@ export const TOOLS = [
   },
   {
     name: 'remind',
+    // i18n-ignore: for the model
     description: 'Set a reminder or deferred task for this chat. When due, the text is posted in the chat and comes back to you (or whichever session serves the chat) as a <channel> message with event="reminder" — write it as an instruction to yourself, e.g. "проверь CI в PR #12 и сообщи результат". Give in_minutes, or at ("HH:MM" local time, next occurrence), optionally daily.',
     inputSchema: {
       type: 'object',

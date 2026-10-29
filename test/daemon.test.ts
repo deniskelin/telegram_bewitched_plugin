@@ -1361,6 +1361,27 @@ describe('convenience', () => {
   })
 })
 
+describe('languages', () => {
+  test('/lang and ⚙️ switch the chat language; /menu follows it; commands per language', async () => {
+    tg.push(textMessage({ text: '/lang en' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Language: 🇬🇧 English')
+    expect(prefsFor('111').lang).toBe('en')
+    tg.push(textMessage({ text: '/menu' }))
+    const m = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Menu</b>'))
+    expect(JSON.stringify(m.body.reply_markup)).toContain('📋 Sessions')
+    tg.push(callbackQuery('hub:set'))
+    const set = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('⚙️ <b>Settings in this DM</b>'))
+    expect(JSON.stringify(set.body.reply_markup)).toContain('hub:lg:de')
+    tg.push(callbackQuery('hub:lg:de'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('⚙️ <b>Einstellungen in diesem Privatchat</b>'))
+    tg.push(textMessage({ text: '/lang ru' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Язык: 🇷🇺 Русский')
+    tg.push(textMessage({ text: '/lang auto' }))
+    await tg.waitFor('sendMessage', c => c.body.text === 'Язык: как в Telegram')
+    expect(prefsFor('111').lang).toBe('')
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

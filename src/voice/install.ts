@@ -56,9 +56,9 @@ export async function installVoice(what: 'stt' | 'tts' | 'all'): Promise<void> {
     const py = venv('silero-venv')
     run(py, ['-m', 'pip', 'install', '-q', '--default-timeout=60', 'torch', '--index-url', 'https://download.pytorch.org/whl/cpu'])
     run(py, ['-m', 'pip', 'install', '-q', '--default-timeout=60', 'numpy', 'omegaconf'])
-    run(py, ['-c', 'import torch; m,_=torch.hub.load("snakers4/silero-models","silero_tts",language="ru",speaker="v4_ru",trust_repo=True); m.apply_tts(text="Проверка голоса.", speaker="xenia", sample_rate=48000); print("voice ok")'], env)
+    run(py, ['-c', 'import torch; m,_=torch.hub.load("snakers4/silero-models","silero_tts",language="ru",speaker="v4_ru",trust_repo=True); m.apply_tts(text="Проверка голоса.", speaker="xenia", sample_rate=48000); print("voice ok")'], env) // i18n-ignore: Silero smoke test
     envDefault('TTS_PROVIDER', 'silero')
     envDefault('TTS_VOICE', 'xenia')
   }
-  console.log('\nГотово. Перезапустите демон: bewitched daemon restart')
+  console.log('\nГотово. Перезапустите демон: bewitched daemon restart') // i18n-ignore: terminal
 }

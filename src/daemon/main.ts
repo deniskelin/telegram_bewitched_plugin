@@ -22,6 +22,8 @@ import { setLocalSttStarter } from '../voice/stt.ts'
 import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
+import { inSession } from './lang.ts'
+import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -86,7 +88,7 @@ const d = new Daemon(TOKEN)
 d.onSessionRegistered = s => onSessionRegistered(d, s)
 d.onSessionGone = s => onSessionGone(d, s)
 d.onSessionsChanged = () => scheduleDashboard(d)
-d.handleCall = (s, name, args) => handleCall(d, s, name, args)
+d.handleCall = (s, name, args) => inSession(d, s, () => handleCall(d, s, name, args))
 d.handlePermissionRequest = (s, p) => handlePermissionRequest(d, s, p)
 
 let stopping = false
@@ -131,12 +133,17 @@ void d.startPolling(bot => {
   registerLaunchCommands(d, bot)
   registerInbound(d, bot, TOKEN)
   // A short menu: everything else is a button in /menu (old commands still work).
-  void bot.api.setMyCommands([
-    { command: 'menu', description: 'Меню: сессии, статистика, люди, настройки' },
-    { command: 'sessions', description: 'Сессии' },
-    { command: 'usage', description: 'Лимиты подписки и расход' },
-    { command: 'help', description: 'Помощь' },
-  ], { scope: { type: 'all_private_chats' } }).catch(() => {})
+  // One list per language (Telegram shows the one for the user's app language), plus the default.
+  const commands = () => [
+    { command: 'menu', description: t('Меню: сессии, статистика, люди, настройки') },
+    { command: 'sessions', description: t('Сессии') },
+    { command: 'usage', description: t('Лимиты подписки и расход') },
+    { command: 'help', description: t('Помощь') },
+  ]
+  void bot.api.setMyCommands(commands(), { scope: { type: 'all_private_chats' } }).catch(() => {})
+  for (const l of LANGS) {
+    void withLang(l, () => bot.api.setMyCommands(commands(), { scope: { type: 'all_private_chats' }, language_code: l })).catch(() => {})
+  }
   void reportRestart(d).catch(err => log(`restart report: ${err}`))
 }).catch(err => {
   log(`startup failed: ${err}`)

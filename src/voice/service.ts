@@ -8,6 +8,7 @@ import { spawn, type ChildProcess } from 'child_process'
 import { existsSync, mkdirSync, openSync } from 'fs'
 import { join } from 'path'
 import { PLUGIN_ROOT, VOICE_HOME, settings } from '../config.ts'
+import { t } from '../i18n/index.ts'
 
 export class LocalService {
   private proc: ChildProcess | null = null
@@ -51,7 +52,7 @@ export class LocalService {
   }
 
   private async start(): Promise<void> {
-    if (!this.installed()) throw new Error(`${this.name}: не установлен — bewitched voice install`)
+    if (!this.installed()) throw new Error(t('{name}: не установлен — bewitched voice install', { name: this.name }))
     mkdirSync(join(VOICE_HOME, 'logs'), { recursive: true })
     const out = openSync(join(VOICE_HOME, 'logs', `${this.name}.log`), 'a')
     this.proc = spawn(this.python, [join(PLUGIN_ROOT, 'voice', this.script), '--port', String(this.port()), ...this.extraArgs()], {
@@ -70,10 +71,10 @@ export class LocalService {
         this.watchIdle()
         return
       }
-      if (!this.proc) throw new Error(`${this.name} упал при старте — см. ${join(VOICE_HOME, 'logs', `${this.name}.log`)}`)
+      if (!this.proc) throw new Error(t('{name} упал при старте — см. {log}', { name: this.name, log: join(VOICE_HOME, 'logs', `${this.name}.log`) }))
       await Bun.sleep(1000)
     }
-    throw new Error(`${this.name} не ответил за 10 минут`)
+    throw new Error(t('{name} не ответил за 10 минут', { name: this.name }))
   }
 
   private watchIdle(): void {

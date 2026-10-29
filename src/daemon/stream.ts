@@ -16,6 +16,7 @@ import { settings } from '../config.ts'
 import { clip, fmtDuration, maskSecrets } from '../format.ts'
 import { isMessageNotModified, sendDraft } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
+import { t } from '../i18n/index.ts'
 
 const MAX_LINES = 12
 const MAX_TEXT = 1500
@@ -39,7 +40,7 @@ type Stream = {
 }
 
 export function stopKeyboard(sessionId: string): InlineKeyboard | undefined {
-  return settings.stopMode === 'off' ? undefined : new InlineKeyboard([[button('⏹ Стоп', `stop:${sessionId}`, 'danger')]])
+  return settings.stopMode === 'off' ? undefined : new InlineKeyboard([[button(t('⏹ Стоп'), `stop:${sessionId}`, 'danger')]])
 }
 
 export type ButtonStyle = 'primary' | 'success' | 'danger'
@@ -93,7 +94,7 @@ export class Streams {
     } else {
       void this.d.bot.api.sendChatAction(chatId, 'typing', thread).catch(() => {})
       st.typing = setInterval(() => void this.d.bot.api.sendChatAction(chatId, 'typing', thread).catch(() => {}), TYPING_MS)
-      const msg = await this.d.bot.api.sendMessage(chatId, `⏳ Работаю… · ${verboseBadge(prefsFor(chatId, threadId).verbose)}`, {
+      const msg = await this.d.bot.api.sendMessage(chatId, t('⏳ Работаю… · {v}', { v: verboseBadge(prefsFor(chatId, threadId).verbose) }), {
         ...thread,
         disable_notification: true,
         reply_markup: stopKeyboard(s.id),
@@ -145,7 +146,7 @@ export class Streams {
   private render(st: Stream): { thinking: string; body: string } {
     const lines = st.lines.slice(-MAX_LINES)
     const hidden = st.lines.length - lines.length
-    const thinking = (hidden > 0 ? `… ещё ${hidden}\n` : '') + lines.join('\n')
+    const thinking = (hidden > 0 ? t('… ещё {hidden}\n', { hidden }) : '') + lines.join('\n')
     let body = maskSecrets(st.text.trim())
     if (body.length > MAX_TEXT) body = '…' + body.slice(-MAX_TEXT)
     return { thinking, body }
@@ -163,7 +164,7 @@ export class Streams {
         await sendDraft(this.d.bot, Number(chatId), st.draftId, { thinking, body, canStop: settings.stopMode !== 'off' },
           threadId != null ? { message_thread_id: threadId } : {})
       } else if (st.progressMsgId != null) {
-        const head = `⏳ Работаю… · ${verboseBadge(prefsFor(chatId, threadId).verbose)} (${fmtDuration(Date.now() - st.startedAt)})`
+        const head = t('⏳ Работаю… · {v} ({v2})', { v: verboseBadge(prefsFor(chatId, threadId).verbose), v2: fmtDuration(Date.now() - st.startedAt) })
         const text = [head, thinking, body].filter(Boolean).join('\n\n').slice(0, 4000)
         await this.d.bot.api.editMessageText(chatId, st.progressMsgId, text, { reply_markup: stopKeyboard(s.id) })
       }
@@ -191,12 +192,12 @@ export class Streams {
     const id = st.progressMsgId
     const took = fmtDuration(Date.now() - st.startedAt)
     if (reason === 'stopped') {
-      void this.d.bot.api.editMessageText(chatId, id, `⏹ Остановлено пользователем (${took})`).catch(() => {})
+      void this.d.bot.api.editMessageText(chatId, id, t('⏹ Остановлено пользователем ({took})', { took })).catch(() => {})
       return
     }
     const mode = settings.progressFinal
     if (mode === 'keep' || (reason === 'stop' && mode !== 'delete')) {
-      void this.d.bot.api.editMessageText(chatId, id, `✅ Готово (${took})`).catch(() => {})
+      void this.d.bot.api.editMessageText(chatId, id, t('✅ Готово ({took})', { took })).catch(() => {})
     } else {
       void this.d.bot.api.deleteMessage(chatId, id).catch(() => {})
     }

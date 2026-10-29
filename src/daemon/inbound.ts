@@ -34,6 +34,7 @@ import { handleMacroCallback, registerMacroCommands } from './macros.ts'
 import { addProjectRule, projectRules } from './permrules.ts'
 import { handleServerCallback, registerServerCommands } from './server.ts'
 import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
+import { t as tr } from '../i18n/index.ts'
 
 // Permission-reply spec from Claude Code: 5 letters a-z minus 'l'.
 const PERMISSION_REPLY_RE = /^\s*(y|yes|n|no)\s+([a-km-z]{5})\s*$/i
@@ -153,7 +154,7 @@ function isSpeech(kind: string): boolean {
 
 /** Download, convert to 16 kHz WAV, transcribe; the temporary WAV is removed. */
 async function speechToText(d: Daemon, a: AttachmentMeta): Promise<SttResult | { error: string }> {
-  if (a.duration != null && a.duration > settings.sttMaxSec) return { error: `длиннее STT_MAX_SEC (${settings.sttMaxSec} с)` }
+  if (a.duration != null && a.duration > settings.sttMaxSec) return { error: tr('длиннее STT_MAX_SEC ({sttMaxSec} с)', { sttMaxSec: settings.sttMaxSec }) }
   let wav: string | null = null
   try {
     const src = await downloadToInbox(d, a.file_id)
@@ -223,12 +224,12 @@ async function handleInbound(
   // Unknown commands in General are not for Claude.
   if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
-    await reply('Этот топик не привязан к проекту, а главная сессия не запущена.')
+    await reply(tr('Этот топик не привязан к проекту, а главная сессия не запущена.'))
     return
   }
   if (target.kind === 'archived') {
     if (target.projectKey) d.store.addPending(target.projectKey, text, { chat_id: chatId, thread_id: String(threadId), user: safeMeta(from.username ?? String(from.id)) ?? '', user_id: String(from.id), ts: new Date(msg.date * 1000).toISOString() })
-    await reply('🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.', new InlineKeyboard([[button('▶️ Восстановить', `tp:unar:${target.threadId}`, 'success')]]))
+    await reply(tr('🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.'), new InlineKeyboard([[button(tr('▶️ Восстановить'), `tp:unar:${target.threadId}`, 'success')]]))
     return
   }
   if (access.ackReaction) {
@@ -252,7 +253,7 @@ async function handleInbound(
         ...(r.language ? { voice_language: r.language } : {}),
       }
       if (prefsFor(chatId, threadId).transcript) {
-        void ctx.reply(`🎤 ${r.text || '(тишина)'}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+        void ctx.reply(`🎤 ${r.text || tr('(тишина)')}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
       }
     }
     if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
@@ -281,12 +282,12 @@ async function handleInbound(
 
   if (target.kind === 'offline') {
     d.store.addPending(target.projectKey, text, meta)
-    await reply('💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.')
+    await reply(tr('💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.'))
     return
   }
   if (target.kind === 'main_offline') {
     d.store.addPending(MAIN_PENDING_KEY, text, meta)
-    await reply(`💤 Главная сессия не запущена (папка ${d.mainKey()}). Сообщение доставлю, когда она подключится.`)
+    await reply(tr('💤 Главная сессия не запущена (папка {v}). Сообщение доставлю, когда она подключится.', { v: d.mainKey() }))
     return
   }
   if (target.kind === 'user_offline') {
@@ -301,7 +302,7 @@ async function handleInbound(
   }
   if (target.kind === 'waiting') {
     d.store.addPending(target.projectKey, text, meta)
-    await reply('⏳ Сессия проекта не подключена — сообщение в очереди.', new InlineKeyboard([[button('🚀 Запустить', `wd:topic:${threadId}`, 'success')]]))
+    await reply(tr('⏳ Сессия проекта не подключена — сообщение в очереди.'), new InlineKeyboard([[button(tr('🚀 Запустить'), `wd:topic:${threadId}`, 'success')]]))
     return
   }
   // The project session will see what the main session answered for it.
@@ -330,6 +331,7 @@ function flushBatch(d: Daemon, key: string): void {
   const target = resolveTarget(d, b.chat, String(b.ctx.from?.id ?? ''))
   if (target.kind !== 'session') return
   if (b.items.length === 1) return d.deliver(target.session, b.items[0].text, b.items[0].meta, b.chat)
+  // i18n-ignore: for the model
   const content = `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) =>
     `${i + 1}. [${it.meta.forward_from ?? '?'}${it.meta.forward_date ? `, ${it.meta.forward_date}` : ''}] ${it.text}`).join('\n\n')
   const last = b.items[b.items.length - 1].meta
@@ -372,19 +374,19 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
 }
 
 function permissionKb(requestId: string, tool: string, more: boolean): InlineKeyboard {
-  const first = [button('✅ Разрешить', `perm:allow:${requestId}`, 'success'), button('❌ Запретить', `perm:deny:${requestId}`, 'danger')]
-  if (more) first.unshift(button('Подробнее', `perm:more:${requestId}`))
-  return new InlineKeyboard([first, [button(clip(`♾ Всегда ${tool} в этой сессии`, 40), `perm:always:${requestId}`)], [button(clip(`📌 Всегда ${tool} в проекте`, 40), `perm:proj:${requestId}`)]])
+  const first = [button(tr('✅ Разрешить'), `perm:allow:${requestId}`, 'success'), button(tr('❌ Запретить'), `perm:deny:${requestId}`, 'danger')]
+  if (more) first.unshift(button(tr('Подробнее'), `perm:more:${requestId}`))
+  return new InlineKeyboard([first, [button(clip(tr('♾ Всегда {tool} в этой сессии', { tool }), 40), `perm:always:${requestId}`)], [button(clip(tr('📌 Всегда {tool} в проекте', { tool }), 40), `perm:proj:${requestId}`)]])
 }
 
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const m = /^perm:(allow|deny|more|always|proj):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const [, behavior, request_id] = m
   if (behavior === 'more') {
     const p = d.permissions.get(request_id)
-    if (!p) return void ctx.answerCallbackQuery({ text: 'Подробности уже недоступны.' }).catch(() => {})
+    if (!p) return void ctx.answerCallbackQuery({ text: tr('Подробности уже недоступны.') }).catch(() => {})
     let pretty: string
     try {
       pretty = JSON.stringify(JSON.parse(p.input_preview), null, 2)
@@ -400,10 +402,10 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
   if (behavior === 'always' && p && s) s.alwaysAllow.add(p.tool_name)
   if (behavior === 'proj' && p && s) addProjectRule(d, s.projectKey, p.tool_name)
   const ok = resolvePermission(d, request_id, behavior === 'deny' ? 'deny' : 'allow')
-  const label = !ok ? '⌛ Запрос уже неактуален'
-    : behavior === 'always' ? `♾ Разрешено; ${p!.tool_name} в этой сессии больше не спрашиваю`
-    : behavior === 'proj' ? `📌 Разрешено; ${p!.tool_name} в этом проекте больше не спрашиваю (снять — в карточке сессии)`
-    : behavior === 'allow' ? '✅ Разрешено' : '❌ Запрещено'
+  const label = !ok ? tr('⌛ Запрос уже неактуален')
+    : behavior === 'always' ? tr('♾ Разрешено; {tool_name} в этой сессии больше не спрашиваю', { tool_name: p!.tool_name })
+    : behavior === 'proj' ? tr('📌 Разрешено; {tool_name} в этом проекте больше не спрашиваю (снять — в карточке сессии)', { tool_name: p!.tool_name })
+    : behavior === 'allow' ? tr('✅ Разрешено') : tr('❌ Запрещено')
   await ctx.answerCallbackQuery({ text: label }).catch(() => {})
   const msg = ctx.callbackQuery?.message
   if (msg && 'text' in msg && msg.text) await ctx.editMessageText(`${msg.text}\n\n${label}`).catch(() => {})
@@ -412,7 +414,7 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
 // --- stop button ---
 
 export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
-  s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram')
+  s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram') // i18n-ignore: for the model
   d.streams.close(s, 'stopped')
   if (settings.stopMode === 'interrupt' && s.tmuxPane && s.status === 'working') {
     execFile('tmux', ['send-keys', '-t', s.tmuxPane, 'Escape'], err => {
@@ -428,12 +430,12 @@ export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
 
 async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const id = data.slice('stop:'.length)
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
-  if (!s) return void ctx.answerCallbackQuery({ text: 'Сессия уже отключена.' }).catch(() => {})
+  if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
   const r = stopSession(d, s)
   await ctx.answerCallbackQuery({
-    text: r === 'interrupted' ? '⏹ Остановлено' : s.tmuxPane ? 'Сейчас нечего останавливать.' : 'Прерывание недоступно: сессия запущена не в tmux.',
+    text: r === 'interrupted' ? tr('⏹ Остановлено') : s.tmuxPane ? tr('Сейчас нечего останавливать.') : tr('Прерывание недоступно: сессия запущена не в tmux.'),
     show_alert: r !== 'interrupted' && !s.tmuxPane,
   }).catch(() => {})
 }
@@ -466,7 +468,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   bot.command('start', async (ctx, next) => {
     if (ctx.chat.type !== 'private') return next()
     if (!dmCommandGate(ctx)) return
-    await ctx.reply('Этот бот связывает Telegram с сессиями Claude Code.\n\nСопряжение:\n1. Напишите мне что угодно — получите 6-символьный код\n2. В Claude Code: /telegram-bewitched:access pair <code>\n\nДальше: /connect_group — подключить группу с топиками проектов, /help — команды.')
+    await ctx.reply(tr('Этот бот связывает Telegram с сессиями Claude Code.\n\nСопряжение:\n1. Напишите мне что угодно — получите 6-символьный код\n2. В Claude Code: /telegram-bewitched:access pair <code>\n\nДальше: /connect_group — подключить группу с топиками проектов, /help — команды.'))
   })
 
   bot.command('help', async ctx => {
@@ -484,17 +486,17 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (access.allowFrom.includes(senderId)) {
       const list = d.activeSessions()
       await ctx.reply([
-        `Сопряжено как ${ctx.from!.username ? `@${ctx.from!.username}` : senderId}.`,
-        `Демон: pid ${process.pid}, опрос ${d.isPolling() ? 'идёт' : 'не идёт'}, аптайм ${Math.round(process.uptime() / 60)} мин.`,
-        `Сессий: ${list.length}${list.length ? ` (${list.map(s => `#${s.id} ${s.projectName}`).join(', ')})` : ''}.`,
-        `Группа топиков: ${d.topicsChatId ?? 'не подключена'}.`,
+        tr('Сопряжено как {v}.', { v: ctx.from!.username ? `@${ctx.from!.username}` : senderId }),
+        tr('Демон: pid {pid}, опрос {v}, аптайм {v2} мин.', { pid: process.pid, v: d.isPolling() ? tr('идёт') : tr('не идёт'), v2: Math.round(process.uptime() / 60) }),
+        tr('Сессий: {length}{v}.', { length: list.length, v: list.length ? ` (${list.map(s => `#${s.id} ${s.projectName}`).join(', ')})` : '' }),
+        tr('Группа топиков: {v}.', { v: d.topicsChatId ?? tr('не подключена') }),
       ].join('\n'))
       return
     }
     for (const [code, p] of Object.entries(access.pending)) {
-      if (p.senderId === senderId) return void ctx.reply(`Ожидает сопряжения — в Claude Code:\n\n/telegram-bewitched:access pair ${code}`)
+      if (p.senderId === senderId) return void ctx.reply(tr('Ожидает сопряжения — в Claude Code:\n\n/telegram-bewitched:access pair {code}', { code }))
     }
-    await ctx.reply('Не сопряжено. Напишите мне сообщение, чтобы получить код.')
+    await ctx.reply(tr('Не сопряжено. Напишите мне сообщение, чтобы получить код.'))
   })
 
   // The subscription is the owner's, and the breakdown shows everyone's sessions.

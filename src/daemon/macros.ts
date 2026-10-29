@@ -18,12 +18,13 @@ import type { ChatRef, Daemon } from './daemon.ts'
 import { show, type Screen } from './menu.ts'
 import { sessionChat } from './report.ts'
 import { button } from './stream.ts'
+import { t } from '../i18n/index.ts'
 
 export type Macro = { label: string; text: string }
 type Where = { chatId: string; threadId?: number }
 
 const MAX = 12
-const USAGE = 'Формат: /macro add <кнопка> | <текст для сессии>\nНапример: /macro add 🧪 Тесты | прогони тесты и пришли итог'
+const USAGE = t('Формат: /macro add <кнопка> | <текст для сессии>\nНапример: /macro add 🧪 Тесты | прогони тесты и пришли итог')
 
 const keyOf = (w: Where) => `macros:${w.threadId != null ? `${w.chatId}:${w.threadId}` : w.chatId}`
 const ref = (w: Where) => `${w.chatId}:${w.threadId ?? 0}`
@@ -52,12 +53,12 @@ export function parseMacro(arg: string): Macro | null {
 
 export function macrosScreen(d: Daemon, w: Where, back?: string): Screen {
   const list = listMacros(d, w)
-  const lines = ['⚡ <b>Быстрые команды</b> этого чата', list.length ? 'Кнопка отправляет текст сессии чата, как будто вы его написали.' : 'Пока нет ни одной.']
+  const lines = [t('⚡ <b>Быстрые команды</b> этого чата'), list.length ? t('Кнопка отправляет текст сессии чата, как будто вы его написали.') : t('Пока нет ни одной.')]
   for (const [i, m] of list.entries()) lines.push(`${i + 1}. <b>${escapeHtml(m.label)}</b> — ${escapeHtml(clip(m.text, 80))}`)
-  lines.push('', `Добавить (в этом чате): <code>/macro add 🧪 Тесты | прогони тесты</code>${list.length ? '\nУдалить: <code>/macro del 1</code>' : ''}`)
+  lines.push('', t('Добавить (в этом чате): <code>/macro add 🧪 Тесты | прогони тесты</code>{v}', { v: list.length ? t('\nУдалить: <code>/macro del 1</code>') : '' }))
   const rows = []
   for (let i = 0; i < list.length; i += 2) rows.push(list.slice(i, i + 2).map((m, j) => button(clip(`⚡ ${m.label}`, 40), `mc:r:${ref(w)}:${i + j}`)))
-  rows.push([button('« Назад', back ?? 'hub:main')])
+  rows.push([button(t('« Назад'), back ?? 'hub:main')])
   return { text: lines.join('\n'), kb: new InlineKeyboard(rows) }
 }
 
@@ -91,11 +92,11 @@ export function registerMacroCommands(d: Daemon, bot: Bot): void {
     if (/^add\b/.test(arg)) {
       const m = parseMacro(arg.slice(3))
       if (!m) return void ctx.reply(USAGE, thread)
-      if (list.length >= MAX) return void ctx.reply(`Не больше ${MAX} команд в чате — удалите лишнюю: /macro del <n>`, thread)
+      if (list.length >= MAX) return void ctx.reply(t('Не больше {MAX} команд в чате — удалите лишнюю: /macro del <n>', { MAX }), thread)
       save(d, w, [...list.filter(x => x.label !== m.label), m])
     } else if (/^del\b/.test(arg)) {
       const n = Number(arg.slice(3).trim())
-      if (!Number.isInteger(n) || n < 1 || n > list.length) return void ctx.reply('Формат: /macro del <номер из списка>', thread)
+      if (!Number.isInteger(n) || n < 1 || n > list.length) return void ctx.reply(t('Формат: /macro del <номер из списка>'), thread)
       save(d, w, list.filter((_, i) => i !== n - 1))
     } else if (arg) return void ctx.reply(USAGE, thread)
     const sc = macrosScreen(d, w)
@@ -108,12 +109,12 @@ export async function handleMacroCallback(d: Daemon, ctx: Context, data: string)
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await answer('Нет доступа.')
+    await answer(t('Нет доступа.'))
     return true
   }
   if (m[8]) {
     const s = d.sessions.get(m[8])
-    if (!s) { await answer('Сессия уже отключена.'); return true }
+    if (!s) { await answer(t('Сессия уже отключена.')); return true }
     await answer()
     await show(ctx, macrosScreen(d, sessionChat(d, s), `sm:s:${s.id}`))
     return true
@@ -128,7 +129,7 @@ export async function handleMacroCallback(d: Daemon, ctx: Context, data: string)
   }
   const list = listMacros(d, w)
   const macro = list[Number(m[7])]
-  if (!macro) { await answer('Этой команды уже нет.'); return true }
+  if (!macro) { await answer(t('Этой команды уже нет.')); return true }
   await answer(`⚡ ${macro.label}`)
   await runMacro(d, w, macro, String(ctx.from.id))
   return true

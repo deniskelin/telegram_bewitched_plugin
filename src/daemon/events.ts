@@ -19,6 +19,7 @@ import { settings } from '../config.ts'
 import { clip, escapeHtml, maskSecrets } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button } from './stream.ts'
+import { t as tr } from '../i18n/index.ts'
 
 export type ExternalEvent = { topic?: string; project?: string; text: string; source?: string; silent?: boolean; deliver?: boolean }
 
@@ -41,7 +42,7 @@ export async function handleEvent(d: Daemon, e: ExternalEvent): Promise<string> 
   if (e.deliver !== false && t.projectKey) {
     const chat: ChatRef = { chatId: t.chatId, threadId: t.threadId, isPrivate: false }
     const meta = { chat_id: t.chatId, thread_id: String(t.threadId), user: source, user_id: 'event', ts: new Date().toISOString(), event: 'external', source }
-    await d.routeText(chat, 'event', `📡 Внешнее событие (${source}): ${text}`, meta)
+    await d.routeText(chat, 'event', tr('📡 Внешнее событие ({source}): {text}', { source, text }), meta)
   }
   return `posted to "${t.name}" (id: ${sent.message_id})`
 }
@@ -92,12 +93,12 @@ export async function checkCi(d: Daemon): Promise<void> {
 }
 
 async function announce(d: Daemon, s: Session, run: CiRun, failed: boolean): Promise<void> {
-  const head = failed ? `❌ <b>CI упал</b> на <code>${escapeHtml(s.branch!)}</code>` : `✅ <b>CI снова зелёный</b> на <code>${escapeHtml(s.branch!)}</code>`
+  const head = failed ? tr('❌ <b>CI упал</b> на <code>{v}</code>', { v: escapeHtml(s.branch!) }) : tr('✅ <b>CI снова зелёный</b> на <code>{v}</code>', { v: escapeHtml(s.branch!) })
   const text = `${head}\n${escapeHtml(run.name)} · ${escapeHtml(clip(run.displayTitle, 120))}`
   const row: (ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>)[] = [InlineKeyboard.url('🔗 Run', run.url)]
   if (failed) {
     failures.set(s.id, run)
-    row.unshift(button('🛠 Починить', `ci:fix:${s.id}`, 'primary'))
+    row.unshift(button(tr('🛠 Починить'), `ci:fix:${s.id}`, 'primary'))
   }
   await d.bot.api.sendMessage(s.topic!.chatId, text, { parse_mode: 'HTML', message_thread_id: s.topic!.threadId, reply_markup: new InlineKeyboard([row] as never) })
     .catch(err => d.log(`ci notice failed: ${err}`))
@@ -114,20 +115,20 @@ export async function handleCiCallback(d: Daemon, ctx: Context, data: string): P
   const m = /^ci:fix:([0-9a-f]+)$/.exec(data)
   if (!m) return false
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
   const s = d.sessions.get(m[1])
   const run = failures.get(m[1])
   if (!s || !run || !s.topic) {
-    await ctx.answerCallbackQuery({ text: 'Сессия переподключилась — напишите ей сами.' }).catch(() => {})
+    await ctx.answerCallbackQuery({ text: tr('Сессия переподключилась — напишите ей сами.') }).catch(() => {})
     return true
   }
   failures.delete(m[1])
-  await ctx.answerCallbackQuery({ text: '🛠 Отправил сессии' }).catch(() => {})
+  await ctx.answerCallbackQuery({ text: tr('🛠 Отправил сессии') }).catch(() => {})
   await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard([[InlineKeyboard.url('🔗 Run', run.url)]]) }).catch(() => {})
   const chat: ChatRef = { chatId: s.topic.chatId, threadId: s.topic.threadId, isPrivate: false }
-  const text = `CI упал на ветке ${s.branch}: «${run.name}» (${run.url}). Посмотри \`gh run view ${run.databaseId} --log-failed\`, найди причину, почини и запушь.`
+  const text = tr('CI упал на ветке {branch}: «{name}» ({url}). Посмотри `gh run view {databaseId} --log-failed`, найди причину, почини и запушь.', { branch: s.branch ?? '', name: run.name, url: run.url, databaseId: run.databaseId })
   await d.routeText(chat, String(ctx.from.id), text, {
     chat_id: chat.chatId, thread_id: String(chat.threadId), user_id: String(ctx.from.id), user: d.userLabel(String(ctx.from.id)),
     ts: new Date().toISOString(), event: 'ci_failure', run_id: String(run.databaseId),

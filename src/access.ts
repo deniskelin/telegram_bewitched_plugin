@@ -9,6 +9,7 @@ import { mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from
 import { join, sep } from 'path'
 import type { Context } from 'grammy'
 import { ACCESS_FILE, STATE_DIR } from './config.ts'
+import { k, t } from './i18n/index.ts'
 
 export type PendingEntry = {
   senderId: string
@@ -38,6 +39,8 @@ export type Prefs = {
   ttsVoice?: string
   /** Speech rate, 0.5–2 (1 = as synthesized). */
   ttsSpeed?: number
+  /** Interface language of the chat (ru, en, es, zh, fr, de); unset — the user's Telegram language or BOT_LANGUAGE. */
+  lang?: string
 }
 
 export type Access = {
@@ -120,12 +123,12 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1 }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '' }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const
-export const VERBOSE_INFO = ['только ответ', '+ действия', '+ текст модели'] as const
-export const NOTIFY_DONE_INFO = { off: 'выкл', long: 'после долгих ходов', always: 'всегда' } as const
+export const VERBOSE_INFO = [k('только ответ'), k('+ действия'), k('+ текст модели')] as const
+export const NOTIFY_DONE_INFO = { off: k('выкл'), long: k('после долгих ходов'), always: k('всегда') } as const
 
 /** 🔕0, 🔔1, 📢2 */
 export function verboseBadge(v: 0 | 1 | 2): string {
@@ -134,7 +137,7 @@ export function verboseBadge(v: 0 | 1 | 2): string {
 
 /** "🔔1 · ✅ после долгих ходов" for session cards and /verbose. */
 export function prefsBadge(p: Required<Prefs>): string {
-  return `${verboseBadge(p.verbose)} · ✅ ${NOTIFY_DONE_INFO[p.notifyDone]}`
+  return `${verboseBadge(p.verbose)} · ✅ ${t(NOTIFY_DONE_INFO[p.notifyDone])}`
 }
 
 export function setPref(chatKey: string | null, patch: Prefs): void {

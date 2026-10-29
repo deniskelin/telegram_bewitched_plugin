@@ -15,6 +15,7 @@ import { join } from 'path'
 import { TTS_CACHE_DIR, settings } from '../config.ts'
 import { toOggOpus, wavDuration } from './audio.ts'
 import { normalizeForSpeech } from './normalize.ts'
+import { t } from '../i18n/index.ts'
 
 export type Voice = { ogg: string; duration: number }
 /** Per-chat choice: a voice of the provider ("" = TTS_VOICE) and the speech rate. */
@@ -31,10 +32,10 @@ type Provider = 'silero' | 'piper' | 'http'
  */
 export function speakable(md: string): string {
   return md
-    .replace(/```[\s\S]*?```/g, ' (код в сообщении) ')
+    .replace(/```[\s\S]*?```/g, ` (${t('код в сообщении')}) `)
     .replace(/`([^`]+)`/g, '$1')
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1')
-    .replace(/https?:\/\/\S+/g, 'ссылка')
+    .replace(/https?:\/\/\S+/g, t('ссылка'))
     .replace(/^\s{0,3}#{1,6}\s+/gm, '')
     .replace(/^\s*[-*•]\s+/gm, '')
     .replace(/[*_~|>]+/g, '')
