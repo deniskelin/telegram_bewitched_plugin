@@ -112,7 +112,7 @@ bun bin/bewitched.ts event --topic myproj --source ci "部署失败：…"   # �
 
 以下所有功能在 **`/menu`** 中都有按钮（Telegram 命令菜单只有 `/menu`、`/sessions`、`/usage`、`/help`）。控制命令（私聊或 General）：`/sessions`、`/topics`、`/permissions`（所有会话中待处理的权限请求）、`/send <话题> <内容>`、`/broadcast <内容>`、`/rename <话题> | <名称>`、`/archive <话题>`、`/delete <话题>`、`/new_session <名称|路径>`。任何聊天中：`/verbose [0|1|2]`（🔕0 仅回答，🔔1 + 操作，📢2 + 模型文字；不带参数时显示当前级别）、`/notify_done [off|long|always]`、`/lang ru|en|es|zh|fr|de|auto`、`/remember`、`/forget`、`/voice off|mirror|always`、`/transcript on|off`、`/macro add <按钮> | <文字>` 和 `/macro del <n>`（本聊天的快捷命令）、`/remind <时间> <内容>`（30m、1h30m、«in 2 hours»、18:30、«tomorrow 9:00»、«every day 9:00»；也支持俄语写法；到时文字会发到聊天并交给该聊天的会话，会话未运行时会被启动）、`/reminders`。详细级别显示在会话卡片中（📣 行），可在那里用按钮修改，也显示在「⏳ 工作中… · 🔔1」标题中。私聊中：`/server`（CPU、内存、磁盘、Claude Code 和语音进程；「📜 守护进程日志」、「♻️ 重启守护进程」）、`/users`（所有有权限的人；🚫 删除用户：访问权限、会话和 tmux 窗口、文件夹、对话记录和私聊历史——需确认）、`/invite`（邀请用户：选择联系人 → 确认 → 机器人授予访问权限、启动其会话并发送一条可转发的邀请）、`/usage`、`/digest`、`/reports`（日、周、月报告，附按小时/天/周的消耗图表和统计；每种报告可用按钮单独开启，在周期结束时发送）、`/main [id|reset]`、`/group`、`/disconnect_group`、`/status`。
 
-`/usage`（仅所有者）：来自 `~/.claude/.credentials.json` 的订阅计划、额度百分比（5 小时、一周）及重置时间，以及按 API 价格计算的所有对话记录中 5 小时、一天和 7 天的 token 消耗，按模型和会话细分。百分比来自 Anthropic **未公开文档**的端点 `api/oauth/usage`（Claude Code 中的 `/usage` 调用的就是它），使用订阅的 OAuth 令牌。它可能在任何一次更新后失效，届时 `/usage` 只显示本地数据。`USAGE_LIMITS=off` 关闭该请求。
+`/usage`（仅所有者）：来自 `~/.claude/.credentials.json` 的订阅计划、额度百分比（5 小时、一周）及重置时间，以及按 API 价格计算的所有对话记录中 5 小时、一天和 7 天的 token 消耗，按模型和会话细分。百分比来自 Anthropic **未公开文档**的端点 `api/oauth/usage`（Claude Code 中的 `/usage` 调用的就是它），使用订阅的 OAuth 令牌。它可能在任何一次更新后失效，届时 `/usage` 只显示本地数据。`USAGE_LIMITS=off` 关闭该请求。「谁在消耗」「按模型」「按会话」三部分按按钮选择的周期显示：5 小时、一天、一周或一个月（5 小时和一周时「谁在消耗」显示占订阅窗口的比例，否则显示占消耗的比例）。
 
 ## 会话类型
 
