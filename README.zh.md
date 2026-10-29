@@ -36,7 +36,7 @@ tmux 中的 Claude Code 会话：👤 每人一个（~/user/<id>）· 📂 每�
 | 频道旁的 `claude -p` / 子代理 | ❌ 启动自己的轮询并弄崩频道 | ✅ 被动会话不触碰传入消息 |
 | 与其他轮询进程冲突 | 静默 409 | ✅ 等待，并私信通知所有者 |
 | 话题 | ❌ | ✅ 论坛超级群组，每个项目一个话题，在私聊中用 `/connect_group` 连接 |
-| 控制面板 | ❌ | ✅ General 中的置顶摘要（设置 `JOURNAL_CHAT_ID` 时在日志的「🖥 会话」话题中），`/sessions`、`/topics`、`/send`、`/broadcast`、`/rename`、`/archive`、`/delete`、`/main` |
+| 控制面板 | ❌ | ✅ General 中的置顶摘要（设置 `JOURNAL_CHAT_ID` 时在日志的「📌 状态」话题中，附与 `/usage` 相同的限额和进度条），`/sessions`、`/topics`、`/send`、`/broadcast`、`/rename`、`/archive`、`/delete`、`/main` |
 | 从 Telegram 新建会话 | ❌ | ✅ 新建话题 → 项目文件夹 + 在 tmux 窗口中运行的 Claude；`/new_session` |
 | 会话与话题归档 | ❌ | ✅「🗄 归档」关闭会话和话题；重新打开话题会再次启动会话 |
 | 实时进度 | ❌ 仅 5 秒的「正在输入」 | ✅ 私聊中带「思考」的草稿（Bot API 10.2），话题中不断更新的「⏳ 工作中…」及操作，`/verbose 0\|1\|2` |
@@ -236,7 +236,7 @@ claude plugin update telegram-bewitched@bewitched
 | `QUIET_HOURS` | `off` | 免打扰时段，例如 `23:00-08:00`：机器人发送的一切都静音送达。「/menu → ⚙️」中的按钮优先于 `.env` |
 | `BOT_LANGUAGE` | `ru` | 默认界面语言（`ru`、`en`、`es`、`zh`、`fr`、`de`），在聊天和所有者都未选择、且不知道用户 Telegram 语言时使用 |
 | `TMUX_SESSION` | `claude` | 主会话所在的 tmux 会话（用户和项目会话各有自己的） |
-| `JOURNAL_CHAT_ID` | — | 用于接收机器人通知的群组（id，例如 `-100…`），代替私聊，每类通知在各自的话题中：🛡 访问（机器人被加入/移出群组、非用户发来消息）、🖥 会话、📊 限额、📰 报告、⚙️ 守护进程。需要你处理的——权限、待确认的启动、用户请求、你预约的提醒——仍在私聊。群组需开启话题，机器人需为可管理话题的管理员. 开启话题会改变群组 id——机器人会自动跟随新 id。 |
+| `JOURNAL_CHAT_ID` | — | 用于接收机器人通知的群组（id，例如 `-100…`），代替私聊，每类通知在各自的话题中：📌 状态（一条置顶且始终最新的消息：所有会话和与 `/usage` 相同的限额——无需命令）、🛡 访问（机器人被加入/移出群组、非用户发来消息）、🖥 会话、📊 限额、📰 报告、⚙️ 守护进程。需要你处理的——权限、待确认的启动、用户请求、你预约的提醒——仍在私聊。群组需开启话题，机器人需为可管理话题的管理员. 开启话题会改变群组 id——机器人会自动跟随新 id。 |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-user-<telegram id>`（用户会话）或 `-n claude-project-<群组 id>-<话题 id>`（项目，与文件夹同名）；各自独立的 tmux 会话和窗口使用相同名称，`tmux ls` 一眼可见类型 |
 

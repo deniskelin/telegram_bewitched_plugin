@@ -33,6 +33,7 @@ const dict: Dict = {
   "💤 <b>Приостановка сессий</b>": "💤 <b>Suspensión de sesiones</b>",
   "Сессия без дела дольше выбранного закрывается; следующее сообщение запускает её снова и продолжает разговор. Главная не приостанавливается.": "Una sesión inactiva más de lo elegido se cierra; el siguiente mensaje la vuelve a iniciar y continúa la conversación. La sesión principal nunca se suspende.",
   "<i>Строки сверху вниз: личные сессии пользователей, ваша, проекты.</i>": "<i>Filas de arriba abajo: sesiones de usuarios, la tuya, proyectos.</i>",
+  "📌 Статус": "📌 Estado",
   "Главная": "Principal",
   "👑 главная": "👑 principal",
   "⚠️ Сессия <b>{v}</b> остановилась.": "⚠️ La sesión <b>{v}</b> se detuvo.",

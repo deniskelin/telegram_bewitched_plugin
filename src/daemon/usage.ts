@@ -710,6 +710,18 @@ export function startLimitWatch(d: Daemon): void {
 }
 
 /** "📊 5 часов 42% · Неделя 31%" for the pinned dashboard; null before the first fetch. */
+/**
+ * The limits as in /usage, plain text for the status message: per limit the
+ * percent, a bar and when it resets. null before the first fetch.
+ */
+export function limitsBlock(now = Date.now()): string | null {
+  const l = lastLimits()
+  if (!l || !l.limits.items.length) return null
+  const lines = l.limits.items.map(i => `${tr(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`)
+  if (l.limits.breakdown) lines.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
+  return [tr('📊 Лимиты'), ...lines].join('\n')
+}
+
 export function limitsLine(): string | null {
   const l = lastLimits()
   if (!l || !l.limits.items.length) return null

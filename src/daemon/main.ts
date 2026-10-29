@@ -90,6 +90,8 @@ const d = new Daemon(TOKEN)
 d.onSessionRegistered = s => onSessionRegistered(d, s)
 d.onSessionGone = s => onSessionGone(d, s)
 d.onSessionsChanged = () => scheduleDashboard(d)
+// «через N мин» in the status goes stale: refresh it every 5 minutes (an edit, no tokens).
+setInterval(() => scheduleDashboard(d), 5 * 60_000).unref?.()
 d.handleCall = (s, name, args) => inSession(d, s, () => handleCall(d, s, name, args))
 d.handlePermissionRequest = (s, p) => handlePermissionRequest(d, s, p)
 

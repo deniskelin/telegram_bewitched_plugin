@@ -21,7 +21,7 @@ import { button } from './stream.ts'
 import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProject } from './launch.ts'
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
-import { limitsLine } from './usage.ts'
+import { fetchLimits, lastLimits, limitsBlock, limitsLine } from './usage.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
 import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
@@ -260,7 +260,8 @@ export function renderDashboard(d: Daemon): string {
     const user = d.userIdOf(s)
     lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — ` + tr('#{id}, активность {ago} назад', { id: s.id, ago }))
   }
-  const limits = limitsLine()
+  // In the journal's «📌 Статус» the limits as in /usage; in General one line.
+  const limits = journalChat(d) ? limitsBlock() : limitsLine()
   if (limits) lines.push('', limits)
   lines.push('', tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }), '/menu · /sessions · /help')
   return lines.join('\n')
@@ -301,17 +302,19 @@ function forgetDashboardIn(d: Daemon, chatId: string | null): void {
 
 /**
  * Where the pinned dashboard lives: with a journal (JOURNAL_CHAT_ID) in its
- * «🖥 Сессии» topic, next to the session notices; otherwise in General of the
- * topics group.
+ * «📌 Статус» topic — sessions and limits at a glance, no commands needed;
+ * otherwise in General of the topics group.
  */
 async function dashboardPlace(d: Daemon): Promise<{ chat: string; thread?: number } | null> {
-  if (journalChat(d)) return noticeTarget(d, 'sessions')
+  if (journalChat(d)) return noticeTarget(d, 'status')
   return d.topicsChatId ? { chat: d.topicsChatId } : null
 }
 
 export async function updateDashboard(d: Daemon): Promise<void> {
   const at = await dashboardPlace(d)
   if (!at) return
+  // The status shows limits: fetch them if the limit watch has not lately (it may be off).
+  if (journalChat(d) && (lastLimits()?.at ?? 0) < Date.now() - 10 * 60_000) await fetchLimits().catch(() => {})
   const text = inChat(d, at.chat, at.thread, () => renderDashboard(d))
   let cur = dashboardMsg(d)
   if (cur && (cur.chat !== at.chat || cur.thread !== at.thread)) {
