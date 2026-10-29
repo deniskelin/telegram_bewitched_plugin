@@ -72,12 +72,17 @@ Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–8 sind u
 
 ## Installation
 
+1. Legen Sie bei [@BotFather](https://t.me/BotFather) einen Bot an (`/newbot`) und kopieren Sie das Token.
+2. In Claude Code:
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <Token>
 ```
 
-Bot-Token: `/telegram-bewitched:configure <Token>`. War vorher das offizielle Plugin installiert, werden `.env` und `access.json` beim ersten Start automatisch aus `~/.claude/channels/telegram/` übernommen.
+   War vorher das offizielle Plugin installiert, werden `.env` und `access.json` beim ersten Start automatisch aus `~/.claude/channels/telegram/` übernommen.
+3. Starten Sie eine Sitzung mit dem Kanal (siehe „Start“), schreiben Sie dem Bot privat – er antwortet mit einem 6-stelligen Code – und führen Sie in Claude Code `/telegram-bewitched:access pair <Code>` aus. Der erste gekoppelte Nutzer wird zum Besitzer. Mehr in [ACCESS.md](ACCESS.md) (auf Englisch).
 
 **Das offizielle Plugin und der Fork dürfen nicht gleichzeitig dasselbe Token abfragen.** Deaktivieren Sie das offizielle (`/plugin disable telegram@claude-plugins-official`) oder starten Sie Claude ohne dessen `--channels`. Sieht der Daemon das offizielle Plugin mit demselben Token laufen, wartet er, statt um die Abfrage zu kämpfen.
 
@@ -92,13 +97,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 Die erste Sitzung startet den Daemon. Er läuft weiter, wenn Sitzungen enden, damit Steuerpult und `/notify` immer antworten.
 
+CLI-Befehle laufen im Plugin-Ordner: Nach einer Installation aus dem Marketplace ist das `~/.claude/plugins/cache/bewitched/telegram-bewitched/<Version>/` (oder ein Klon des Repositorys).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<Version>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot in der crontab
 bun bin/bewitched.ts voice install           # Sprache, siehe docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "Build fehlgeschlagen"
 bun bin/bewitched.ts event --topic myproj --source ci "Deploy fehlgeschlagen: …"   # an Thema und Sitzung des Projekts
 ```
+
+## Aktualisierung
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Starten Sie danach die Claude-Code-Sitzungen neu (Client und Hooks kommen aus der neuen Version) und den Daemon – mit dem Befehl aus dem Ordner der **neuen** Version: `bun bin/bewitched.ts daemon restart`. Der Knopf „♻️ Daemon neu starten“ in `/server` startet die Version neu, die bereits läuft. Falls Sie `install-cron` genutzt haben, führen Sie es im neuen Ordner erneut aus – der Eintrag wird ersetzt.
 
 ## Themen in einer Supergruppe
 

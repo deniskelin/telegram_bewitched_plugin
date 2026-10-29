@@ -72,12 +72,17 @@ Especificación: [docs/TZ.md](docs/TZ.md) (en ruso). Están hechas las etapas 0�
 
 ## Instalación
 
+1. Crea un bot con [@BotFather](https://t.me/BotFather) (`/newbot`) y copia el token.
+2. En Claude Code:
+
 ```
 /plugin marketplace add deniskelin/telegram_bewitched_plugin
 /plugin install telegram-bewitched@bewitched
+/telegram-bewitched:configure <token>
 ```
 
-Token del bot: `/telegram-bewitched:configure <token>`. Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
+   Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
+3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.md) (en inglés).
 
 **El plugin oficial y el fork no deben sondear el mismo token a la vez.** Desactiva el oficial (`/plugin disable telegram@claude-plugins-official`) o ejecuta Claude sin su `--channels`. Si el demonio ve el plugin oficial funcionando con el mismo token, espera en lugar de pelear por el sondeo.
 
@@ -92,13 +97,25 @@ claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitch
 
 La primera sesión arranca el demonio. Sigue funcionando cuando las sesiones se cierran, para que el panel y `/notify` respondan siempre.
 
+Los comandos de la CLI se ejecutan desde la carpeta del plugin: tras instalar desde el marketplace es `~/.claude/plugins/cache/bewitched/telegram-bewitched/<versión>/` (o un clon del repositorio).
+
 ```
+cd ~/.claude/plugins/cache/bewitched/telegram-bewitched/<versión>
 bun bin/bewitched.ts daemon status|stop|restart|logs
 bun bin/bewitched.ts daemon install-cron     # @reboot en crontab
 bun bin/bewitched.ts voice install           # voz, ver docs/voice.md
 bun bin/bewitched.ts notify --topic myproj "falló la compilación"
 bun bin/bewitched.ts event --topic myproj --source ci "falló el despliegue: …"   # al tema y la sesión del proyecto
 ```
+
+## Actualización
+
+```
+claude plugin marketplace update bewitched
+claude plugin update telegram-bewitched@bewitched
+```
+
+Después reinicia las sesiones de Claude Code (el cliente y los hooks se toman de la nueva versión) y el demonio, con el comando desde la carpeta de la versión **nueva**: `bun bin/bewitched.ts daemon restart`. El botón «♻️ Reiniciar el demonio» de `/server` reinicia la versión que ya está en marcha. Si usaste `install-cron`, repítelo desde la carpeta nueva: la entrada se sustituye.
 
 ## Temas en un supergrupo
 

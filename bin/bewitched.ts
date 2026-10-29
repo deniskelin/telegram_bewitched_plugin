@@ -77,12 +77,14 @@ switch (cmd) {
         try {
           cur = execFileSync('crontab', ['-l'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] })
         } catch {}
-        if (cur.includes('bewitched.ts daemon start')) {
+        if (cur.split('\n').includes(line)) {
           console.log('cron entry already present')
           break
         }
-        execFileSync('crontab', ['-'], { input: (cur.trimEnd() ? cur.trimEnd() + '\n' : '') + line + '\n' })
-        console.log(`added: ${line}`)
+        // An entry of another version (the plugin cache path has the version in it) is replaced.
+        const kept = cur.split('\n').filter(l => l.trim() && !l.includes('bewitched.ts daemon start'))
+        execFileSync('crontab', ['-'], { input: [...kept, line].join('\n') + '\n' })
+        console.log(`${kept.length < cur.split('\n').filter(l => l.trim()).length ? 'replaced' : 'added'}: ${line}`)
         break
       }
       default:
