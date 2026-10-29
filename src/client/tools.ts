@@ -5,7 +5,7 @@ const threadId = { type: 'string', description: 'Forum topic thread id. Optional
 
 const optionsSchema = {
   type: 'array',
-  description: 'Answer options (1–10). Each is a string or { label (≤40 chars), value?, style?: "primary"|"success"|"danger" }.',
+  description: 'Answer options (1–10). Each is a string or { label (≤40 chars), value?, style?: "primary"|"success"|"danger" }. Mark your recommended option with style "primary" (blue); keep "success" (green) and a leading ✅ out of labels: the user\'s choice is shown as ✅ in green once tapped.',
   items: {
     anyOf: [
       { type: 'string' },
