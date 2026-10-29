@@ -133,7 +133,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 
 ### What you do by hand
 
-1. **Confirm each session start.** While Claude Code channels are in research preview, starting with `--dangerously-load-development-channels` shows a warning screen. The bot doesn't accept it on its own: the launch message has a «✅ Confirm launch» button — on a tap the bot checks that this exact screen is in the window and picks «I am using this for local development» (any other question, such as trusting a folder, is left to you — «👁 Screen and keys» or `tmux attach -t claude:<window>`). Needed on a new user's first message, after a server reboot, after a session crash and after each idle close (if enabled).
+1. **Confirm each session start.** While Claude Code channels are in research preview, starting with `--dangerously-load-development-channels` shows a warning screen. The bot doesn't accept it on its own: the launch message has a «✅ Confirm launch» button — on a tap the bot answers the startup questions one by one (folder trust «Yes, I trust this folder» for a new folder, and «I am using this for local development»), waits until the session connects and replaces the screen with «✅ Session connected». Any other question is left to you — «👁 Screen and keys» (with «✖️ Close») or `tmux attach -t claude:<window>`. Needed on a new user's first message, after a server reboot, after a session crash and after each idle close (if enabled).
 2. **Keep tmux on the server.** Without it sessions don't start automatically — the bot sends a command for a manual start.
 3. **Restart stopped sessions** — with «🚀 Start» from the watchdog notice (and confirm again) or with the command from it.
 
