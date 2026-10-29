@@ -6,6 +6,7 @@
 
 import { execFile } from 'child_process'
 import { maskSecrets } from '../format.ts'
+import { t } from '../i18n/index.ts'
 
 function run(cmd: string, args: string[], cwd: string, timeout = 5000): Promise<string | null> {
   return new Promise(res => execFile(cmd, args, { cwd, timeout, maxBuffer: 16 * 1024 * 1024 }, (err, out) => res(err ? null : String(out))))
@@ -18,7 +19,7 @@ export async function gitInfo(cwd: string): Promise<GitInfo | null> {
   const status = await run('git', ['status', '-sb'], cwd)
   if (status == null) return null
   const lines = status.trimEnd().split('\n')
-  const shown = lines.length > 16 ? [...lines.slice(0, 15), `… ещё ${lines.length - 15}`] : lines
+  const shown = lines.length > 16 ? [...lines.slice(0, 15), t('… ещё {n}', { n: lines.length - 15 })] : lines
   const [log, pr] = await Promise.all([
     run('git', ['log', '-5', '--format=%h %s (%cr)'], cwd),
     run('gh', ['pr', 'view', '--json', 'number,title,url,state'], cwd, 8000),

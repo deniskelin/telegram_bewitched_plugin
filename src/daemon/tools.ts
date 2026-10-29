@@ -18,6 +18,8 @@ import { forVoice, synthesize, ttsEnabled, type Voice, type VoiceOptions } from 
 import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
+import { t as tr } from '../i18n/index.ts'
+import { inChat } from './lang.ts'
 
 const MAX_CHUNK_LIMIT = 4096
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
@@ -400,7 +402,7 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       const at = str(args.at)
       let when: { at: number; daily: boolean } | null = null
       if (Number.isFinite(mins) && mins > 0) when = { at: Date.now() + mins * 60_000, daily: false }
-      else if (at) when = parseWhen(`${args.daily === true ? 'каждый день ' : ''}${at} x`)
+      else if (at) when = parseWhen(`${args.daily === true ? 'every day ' : ''}${at} x`)
       if (!when) throw new Error('give in_minutes > 0 or at "HH:MM"')
       const r = addReminder(d, { chatId: c.chatId, threadId: c.threadId, text, at: when.at, daily: when.daily, userId: d.userIdOf(s) ?? owner() ?? c.chatId })
       return `reminder ${r.id} set: ${fmtWhen(r)} (${new Date(r.at).toISOString()})`
@@ -464,8 +466,8 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       if (!t) throw new Error('topic not found')
       const o = owner()
       if (!o) throw new Error('no owner')
-      await d.bot.api.sendMessage(o, `Claude (#${s.id} · ${s.projectName}) просит удалить топик «${t.name}» со всеми сообщениями. Удалить?`, {
-        reply_markup: new InlineKeyboard([[button('🗑 Удалить', `tp:delok:${thread}`, 'danger'), button('Отмена', 'tp:cancel:0')]]),
+      await d.bot.api.sendMessage(o, inChat(d, o, undefined, () => tr('Claude (#{id} · {name}) просит удалить топик «{topic}» со всеми сообщениями. Удалить?', { id: s.id, name: s.projectName, topic: t.name })), {
+        reply_markup: inChat(d, o, undefined, () => new InlineKeyboard([[button(tr('🗑 Удалить'), `tp:delok:${thread}`, 'danger'), button(tr('Отмена'), 'tp:cancel:0')]])),
       })
       return 'deletion requested — the user must confirm with a button in Telegram'
     }

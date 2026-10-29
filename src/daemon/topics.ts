@@ -12,6 +12,8 @@ import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, sav
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { clip, fmtDuration, safeMeta } from '../format.ts'
+import { locale, t as tr } from '../i18n/index.ts'
+import { inChat } from './lang.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
@@ -159,37 +161,39 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   if (s.topic) s.lastChat = chat
   if (s.topic && !s.reconnect) {
     const card = [
-      '🟢 Сессия подключена',
+      tr('🟢 Сессия подключена'),
       `📁 ${s.cwd}`,
       s.branch ? `🌿 ${s.branch}` : null,
-      s.tmuxPane ? '⏹ Стоп доступен (tmux)' : '⏹ Стоп недоступен: сессия не в tmux',
+      s.tmuxPane ? tr('⏹ Стоп доступен (tmux)') : tr('⏹ Стоп недоступен: сессия не в tmux'),
     ].filter(Boolean).join('\n')
     // One status card per topic: replace the previous one instead of stacking them up.
     const sent = await sendToSession(d, s, c => d.bot.api.sendMessage(c.chatId, card, { message_thread_id: c.threadId, disable_notification: true })).catch(() => null)
     if (sent) replaceStatusCard(d, String(sent.chat.id), s.topic?.threadId, sent.message_id)
   }
 
+  // The resume event is text for the model, not the interface: it is not translated (i18n-ignore).
   const parts: string[] = []
   if (chat && !s.reconnect) {
     const mem = readMemory(chat.chatId, chat.threadId)
-    if (mem) parts.push(`Память этого чата (save_memory):\n${mem.trim()}`)
+    if (mem) parts.push(`Память этого чата (save_memory):\n${mem.trim()}`) // i18n-ignore
     const hist = d.store.history(chat.chatId, chat.threadId ?? null, settings.resumeLastN)
     if (hist.length) {
+      // i18n-ignore
       parts.push('Последние сообщения:\n' + hist.map(m =>
-        `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n'))
+        `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n')) // i18n-ignore
     }
   }
   const role = d.roleOf(s)
   const key = role === 'user' ? userPendingKey(d.userIdOf(s)!) : role === 'main' ? MAIN_PENDING_KEY : topicKey(s).key
   const all = d.store.takePending(key, settings.pendingTtlH)
-  const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}`
+  const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}` // i18n-ignore
   const handled = all.filter(p => p.meta.handled_by === 'main')
   const pending = all.filter(p => p.meta.handled_by !== 'main')
   if (handled.length) {
-    parts.push(`Пока сессия была offline, на эти сообщения уже ответила главная сессия (для контекста, повторно не отвечай):\n` + handled.map(line).join('\n'))
+    parts.push(`Пока сессия была offline, на эти сообщения уже ответила главная сессия (для контекста, повторно не отвечай):\n` + handled.map(line).join('\n')) // i18n-ignore
   }
   if (pending.length) {
-    parts.push(`Пока сессия была offline, пришло сообщений: ${pending.length}. Ответь на них:\n` + pending.map(line).join('\n'))
+    parts.push(`Пока сессия была offline, пришло сообщений: ${pending.length}. Ответь на них:\n` + pending.map(line).join('\n')) // i18n-ignore
   }
   if (parts.length && chat) {
     d.deliver(s, parts.join('\n\n'), {
@@ -205,7 +209,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
 /** Where a queued message came from, when it is not the session's own DM: General or a topic. */
 function pendingWhere(d: Daemon, meta: Record<string, string>): string {
   if (!meta.chat_id?.startsWith('-')) return ''
-  const place = meta.thread_id ? `топик «${meta.topic_name ?? meta.thread_id}»` : 'General'
+  const place = meta.thread_id ? `топик «${meta.topic_name ?? meta.thread_id}»` : 'General' // i18n-ignore
   return ` (${place}; chat_id=${meta.chat_id}${meta.thread_id ? `, message_thread_id=${meta.thread_id}` : ''})`
 }
 
@@ -222,7 +226,7 @@ export function onSessionGone(d: Daemon, s: Session): void {
   // Another live session may still serve this topic (TOPIC_MODE=project).
   if (d.activeSessions().some(o => o.topic?.threadId === s.topic!.threadId && o.topic.chatId === s.topic!.chatId)) return
   const { chatId, threadId } = s.topic
-  void d.bot.api.sendMessage(chatId, '⚪️ Сессия отключена', { message_thread_id: threadId, disable_notification: true })
+  void inChat(d, chatId, threadId, () => d.bot.api.sendMessage(chatId, tr('⚪️ Сессия отключена'), { message_thread_id: threadId, disable_notification: true }))
     .then(m => replaceStatusCard(d, chatId, threadId, m.message_id))
     .catch(() => {})
 }
@@ -236,16 +240,16 @@ let dashLast = 0
 
 export function renderDashboard(d: Daemon): string {
   const list = sortedSessions(d)
-  const lines = ['🎛 Пульт Claude Code', '']
-  if (!list.length) lines.push('Нет запущенных сессий.')
+  const lines = [tr('🎛 Пульт Claude Code'), '']
+  if (!list.length) lines.push(tr('Нет запущенных сессий.'))
   for (const s of list) {
     const ago = fmtDuration(Date.now() - s.lastActivity)
     const user = d.userIdOf(s)
-    lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — #${s.id}, активность ${ago} назад`)
+    lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — ` + tr('#{id}, активность {ago} назад', { id: s.id, ago }))
   }
   const limits = limitsLine()
   if (limits) lines.push('', limits)
-  lines.push('', `Обновлено ${new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' })}`, '/sessions · /topics · /help')
+  lines.push('', tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }), '/menu · /sessions · /help')
   return lines.join('\n')
 }
 
@@ -299,14 +303,14 @@ export async function checkGroup(d: Daemon, chatId: string): Promise<{ title: st
   const warnings: string[] = []
   const chat = await d.bot.api.getChat(chatId)
   const title = 'title' in chat && chat.title ? chat.title : chatId
-  if (chat.type !== 'supergroup') problems.push('это не супергруппа')
-  else if (!('is_forum' in chat && chat.is_forum)) problems.push('в группе не включены темы (Настройки группы → Темы)')
+  if (chat.type !== 'supergroup') problems.push(tr('это не супергруппа'))
+  else if (!('is_forum' in chat && chat.is_forum)) problems.push(tr('в группе не включены темы (Настройки группы → Темы)'))
   const me = await d.bot.api.getChatMember(chatId, d.botId)
-  if (me.status !== 'administrator') problems.push('бот не администратор группы')
+  if (me.status !== 'administrator') problems.push(tr('бот не администратор группы'))
   else {
-    if (!me.can_manage_topics) problems.push('у бота нет права «Управление темами»')
-    if (!me.can_pin_messages) warnings.push('нет права «Закреплять сообщения» — пульт не закрепится')
-    if (!me.can_delete_messages) warnings.push('нет права «Удалять сообщения» — сообщения прогресса не будут удаляться')
+    if (!me.can_manage_topics) problems.push(tr('у бота нет права «Управление темами»'))
+    if (!me.can_pin_messages) warnings.push(tr('нет права «Закреплять сообщения» — пульт не закрепится'))
+    if (!me.can_delete_messages) warnings.push(tr('нет права «Удалять сообщения» — сообщения прогресса не будут удаляться'))
   }
   return { title, problems, warnings }
 }
@@ -317,13 +321,13 @@ async function sendConnectCard(d: Daemon, code: string, c: ConnectState): Promis
   d.store.set(`connect:${code}`, JSON.stringify(c))
   const warn = warnings.length ? `\n\n⚠️ ${warnings.join('\n⚠️ ')}` : ''
   if (problems.length) {
-    await d.bot.api.sendMessage(c.owner, `Группа «${title}» пока не готова:\n• ${problems.join('\n• ')}${warn}\n\nИсправьте и нажмите «Проверить снова».`, {
-      reply_markup: new InlineKeyboard([[button('🔄 Проверить снова', `cg:re:${code}`, 'primary')], [button('❌ Отмена', `cg:no:${code}`)]]),
+    await d.bot.api.sendMessage(c.owner, tr('Группа «{title}» пока не готова:', { title }) + `\n• ${problems.join('\n• ')}${warn}\n\n` + tr('Исправьте и нажмите «Проверить снова».'), {
+      reply_markup: new InlineKeyboard([[button(tr('🔄 Проверить снова'), `cg:re:${code}`, 'primary')], [button(tr('❌ Отмена'), `cg:no:${code}`)]]),
     })
     return
   }
-  await d.bot.api.sendMessage(c.owner, `Подключить группу «${title}» для топиков Claude Code?\n\nКаждый проект получит свой топик, в General появится пульт. Писать в сессии и управлять ими смогут все сопряжённые с ботом пользователи (allowlist), остальные участники группы — нет.${warn}`, {
-    reply_markup: new InlineKeyboard([[button('✅ Подключить', `cg:ok:${code}`, 'success'), button('❌ Отмена', `cg:no:${code}`)]]),
+  await d.bot.api.sendMessage(c.owner, tr('Подключить группу «{title}» для топиков Claude Code?\n\nКаждый проект получит свой топик, в General появится пульт. Писать в сессии и управлять ими смогут все сопряжённые с ботом пользователи (allowlist), остальные участники группы — нет.', { title }) + warn, {
+    reply_markup: new InlineKeyboard([[button(tr('✅ Подключить'), `cg:ok:${code}`, 'success'), button(tr('❌ Отмена'), `cg:no:${code}`)]]),
   })
 }
 
@@ -443,7 +447,7 @@ export async function renameTopic(d: Daemon, chatId: string, threadId: number, n
 }
 
 function confirmKb(yes: string, no: string): InlineKeyboard {
-  return new InlineKeyboard([[button('✅ Да', yes, 'danger'), button('Отмена', no)]])
+  return new InlineKeyboard([[button(tr('✅ Да'), yes, 'danger'), button(tr('Отмена'), no)]])
 }
 
 export function registerTopicCommands(d: Daemon, bot: Bot): void {
@@ -465,7 +469,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.command('topics', async ctx => {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
-    if (!chat) return void ctx.reply('Группа для топиков не подключена. В личке с ботом: /connect_group')
+    if (!chat) return void ctx.reply(tr('Группа для топиков не подключена. В личке с ботом: /connect_group'))
     const { text, kb } = topicsList(d, chat)
     await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb, message_thread_id: threadOf(ctx) })
   })
@@ -474,59 +478,59 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!requireControl(ctx)) return
     const parsed = splitNameArg(ctx.match ?? '')
     const chat = topicsChat()
-    if (!parsed || !parsed[1] || !chat) return void ctx.reply('Формат: /send <топик> <текст>')
+    if (!parsed || !parsed[1] || !chat) return void ctx.reply(tr('Формат: /send <топик> <текст>'))
     const t = d.store.topicByName(chat, parsed[0])
-    if (!t) return void ctx.reply(`Топик «${parsed[0]}» не найден. /topics — список.`)
+    if (!t) return void ctx.reply(tr('Топик «{name}» не найден. /topics — список.', { name: parsed[0] }))
     const s = d.sessionForThread(chat, t.thread_id)
     const meta = { chat_id: chat, thread_id: String(t.thread_id), user: safeMeta(ctx.from!.username ?? String(ctx.from!.id)) ?? '', user_id: String(ctx.from!.id), ts: new Date().toISOString(), event: 'control_send' }
     if (!s && t.project_key && settings.topicNoSession === 'launch') {
       d.store.addPending(t.project_key, parsed[1], meta)
-      await ctx.reply('🚀 Сессия не запущена — запускаю её, сообщение дойдёт после подключения.')
+      await ctx.reply(tr('🚀 Сессия не запущена — запускаю её, сообщение дойдёт после подключения.'))
       return void launchForTopic(d, chat, t.thread_id, t.project_key).catch(err => d.log(`topic launch failed: ${err}`))
     }
     const main = s || settings.topicNoSession !== 'main' ? null : d.mainSession()
     if (!s && !main) {
       if (t.project_key) d.store.addPending(t.project_key, parsed[1], meta)
-      return void ctx.reply('💤 Сессия не запущена — сообщение доставлю при запуске.')
+      return void ctx.reply(tr('💤 Сессия не запущена — сообщение доставлю при запуске.'))
     }
     if (main && t.project_key) d.store.addPending(t.project_key, parsed[1], { ...meta, handled_by: 'main' })
     d.deliver((s ?? main)!, parsed[1], meta, { chatId: chat, threadId: t.thread_id, isPrivate: false })
-    await ctx.reply(`📨 Отправлено в «${t.name}».`)
+    await ctx.reply(tr('📨 Отправлено в «{name}».', { name: t.name }))
   })
 
   bot.command('broadcast', async ctx => {
     if (!requireControl(ctx)) return
     const text = (ctx.match ?? '').trim()
-    if (!text) return void ctx.reply('Формат: /broadcast <текст>')
+    if (!text) return void ctx.reply(tr('Формат: /broadcast <текст>'))
     const id = randomBytes(4).toString('hex')
     d.store.set(`bc:${id}`, text)
-    await ctx.reply(`Отправить во все активные сессии (${d.activeSessions().length})?\n\n${text}`, { reply_markup: confirmKb(`bc:ok:${id}`, `bc:no:${id}`) })
+    await ctx.reply(tr('Отправить во все активные сессии ({n})?', { n: d.activeSessions().length }) + `\n\n${text}`, { reply_markup: confirmKb(`bc:ok:${id}`, `bc:no:${id}`) })
   })
 
   bot.command('rename', async ctx => {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
     const m = /^(.+?)\s*(?:\||→|->)\s*(.+)$/.exec(ctx.match ?? '')
-    if (!chat || !m) return void ctx.reply('Формат: /rename <топик> | <новое имя>')
+    if (!chat || !m) return void ctx.reply(tr('Формат: /rename <топик> | <новое имя>'))
     const t = d.store.topicByName(chat, m[1])
-    if (!t) return void ctx.reply(`Топик «${m[1]}» не найден.`)
-    await renameTopic(d, chat, t.thread_id, m[2]).then(() => ctx.reply('✏️ Переименовано.'), err => ctx.reply(`Не вышло: ${err.message ?? err}`))
+    if (!t) return void ctx.reply(tr('Топик «{name}» не найден.', { name: m[1] }))
+    await renameTopic(d, chat, t.thread_id, m[2]).then(() => ctx.reply(tr('✏️ Переименовано.')), err => ctx.reply(tr('Не вышло: {err}', { err: err.message ?? err })))
   })
 
   bot.command('archive', async ctx => {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
     const t = chat ? d.store.topicByName(chat, ctx.match ?? '') : null
-    if (!chat || !t) return void ctx.reply('Формат: /archive <топик>')
-    await archiveTopic(d, chat, t.thread_id).then(() => ctx.reply('🗄 В архиве.'), err => ctx.reply(`Не вышло: ${err.message ?? err}`))
+    if (!chat || !t) return void ctx.reply(tr('Формат: /archive <топик>'))
+    await archiveTopic(d, chat, t.thread_id).then(() => ctx.reply(tr('🗄 В архиве.')), err => ctx.reply(tr('Не вышло: {err}', { err: err.message ?? err })))
   })
 
   bot.command('delete', async ctx => {
     if (!requireControl(ctx)) return
     const chat = topicsChat()
     const t = chat ? d.store.topicByName(chat, ctx.match ?? '') : null
-    if (!chat || !t) return void ctx.reply('Формат: /delete <топик>')
-    await ctx.reply(`Удалить топик «${t.name}» вместе со всеми сообщениями?`, { reply_markup: confirmKb(`tp:delok:${t.thread_id}`, 'tp:cancel:0') })
+    if (!chat || !t) return void ctx.reply(tr('Формат: /delete <топик>'))
+    await ctx.reply(tr('Удалить топик «{name}» вместе со всеми сообщениями?', { name: t.name }), { reply_markup: confirmKb(`tp:delok:${t.thread_id}`, 'tp:cancel:0') })
   })
 
   const mainCommand = async (ctx: Context) => {
@@ -534,16 +538,16 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const arg = String(ctx.match ?? '').trim().replace(/^#/, '')
     if (arg === 'reset') {
       d.store.set('main_dir', null)
-      return void ctx.reply(`👑 Главная сессия — снова по MAIN_DIR: ${d.mainKey()}`)
+      return void ctx.reply(tr('👑 Главная сессия — снова по MAIN_DIR: {dir}', { dir: d.mainKey() }))
     }
     if (!arg) {
       const m = d.mainSession()
-      return void ctx.reply(`👑 Главная сессия: ${d.mainKey()}${m ? ` · #${m.id}` : ' · не запущена'}\n/main <id> — сделать главной другую, /main reset — вернуть MAIN_DIR.`)
+      return void ctx.reply(tr('👑 Главная сессия: {dir}', { dir: d.mainKey() }) + (m ? ` · #${m.id}` : tr(' · не запущена')) + '\n' + tr('/main <id> — сделать главной другую, /main reset — вернуть MAIN_DIR.'))
     }
     const s = d.sessions.get(arg)
-    if (!s || s.passive) return void ctx.reply('Сессия не найдена. /sessions — список.')
+    if (!s || s.passive) return void ctx.reply(tr('Сессия не найдена. /sessions — список.'))
     d.store.set('main_dir', s.projectKey)
-    await ctx.reply(`👑 Главная сессия теперь #${s.id} · ${s.projectName} (${s.projectKey}).`)
+    await ctx.reply(tr('👑 Главная сессия теперь #{id} · {name} ({dir}).', { id: s.id, name: s.projectName, dir: s.projectKey }))
   }
   bot.command('main', mainCommand)
   bot.command('use', mainCommand)
@@ -551,52 +555,53 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.command('verbose', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const arg = (ctx.match ?? '').trim()
-    const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${VERBOSE_INFO[l]}`).join('\n')
+    const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${tr(VERBOSE_INFO[l])}`).join('\n')
     if (!arg) {
       const p = prefsFor(String(ctx.chat!.id), threadOf(ctx))
-      return void ctx.reply(`Здесь: ${prefsBadge(p)}\n\n/verbose 0|1|2 — подробность прогресса:\n${levels}\n/notify_done off|long|always — «✅ готово» после хода`, { message_thread_id: threadOf(ctx) })
+      return void ctx.reply(tr('Здесь: {badge}\n\n/verbose 0|1|2 — подробность прогресса:\n{levels}\n/notify_done off|long|always — «✅ готово» после хода', { badge: prefsBadge(p), levels }), { message_thread_id: threadOf(ctx) })
     }
     const v = Number(arg)
-    if (![0, 1, 2].includes(v)) return void ctx.reply(`Формат: /verbose 0|1|2\n${levels}`, { message_thread_id: threadOf(ctx) })
+    if (![0, 1, 2].includes(v)) return void ctx.reply(tr('Формат: {help}', { help: `/verbose 0|1|2\n${levels}` }), { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { verbose: v as 0 | 1 | 2 })
-    await ctx.reply(`Подробность прогресса: ${verboseBadge(v as 0 | 1 | 2)} ${VERBOSE_INFO[v]}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(tr('Подробность прогресса: {badge} {info}', { badge: verboseBadge(v as 0 | 1 | 2), info: tr(VERBOSE_INFO[v]) }), { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('notify_done', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    const help = `/notify_done off|long|always\nlong — если ход дольше ${settings.notifyLongSec} с и без ответа`
-    if (!v) return void ctx.reply(`Здесь: ✅ ${NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
-    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    const help = '/notify_done off|long|always\n' + tr('long — если ход дольше {sec} с и без ответа', { sec: settings.notifyLongSec })
+    if (!v) return void ctx.reply(tr('Здесь: {badge}\n\n', { badge: `✅ ${tr(NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone])}` }) + help, { message_thread_id: threadOf(ctx) })
+    if (!['off', 'long', 'always'].includes(v)) return void ctx.reply(tr('Формат: {help}', { help }), { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { notifyDone: v as 'off' | 'long' | 'always' })
-    await ctx.reply(`Уведомления о завершении: ✅ ${NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(tr('Уведомления о завершении: ✅ {v}', { v: tr(NOTIFY_DONE_INFO[v as 'off' | 'long' | 'always']) }), { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('voice', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    const info = { off: 'только текст', mirror: 'голосом на голосовое', always: 'всегда голосом' } as const
-    const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install'}`
-    if (!v) return void ctx.reply(`Здесь: 🔊 ${info[prefsFor(String(ctx.chat!.id), threadOf(ctx)).voice]}\n\n${help}`, { message_thread_id: threadOf(ctx) })
-    if (!(v in info)) return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    const info = { off: tr('только текст'), mirror: tr('голосом на голосовое'), always: tr('всегда голосом') } as const
+    const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n' + tr('⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install')}`
+    if (!v) return void ctx.reply(tr('Здесь: {badge}\n\n', { badge: `🔊 ${info[prefsFor(String(ctx.chat!.id), threadOf(ctx)).voice]}` }) + help, { message_thread_id: threadOf(ctx) })
+    if (!(v in info)) return void ctx.reply(tr('Формат: {help}', { help }), { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { voice: v as keyof typeof info })
-    await ctx.reply(`🔊 Ответы: ${info[v as keyof typeof info]}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(tr('🔊 Ответы: {v}', { v: info[v as keyof typeof info] }), { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('transcript', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const v = (ctx.match ?? '').trim()
-    const help = `/transcript on|off — показывать расшифровку голосовых в чате${sttEnabled() ? '' : '\n⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'}`
-    if (!v) return void ctx.reply(`Здесь: 🎤 расшифровка ${prefsFor(String(ctx.chat!.id), threadOf(ctx)).transcript ? 'показывается' : 'не показывается'}\n\n${help}`, { message_thread_id: threadOf(ctx) })
-    if (v !== 'on' && v !== 'off') return void ctx.reply(`Формат: ${help}`, { message_thread_id: threadOf(ctx) })
+    const help = tr('/transcript on|off — показывать расшифровку голосовых в чате') + (sttEnabled() ? '' : '\n' + tr('⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'))
+    const shown = (on: boolean) => (on ? tr('показывается') : tr('не показывается'))
+    if (!v) return void ctx.reply(tr('Здесь: {badge}\n\n', { badge: tr('🎤 расшифровка {v}', { v: shown(prefsFor(String(ctx.chat!.id), threadOf(ctx)).transcript) }) }) + help, { message_thread_id: threadOf(ctx) })
+    if (v !== 'on' && v !== 'off') return void ctx.reply(tr('Формат: {help}', { help }), { message_thread_id: threadOf(ctx) })
     setPref(chatKey(ctx), { transcript: v === 'on' })
-    await ctx.reply(`🎤 Расшифровка в чате: ${v === 'on' ? 'показывается' : 'не показывается'}`, { message_thread_id: threadOf(ctx) })
+    await ctx.reply(tr('🎤 Расшифровка в чате: {v}', { v: shown(v === 'on') }), { message_thread_id: threadOf(ctx) })
   })
 
   bot.command('forget', async ctx => {
     if (!ctx.from || !isOwner(ctx.from.id)) return
     const thread = threadOf(ctx) ?? 0
-    await ctx.reply('Удалить историю этого чата/топика из памяти бота? Сообщения в Telegram останутся.', {
+    await ctx.reply(tr('Удалить историю этого чата/топика из памяти бота? Сообщения в Telegram останутся.'), {
       message_thread_id: threadOf(ctx),
       reply_markup: confirmKb(`fg:ok:${ctx.chat!.id}:${thread}`, 'fg:no:0:0'),
     })
@@ -608,7 +613,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const thread = threadOf(ctx)
     const own = settings.userSessions ? d.userSession(String(ctx.from.id)) : null
     const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? own ?? d.mainSession()
-    if (!s) return void ctx.reply('Сессия не запущена.', { message_thread_id: thread })
+    if (!s) return void ctx.reply(tr('Сессия не запущена.'), { message_thread_id: thread })
+    // i18n-ignore
     d.deliver(s, 'Пользователь просит сохранить память этого чата: вызови save_memory с краткой сводкой важного (цели, решения, договорённости, открытые задачи). Предыдущая сводка перезапишется — включи в новую всё нужное из старой.',
       { chat_id: chat, ...(thread != null ? { thread_id: String(thread) } : {}), event: 'remember_request', user_id: String(ctx.from.id), ts: new Date().toISOString() },
       { chatId: chat, threadId: thread, isPrivate: ctx.chat!.type === 'private' })
@@ -622,32 +628,29 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     d.store.set(`connect:${code}`, JSON.stringify({ owner: String(ctx.from!.id), exp: Date.now() + 15 * 60_000 } satisfies ConnectState))
     const url = `https://t.me/${d.botUsername}?startgroup=${code}&admin=manage_topics+delete_messages+pin_messages`
     await ctx.reply(
-      'Подключение группы для топиков:\n\n' +
-      '1. Создайте супергруппу и включите в ней «Темы» (или возьмите готовую).\n' +
-      '2. Нажмите кнопку ниже, выберите группу и подтвердите права администратора.\n' +
-      '3. Подтвердите подключение здесь, в личке.\n\nКнопка действует 15 минут.',
-      { reply_markup: new InlineKeyboard().url('➕ Добавить бота в группу', url) },
+      tr('Подключение группы для топиков:\n\n1. Создайте супергруппу и включите в ней «Темы» (или возьмите готовую).\n2. Нажмите кнопку ниже, выберите группу и подтвердите права администратора.\n3. Подтвердите подключение здесь, в личке.\n\nКнопка действует 15 минут.'),
+      { reply_markup: new InlineKeyboard().url(tr('➕ Добавить бота в группу'), url) },
     )
   })
 
   bot.command('group', async ctx => {
     if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
     const chat = topicsChat()
-    if (!chat) return void ctx.reply('Группа не подключена. /connect_group')
+    if (!chat) return void ctx.reply(tr('Группа не подключена. /connect_group'))
     try {
       const { title, problems, warnings } = await checkGroup(d, chat)
-      const st = problems.length ? `❌ ${problems.join('; ')}` : '✅ всё в порядке'
-      await ctx.reply(`Группа: «${title}» (${chat})\nСостояние: ${st}${warnings.length ? `\n⚠️ ${warnings.join('\n⚠️ ')}` : ''}\nТопиков: ${d.store.topics(chat).length}\n\nВ группе нет нативного стриминга черновиками: прогресс показывается обновляемым сообщением.`,
-        { reply_markup: new InlineKeyboard([[button('Отключить группу', 'cg:dis:0', 'danger')]]) })
+      const st = problems.length ? `❌ ${problems.join('; ')}` : tr('✅ всё в порядке')
+      await ctx.reply(tr('Группа: «{title}» ({chat})\nСостояние: {state}', { title, chat, state: st }) + (warnings.length ? `\n⚠️ ${warnings.join('\n⚠️ ')}` : '') + '\n' + tr('Топиков: {n}\n\nВ группе нет нативного стриминга черновиками: прогресс показывается обновляемым сообщением.', { n: d.store.topics(chat).length }),
+        { reply_markup: new InlineKeyboard([[button(tr('Отключить группу'), 'cg:dis:0', 'danger')]]) })
     } catch (err) {
-      await ctx.reply(`Группа ${chat} недоступна: ${err}`)
+      await ctx.reply(tr('Группа {chat} недоступна: {err}', { chat, err: String(err) }))
     }
   })
 
   bot.command('disconnect_group', async ctx => {
     if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
-    if (!topicsChat()) return void ctx.reply('Группа не подключена.')
-    await ctx.reply('Отключить группу? Топики и история останутся, сессии вернутся в личку.', { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
+    if (!topicsChat()) return void ctx.reply(tr('Группа не подключена.'))
+    await ctx.reply(tr('Отключить группу? Топики и история останутся, сессии вернутся в личку.'), { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
   })
 
   // /start <code> arrives in the group right after adding the bot via the startgroup link.
@@ -658,7 +661,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const c = getConnect(d, m[1])
     if (!c || c.owner !== String(ctx.from?.id)) return
     c.chatId = String(ctx.chat.id)
-    await ctx.reply('Проверяю группу… Подтвердите подключение в личке с ботом.').catch(() => {})
+    await ctx.reply(tr('Проверяю группу… Подтвердите подключение в личке с ботом.')).catch(() => {})
     await sendConnectCard(d, m[1], c).catch(err => d.log(`connect card failed: ${err}`))
   })
 
@@ -669,7 +672,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const o = owner()
     if (gone && chatId === topicsChat()) {
       disconnectGroup(d)
-      if (o) void d.bot.api.sendMessage(o, `⚠️ Бота убрали из группы топиков «${'title' in upd.chat ? upd.chat.title : chatId}». Сессии вернулись в личку. /connect_group — подключить заново.`).catch(() => {})
+      if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
     }
   })
 
@@ -693,7 +696,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
       if (t && t.status !== 'archived') {
         const stuck = await archiveTopic(d, chat, thread, { alreadyClosed: true }).catch(() => [])
         if (stuck.length) {
-          await d.bot.api.sendMessage(chat, `🗄 Топик в архиве. Сессии ${stuck.map(s => `#${s.id}`).join(', ')} не в tmux — закройте их сами.`, { message_thread_id: thread }).catch(() => {})
+          await d.bot.api.sendMessage(chat, tr('🗄 Топик в архиве. Сессии {ids} не в tmux — закройте их сами.', { ids: stuck.map(s => `#${s.id}`).join(', ') }), { message_thread_id: thread }).catch(() => {})
         }
       }
     }
@@ -730,7 +733,7 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
   const [, ns, action, arg, arg2] = m
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await answer('Нет доступа.')
+    await answer(tr('Нет доступа.'))
     return true
   }
   const chat = d.topicsChatId
@@ -739,55 +742,55 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
   try {
     if (ns === 'ses' && action === 'info') {
       const s = d.sessions.get(arg)
-      await answer(s ? `#${s.id} · ${s.cwd}` : 'Сессия уже отключена.')
+      await answer(s ? `#${s.id} · ${s.cwd}` : tr('Сессия уже отключена.'))
     } else if (ns === 'ses' && action === 'dm') {
       const s = d.sessions.get(arg)
-      if (!s) { await answer('Сессия уже отключена.'); return true }
+      if (!s) { await answer(tr('Сессия уже отключена.')); return true }
       d.store.set('main_dir', s.projectKey)
-      await answer(`👑 Главная → #${s.id}`)
+      await answer(tr('👑 Главная → #{id}', { id: s.id }))
     } else if (ns === 'ses' && (action === 'ar' || action === 'arok')) {
       const s = d.sessions.get(arg)
-      if (!s?.topic) { await answer('Сессия уже отключена или без топика.'); return true }
+      if (!s?.topic) { await answer(tr('Сессия уже отключена или без топика.')); return true }
       if (action === 'ar') {
-        await ctx.reply(`Архивировать «${s.topic.name}»? Сессия #${s.id} будет закрыта, топик — закрыт.`, { reply_markup: confirmKb(`ses:arok:${s.id}`, 'tp:cancel:0') })
+        await ctx.reply(tr('Архивировать «{name}»? Сессия #{id} будет закрыта, топик — закрыт.', { name: s.topic.name, id: s.id }), { reply_markup: confirmKb(`ses:arok:${s.id}`, 'tp:cancel:0') })
         await answer()
         return true
       }
       const stuck = await archiveTopic(d, s.topic.chatId, s.topic.threadId)
-      await edit(stuck.length ? `🗄 Топик в архиве. Сессию #${s.id} закрыть не смог (не в tmux) — закройте её сами.` : `🗄 В архиве, сессия #${s.id} закрывается.`)
+      await edit(stuck.length ? tr('🗄 Топик в архиве. Сессию #{id} закрыть не смог (не в tmux) — закройте её сами.', { id: s.id }) : tr('🗄 В архиве, сессия #{id} закрывается.', { id: s.id }))
     } else if (ns === 'tp') {
       const thread = Number(arg)
-      if (action === 'cancel') await edit('Отменено.')
-      else if (!chat) await answer('Группа не подключена.')
+      if (action === 'cancel') await edit(tr('Отменено.'))
+      else if (!chat) await answer(tr('Группа не подключена.'))
       else if (action === 'info') {
         const t = d.store.topic(chat, thread)
         const link = topicLink(chat, thread)
-        await answer(t ? `${t.name}\n${t.project_key ?? 'не привязан к проекту'}` : 'Не найден')
+        await answer(t ? `${t.name}\n${t.project_key ?? tr('не привязан к проекту')}` : tr('Не найден'))
         if (link) await ctx.reply(link).catch(() => {})
       } else if (action === 'ar') {
         const live = sessionsOfTopic(d, chat, thread)
         if (live.length) {
-          await ctx.reply(`Архивировать топик? Сессии ${live.map(s => `#${s.id}`).join(', ')} будут закрыты.`, { reply_markup: confirmKb(`tp:arok:${thread}`, 'tp:cancel:0') })
+          await ctx.reply(tr('Архивировать топик? Сессии {ids} будут закрыты.', { ids: live.map(s => `#${s.id}`).join(', ') }), { reply_markup: confirmKb(`tp:arok:${thread}`, 'tp:cancel:0') })
           await answer()
           return true
         }
         await archiveTopic(d, chat, thread)
-        await answer('🗄 В архиве')
+        await answer(tr('🗄 В архиве'))
         await ctx.editMessageReplyMarkup({ reply_markup: topicsListKeyboard(d, d.store.topics(chat)) }).catch(() => {})
       } else if (action === 'arok') {
         const stuck = await archiveTopic(d, chat, thread)
-        await edit(stuck.length ? '🗄 В архиве. Часть сессий не в tmux — закройте их сами.' : '🗄 В архиве, сессии закрываются.')
+        await edit(stuck.length ? tr('🗄 В архиве. Часть сессий не в tmux — закройте их сами.') : tr('🗄 В архиве, сессии закрываются.'))
       } else if (action === 'unar') {
         await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off' })
-        await answer('↩️ Восстановлен')
+        await answer(tr('↩️ Восстановлен'))
         await ctx.editMessageReplyMarkup({ reply_markup: topicsListKeyboard(d, d.store.topics(chat)) }).catch(() => {})
       } else if (action === 'del') {
         const t = d.store.topic(chat, thread)
-        await ctx.reply(`Удалить топик «${t?.name ?? thread}» вместе со всеми сообщениями?`, { reply_markup: confirmKb(`tp:delok:${thread}`, 'tp:cancel:0') })
+        await ctx.reply(tr('Удалить топик «{name}» вместе со всеми сообщениями?', { name: t?.name ?? thread }), { reply_markup: confirmKb(`tp:delok:${thread}`, 'tp:cancel:0') })
         await answer()
       } else if (action === 'delok') {
         await deleteTopic(d, chat, thread)
-        await edit('🗑 Топик удалён.')
+        await edit(tr('🗑 Топик удалён.'))
       }
     } else if (ns === 'bc') {
       const text = d.store.get(`bc:${arg}`)
@@ -799,39 +802,39 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
           d.deliver(s, text, { event: 'broadcast', chat_id: target?.chatId ?? '', user_id: String(ctx.from.id), ts: new Date().toISOString() }, target ?? undefined)
           n++
         }
-        await edit(`📢 Отправлено в ${n} сесс.`)
-      } else await edit('Отменено.')
+        await edit(tr('📢 Отправлено в {n} сесс.', { n }))
+      } else await edit(tr('Отменено.'))
     } else if (ns === 'cg') {
-      if (action === 'no') { await edit('Отменено.'); return true }
+      if (action === 'no') { await edit(tr('Отменено.')); return true }
       if (action === 'dis') {
-        await ctx.reply('Отключить группу? Топики и история останутся, сессии вернутся в личку.', { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
+        await ctx.reply(tr('Отключить группу? Топики и история останутся, сессии вернутся в личку.'), { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
         { await answer(); return true }
       }
       if (action === 'disok') {
         disconnectGroup(d)
-        { await edit('Группа отключена. Сессии работают через личку.'); return true }
+        { await edit(tr('Группа отключена. Сессии работают через личку.')); return true }
       }
       const c = getConnect(d, arg)
-      if (!c?.chatId) { await edit('Ссылка устарела. Начните заново: /connect_group'); return true }
+      if (!c?.chatId) { await edit(tr('Ссылка устарела. Начните заново: /connect_group')); return true }
       if (action === 're') {
-        await answer('Проверяю…')
+        await answer(tr('Проверяю…'))
         await sendConnectCard(d, arg, c)
       } else if (action === 'ok') {
         const { problems, title } = await checkGroup(d, c.chatId)
         if (problems.length) { await sendConnectCard(d, arg, c); return true }
         await connectGroup(d, c.chatId)
         d.store.set(`connect:${arg}`, null)
-        await edit(`✅ Группа «${title}» подключена. Топики проектов: ${d.activeSessions().filter(s => s.topic).length}.`)
+        await edit(tr('✅ Группа «{title}» подключена. Топики проектов: {n}.', { title, n: d.activeSessions().filter(s => s.topic).length }))
       }
     } else if (ns === 'fg') {
       if (action === 'ok') {
         const n = d.store.forgetThread(arg, Number(arg2) || null)
-        await edit(`🧹 Удалено записей истории: ${n}.`)
-      } else await edit('Отменено.')
+        await edit(tr('🧹 Удалено записей истории: {n}.', { n }))
+      } else await edit(tr('Отменено.'))
     }
   } catch (err) {
     d.log(`callback ${data} failed: ${err}`)
-    await answer(`Ошибка: ${err instanceof Error ? err.message : err}`.slice(0, 190))
+    await answer(tr('Ошибка: {err}', { err: String(err instanceof Error ? err.message : err) }).slice(0, 190))
     return true
   }
   await answer()

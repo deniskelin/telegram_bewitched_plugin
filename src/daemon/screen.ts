@@ -16,6 +16,7 @@ import { escapeHtml, maskSecrets } from '../format.ts'
 import { isMessageNotModified } from '../tg.ts'
 import type { Daemon } from './daemon.ts'
 import { button } from './stream.ts'
+import { locale, k, t } from '../i18n/index.ts'
 
 const LINES = 40
 const MAX_CHARS = 3500
@@ -79,19 +80,19 @@ export async function acceptChannels(d: Daemon, target: string): Promise<'accept
 /** Live screens by "chat:message": when the refreshing stops. */
 const live = new Map<string, number>()
 
-export async function screenView(d: Daemon, code: string, liveOn = false): Promise<{ text: string; kb: InlineKeyboard }> {
+export async function screenView(d: Daemon, code: string, liveOn = false): Promise<{ text: string; kb: InlineKeyboard; gone: boolean }> {
   const target = tmuxTarget(code)!
   const raw = await d.tmuxCapture(target)
   const session = code.startsWith('p') ? [...d.sessions.values()].find(s => s.tmuxPane === target) : undefined
-  const time = new Date().toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-  const head = `🖥 <b>Экран</b> <code>${escapeHtml(target)}</code>${session ? ` · #${session.id}` : ''} · ${time}${liveOn ? ' · ▶️ обновляется' : ''}`
-  const text = raw == null ? `${head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.` : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
-  const k = (c: string) => button(KEYS[c].label, `tx:${code}:${c}`)
-  const rows = raw == null ? [] : [[k('1'), k('2'), k('3'), k('e'), k('x')], [k('u'), k('d'), k('t'), button('🔄', `tx:${code}`),
-    liveOn ? button('⏸', `tx:${code}:s`) : button('▶️ 1 мин', `tx:${code}:l`)]]
-  if (isChannelsPrompt(raw)) rows.unshift([button('✅ Подтвердить запуск', `tx:${code}:c`, 'success')])
-  if (session) rows.push([button('« К сессии', `sm:s:${session.id}`)])
-  return { text, kb: new InlineKeyboard(rows) }
+  const time = new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  const head = t('🖥 <b>Экран</b> <code>{v}</code>{v2} · {time}{v3}', { v: escapeHtml(target), v2: session ? ` · #${session.id}` : '', time, v3: liveOn ? t(' · ▶️ обновляется') : '' })
+  const text = raw == null ? t('{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.', { head }) : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
+  const key = (c: string) => button(KEYS[c].label, `tx:${code}:${c}`)
+  const rows = raw == null ? [] : [[key('1'), key('2'), key('3'), key('e'), key('x')], [key('u'), key('d'), key('t'), button('🔄', `tx:${code}`),
+    liveOn ? button('⏸', `tx:${code}:s`) : button(t('▶️ 1 мин'), `tx:${code}:l`)]]
+  if (isChannelsPrompt(raw)) rows.unshift([button(t('✅ Подтвердить запуск'), `tx:${code}:c`, 'success')])
+  if (session) rows.push([button(t('« К сессии'), `sm:s:${session.id}`)])
+  return { text, kb: new InlineKeyboard(rows), gone: raw == null }
 }
 
 export async function handleScreenCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
@@ -99,7 +100,7 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
   if (!ctx.from || !isOwner(ctx.from.id)) {
-    await answer('Нет доступа.')
+    await answer(t('Нет доступа.'))
     return true
   }
   const [, code, key] = m
@@ -107,8 +108,8 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
   const liveKey = msg ? `${msg.chat.id}:${msg.message_id}` : ''
   if (key === 'c') {
     const r = await acceptChannels(d, tmuxTarget(code)!)
-    if (r === 'no_prompt') await answer('На экране нет запроса о каналах — смотрите сами 👁')
-    else await answer(r === 'accepted' ? '✅ Запуск подтверждён' : 'Не вышло — нажмите клавиши вручную')
+    if (r === 'no_prompt') await answer(t('На экране нет запроса о каналах — смотрите сами 👁'))
+    else await answer(r === 'accepted' ? t('✅ Запуск подтверждён') : t('Не вышло — нажмите клавиши вручную'))
     await edit(d, ctx, code, live.has(liveKey))
     return true
   }
@@ -118,7 +119,7 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
       live.set(liveKey, Date.now() + LIVE_MS)
       void runLive(d, msg.chat.id, msg.message_id, code, liveKey)
     }
-    await answer(key === 'l' ? '▶️ Обновляю минуту' : '⏸ Остановлено')
+    await answer(key === 'l' ? t('▶️ Обновляю минуту') : t('⏸ Остановлено'))
     await edit(d, ctx, code, live.has(liveKey))
     return true
   }
@@ -130,7 +131,7 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
     await Bun.sleep(settings.screenRedrawMs)
   }
   await edit(d, ctx, code, live.has(liveKey))
-  await answer(key ? `Нажато: ${KEYS[key]?.label ?? key}` : undefined)
+  await answer(key ? t('Нажато: {v}', { v: KEYS[key]?.label ?? key }) : undefined)
   return true
 }
 
@@ -154,7 +155,7 @@ async function runLive(d: Daemon, chatId: number, messageId: number, code: strin
     const v = await screenView(d, code, on)
     const ok = await d.bot.api.editMessageText(chatId, messageId, v.text, { parse_mode: 'HTML', reply_markup: v.kb })
       .then(() => true, err => isMessageNotModified(err))
-    if (!ok || v.text.includes('Окно не найдено')) break
+    if (!ok || v.gone) break
   }
   live.delete(key)
 }

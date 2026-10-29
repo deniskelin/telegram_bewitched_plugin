@@ -386,3 +386,34 @@ describe('conversations', async () => {
     expect(await firstPrompt(f)).toBe('почини тесты')
   })
 })
+
+describe('i18n', async () => {
+  const { DICTS, t, withLang, normLang, variants } = await import('../src/i18n/index.ts')
+  const { translationKeys, rawCyrillic } = await import('../scripts/i18n-keys.ts')
+  const holes = (s: string) => [...s.matchAll(/\{(\w+)\}/g)].map(m => m[1]).sort().join(',')
+
+  test('every interface string is translated into every language, with the same placeholders', () => {
+    const keys = translationKeys()
+    expect(keys.size).toBeGreaterThan(500)
+    for (const [lang, dict] of Object.entries(DICTS)) {
+      const missing = [...keys].filter(k => !(k in dict))
+      const stale = Object.keys(dict).filter(k => !keys.has(k))
+      const broken = Object.entries(dict).filter(([k, v]) => holes(k) !== holes(v)).map(([k]) => k)
+      expect({ lang, missing, stale, broken }).toEqual({ lang, missing: [], stale: [], broken: [] })
+    }
+  })
+
+  test('no Russian left outside t()/k() (text for the model is marked i18n-ignore)', () => {
+    expect(rawCyrillic()).toEqual([])
+  })
+
+  test('t: current language, placeholders, Russian fallback', () => {
+    expect(withLang('en', () => t('Сессий: {n}', { n: 3 }))).toBe('Sessions: 3')
+    expect(withLang('de', () => t('« Меню'))).toBe('« Menü')
+    expect(withLang('ru', () => t('Сессий: {n}', { n: 3 }))).toBe('Сессий: 3')
+    expect(withLang('fr', () => t('строка, которой нет в словаре'))).toBe('строка, которой нет в словаре')
+    expect(normLang('zh-hans')).toBe('zh')
+    expect(normLang('pt-br')).toBeNull()
+    expect(variants('Отмена')).toEqual(expect.arrayContaining(['Отмена', 'Cancel', 'Abbrechen', '取消']))
+  })
+})

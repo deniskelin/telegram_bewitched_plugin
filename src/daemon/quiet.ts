@@ -8,6 +8,7 @@
 
 import type { Bot } from 'grammy'
 import { settings } from '../config.ts'
+import { t } from '../i18n/index.ts'
 import type { Daemon } from './daemon.ts'
 
 export const QUIET_PRESETS = ['off', '22:00-07:00', '23:00-08:00', '00:00-09:00'] as const
@@ -36,7 +37,7 @@ export function isQuiet(range: [number, number] | null, at = new Date()): boolea
 }
 
 export function fmtQuiet(v: string): string {
-  return parseQuiet(v) ? v.replace('-', '–') : 'выкл'
+  return parseQuiet(v) ? v.replace('-', '–') : t('выкл')
 }
 
 export function installQuietHours(d: Daemon, bot: Bot): void {

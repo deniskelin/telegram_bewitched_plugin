@@ -11,6 +11,7 @@ import type { QuestionRow } from '../db.ts'
 import { clip, safeMeta } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button, type ButtonStyle } from './stream.ts'
+import { t } from '../i18n/index.ts'
 
 export type Option = { label: string; value?: string; style?: ButtonStyle }
 
@@ -42,7 +43,7 @@ function keyboard(q: Pick<QuestionRow, 'id' | 'multi'>, opts: Option[], chosen: 
     if (short && rows.length && rows[rows.length - 1].length < 3) rows[rows.length - 1].push(b)
     else rows.push([b])
   })
-  if (q.multi && !closed) rows.push([button('Готово', `q:${q.id}:done`, 'primary')])
+  if (q.multi && !closed) rows.push([button(t('Готово'), `q:${q.id}:done`, 'primary')])
   return new InlineKeyboard(rows)
 }
 
@@ -128,14 +129,14 @@ function deliverAnswer(d: Daemon, q: QuestionRow, chosen: number[], ctx: Context
 export async function handleQuestionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const m = /^q:([0-9a-f]{8}):(\d+|done)$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: 'Нет доступа.' }).catch(() => {})
+  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
   const q = d.store.question(m[1])
-  if (!q || q.closed) return void ctx.answerCallbackQuery({ text: 'На этот вопрос уже ответили.' }).catch(() => {})
+  if (!q || q.closed) return void ctx.answerCallbackQuery({ text: t('На этот вопрос уже ответили.') }).catch(() => {})
   const opts = JSON.parse(q.options) as Option[]
   let chosen = JSON.parse(q.chosen) as number[]
 
   if (m[2] === 'done') {
-    if (!chosen.length) return void ctx.answerCallbackQuery({ text: 'Ничего не выбрано.' }).catch(() => {})
+    if (!chosen.length) return void ctx.answerCallbackQuery({ text: t('Ничего не выбрано.') }).catch(() => {})
   } else {
     const idx = Number(m[2])
     if (!(idx >= 0 && idx < opts.length)) return void ctx.answerCallbackQuery().catch(() => {})
@@ -160,7 +161,7 @@ export function closeByTextReply(d: Daemon, chatId: string, replyToId: number | 
   const q = d.store.questionByMessage(chatId, replyToId)
   if (!q || q.closed) return null
   d.store.updateQuestion(q.id, { closed: 1 })
-  void finalize(d, q, [], '✍️ Ответ текстом')
+  void finalize(d, q, [], t('✍️ Ответ текстом'))
   return q.id
 }
 
@@ -168,7 +169,7 @@ export function startQuestionExpiry(d: Daemon): void {
   setInterval(() => {
     for (const q of d.store.expiredQuestions()) {
       d.store.updateQuestion(q.id, { closed: 1 })
-      void finalize(d, q, [], '⌛ Время ответа истекло')
+      void finalize(d, q, [], t('⌛ Время ответа истекло'))
     }
   }, 60_000).unref()
 }
