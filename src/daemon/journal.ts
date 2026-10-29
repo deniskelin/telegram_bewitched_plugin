@@ -46,9 +46,25 @@ async function topicThread(d: Daemon, chat: string, topic: JournalTopic): Promis
   }
 }
 
+/**
+ * The journal group: JOURNAL_CHAT_ID, followed to its new id when Telegram
+ * turned the group into a supergroup (topics switched on → migrate_to_chat_id).
+ */
+export function journalChat(d: Daemon): string | null {
+  const id = settings.journalChatId
+  return id ? d.store.get(`chat_migrated:${id}`) ?? id : null
+}
+
+/** A group became a supergroup with a new id: the journal follows it. */
+export function onChatMigrated(d: Daemon, from: string, to: string): void {
+  if (from !== journalChat(d)) return
+  d.store.set(`chat_migrated:${settings.journalChatId}`, to)
+  d.log(`journal moved: ${from} → ${to}`)
+}
+
 /** Where a notice of this kind goes: the journal's topic, else the owner's DM. */
 export async function noticeTarget(d: Daemon, topic: JournalTopic): Promise<{ chat: string; thread?: number } | null> {
-  const j = settings.journalChatId
+  const j = journalChat(d)
   if (j) return { chat: j, thread: await topicThread(d, j, topic) }
   const o = owner()
   return o ? { chat: o } : null
@@ -81,7 +97,7 @@ export async function sendNotice(d: Daemon, topic: JournalTopic, text: () => str
 
 /** Log an event that only the journal hears of; nothing without one. */
 export async function journal(d: Daemon, topic: JournalTopic, text: () => string): Promise<void> {
-  if (!settings.journalChatId) return
+  if (!journalChat(d)) return
   await sendNotice(d, topic, text, () => ({ link_preview_options: { is_disabled: true } }))
 }
 
