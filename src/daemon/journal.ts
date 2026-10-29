@@ -17,9 +17,10 @@ import type { Daemon } from './daemon.ts'
 import { inChat } from './lang.ts'
 
 /** The journal's topics. */
-export type JournalTopic = 'access' | 'sessions' | 'limits' | 'reports' | 'daemon'
+export type JournalTopic = 'status' | 'access' | 'sessions' | 'limits' | 'reports' | 'daemon'
 
 const TOPIC_NAME: Record<JournalTopic, string> = {
+  status: k('📌 Статус'),
   access: k('🛡 Доступ'),
   sessions: k('🖥 Сессии'),
   limits: k('📊 Лимиты'),

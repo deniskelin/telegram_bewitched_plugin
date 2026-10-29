@@ -553,6 +553,15 @@ describe('topics', () => {
         '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
       ])
       expect(renderDashboard(d)).toContain('📊 5 часов 3%')
+      // With a journal the status shows them as in /usage: percent, bar, reset.
+      process.env.JOURNAL_CHAT_ID = '-5300'
+      try {
+        const status = renderDashboard(d)
+        expect(status).toContain('📊 Лимиты')
+        expect(status).toMatch(/5 часов: 3% ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
+      } finally {
+        delete process.env.JOURNAL_CHAT_ID
+      }
 
       // On the minute: a window over a threshold gets a "tokens are back" at its reset (here: already due).
       const { scheduleResetNotice, usageKeyboard } = await import('../src/daemon/usage.ts')
@@ -1774,13 +1783,13 @@ describe('journal (JOURNAL_CHAT_ID)', () => {
       void daemonTopic
       expect(w.body.message_thread_id).toBeDefined()
 
-      // The pinned dashboard moves from General of the topics group to the journal's «🖥 Сессии».
+      // The pinned dashboard moves from General of the topics group to the journal's «📌 Статус».
       const { updateDashboard } = await import('../src/daemon/topics.ts')
       const old = JSON.parse(d.store.get('dashboard_msg') ?? 'null') ?? { id: Number(d.store.get('dashboard_msg_id')) }
       await updateDashboard(d)
       const dash = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).includes('Пульт'))
       expect(dash.body.message_thread_id).toBeDefined()
-      await tg.waitFor('createForumTopic', c => String(c.body.chat_id) === '-5300' && c.body.name === '🖥 Сессии')
+      await tg.waitFor('createForumTopic', c => String(c.body.chat_id) === '-5300' && c.body.name === '📌 Статус')
       if (old.id) await tg.waitFor('deleteMessage', c => c.body.message_id === old.id)
       await tg.waitFor('pinChatMessage', c => String(c.body.chat_id) === '-5300')
       // Next time it is edited in place there.
