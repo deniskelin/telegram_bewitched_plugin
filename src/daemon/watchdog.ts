@@ -44,6 +44,8 @@ export function onSessionStopped(d: Daemon, s: Session): void {
 async function notifyStopped(d: Daemon, s: Session, resume: string | null): Promise<void> {
   if (d.activeSessions().some(o => o.projectKey === s.projectKey)) return // restarted meanwhile
   const role = d.roleOf(s)
+  // With user sessions everyone has their own: the main one is not offered to the owner.
+  if (role === 'main' && settings.userSessions) return
   const user = d.userIdOf(s)
   const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? tr('👑 главная') : `📂 ${projectTitle(s)}`
   const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey), user: user ?? undefined, v: 2 }
@@ -102,7 +104,7 @@ export function onSessionBack(d: Daemon, dir: string): void {
 
 /**
  * Once after the daemon starts (when sessions had time to reconnect): records
- * of sessions that are back are dropped; notices from before v2 (commands and
+ * of sessions that are back (and of the main one with USER_SESSIONS) are dropped; notices from before v2 (commands and
  * 🚀 to anyone) are sent again the new way — the old messages' ids were not
  * kept, so they stay.
  */
@@ -110,7 +112,7 @@ export async function renotifyStopped(d: Daemon): Promise<void> {
   for (const key of d.store.keys('wd:')) {
     let r: Restart
     try { r = JSON.parse(d.store.get(key) ?? '') as Restart } catch { continue }
-    if (d.activeSessions().some(s => s.cwd === r.dir)) { await dropStale(d, r.dir); continue }
+    if (d.activeSessions().some(s => s.cwd === r.dir) || (settings.userSessions && r.dir === d.mainKey())) { await dropStale(d, r.dir); continue }
     if (r.v === 2) continue
     d.store.set(key, null)
     for (const m of r.sent ?? []) await d.bot.api.deleteMessage(m.chat, m.id).catch(() => {})

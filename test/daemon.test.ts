@@ -1814,8 +1814,12 @@ describe('session types', () => {
     d.store.set('wd:0ldc0de2', JSON.stringify({ dir: '/tmp/back', resume: null, name: '📂 back' }))
     const b = new FakeClient()
     await b.connect({ cwd: '/tmp/back', projectRoot: '/tmp/back', claudePid: 5555 })
+    // With user sessions the main one is not offered to the owner: its record just goes.
+    d.store.set('wd:0ldc0de3', JSON.stringify({ dir: d.mainKey(), resume: null, name: '👑 главная' }))
     await renotifyStopped(d)
     expect(d.store.get('wd:0ldc0de2')).toBeNull()
+    expect(d.store.get('wd:0ldc0de3')).toBeNull()
+    expect(tg.callsOf('sendMessage').some(c => JSON.stringify(c.body.reply_markup ?? '').includes('0ldc0de3'))).toBe(false)
     const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:ask:0ldc0de1'))
     expect(String(mine.body.text)).not.toContain('<pre>')
     const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:run:0ldc0de1'))
