@@ -700,6 +700,9 @@ describe('topics', () => {
     expect(classify('billing_error', 'Credit balance is too low')).toBe('billing')
     expect(classify('server_error', 'API Error: 500')).toBeNull()
     expect(new Date(parseReset('resets 2:20pm', new Date(2026, 9, 29, 9, 0).getTime())!).getHours()).toBe(14)
+    // Claude Code's real text: the clock of the named zone (Moscow is UTC+3).
+    expect(classify('rate_limit', "You've hit your 5-hour limit · resets 2:20pm (Europe/Moscow)")).toBe('subscription')
+    expect(new Date(parseReset("You've hit your 5-hour limit · resets 2:20pm (Europe/Moscow)", Date.UTC(2026, 9, 29, 9, 50))!).toISOString()).toBe('2026-10-29T11:20:00.000Z')
     await hook('Stop', {})
     tg.push(textMessage({ chat: Number(group), text: 'сделай отчёт', thread }))
     await client.inbound(x => x.content === 'сделай отчёт')

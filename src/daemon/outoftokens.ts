@@ -45,7 +45,7 @@ export function pauseOf(d: Daemon): Pause | null {
 /** What kind of limit the failed turn hit, from the StopFailure error type and Claude Code's message. */
 export function classify(error: string, text: string): PauseKind | null {
   if (error === 'billing_error' || /credit balance|billing|insufficient.{0,20}(funds|credit)|payment/i.test(text)) return 'billing'
-  if (/usage limit|hit your limit|limit reached|out of (extra )?usage|resets? (at )?\d/i.test(text)) return 'subscription'
+  if (/usage limit|hit your .{0,20}limit|limit reached|out of (extra )?usage|resets? (at )?\d/i.test(text)) return 'subscription'
   if (error === 'rate_limit' || /\b429\b|rate.?limit/i.test(text)) return 'rate'
   return null
 }
@@ -54,15 +54,30 @@ export function classify(error: string, text: string): PauseKind | null {
 export function parseReset(text: string, now = Date.now()): number | null {
   const epoch = /\|(\d{10})\b/.exec(text)
   if (epoch) return Number(epoch[1]) * 1000
-  const m = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?/i.exec(text)
+  const m = /resets?\s+(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)?(?:\s*\(([A-Za-z_]+(?:\/[A-Za-z_+-]+)*)\))?/i.exec(text)
   if (!m) return null
   let h = Number(m[1]) % 24
   const min = Number(m[2] ?? 0)
   if (m[3]) h = (h % 12) + (m[3].toLowerCase() === 'pm' ? 12 : 0)
-  const d = new Date(now)
-  d.setHours(h, min, 0, 0)
-  if (d.getTime() <= now) d.setDate(d.getDate() + 1)
-  return d.getTime()
+  // "(Europe/Moscow)": the time is on that clock, not the server's.
+  const shift = m[4] ? zoneOffset(m[4], now) : null
+  const d = new Date(now + (shift ?? 0))
+  if (shift != null) d.setUTCHours(h, min, 0, 0)
+  else d.setHours(h, min, 0, 0)
+  let at = d.getTime() - (shift ?? 0)
+  if (at <= now) at += 24 * 3600_000
+  return at
+}
+
+/** Milliseconds the zone's clock is ahead of UTC at that moment; null for an unknown zone. */
+function zoneOffset(zone: string, at: number): number | null {
+  try {
+    const p = Object.fromEntries(new Intl.DateTimeFormat('en-US', { timeZone: zone, hourCycle: 'h23', year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', second: 'numeric' })
+      .formatToParts(new Date(at)).map(x => [x.type, Number(x.value)]))
+    return Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second) - Math.floor(at / 1000) * 1000
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -114,7 +129,8 @@ export function holdIfPaused(d: Daemon, s: Session, content: string, meta: Recor
   held.push({ projectKey: s.projectKey, content, meta, from })
   d.store.set(HELD, JSON.stringify(held.slice(-200)))
   const replyTo = Number(meta.message_id) || undefined
-  void say(d, from, pause, replyTo, false)
+  // A voice message: show what was heard, so the sender knows it was saved right.
+  void say(d, from, pause, replyTo, false, meta.voice_transcribed === 'true' ? content : undefined)
   return true
 }
 
@@ -146,9 +162,10 @@ function resumeKb(): InlineKeyboard {
   return new InlineKeyboard([[button(tr('▶️ Продолжить сейчас'), 'tok:go')]])
 }
 
-async function say(d: Daemon, chat: ChatRef, p: Pause, replyTo: number | undefined, first: boolean): Promise<void> {
+async function say(d: Daemon, chat: ChatRef, p: Pause, replyTo: number | undefined, first: boolean, heard?: string): Promise<void> {
   await inChat(d, chat.chatId, chat.threadId, async () => {
-    await d.bot.api.sendMessage(chat.chatId, pauseText(p, first), {
+    const text = heard ? `${pauseText(p, first)}\n\n${heard.length > 3000 ? heard.slice(0, 2999) + '…' : heard}` : pauseText(p, first)
+    await d.bot.api.sendMessage(chat.chatId, text, {
       ...(chat.threadId != null ? { message_thread_id: chat.threadId } : {}),
       ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
       // Only the owner may lift the pause by hand; others see the same button but get "no access".
