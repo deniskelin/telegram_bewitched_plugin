@@ -181,7 +181,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 
 - **La session utilisateur démarre seule.** Le premier message d'un utilisateur → le démon crée `~/user/<id>`, lance Claude dans une nouvelle fenêtre tmux (`TMUX_SESSION`, avec `--continue` s'il y a déjà eu des conversations) ; le message attend dans la file et arrive une fois la session connectée.
 - **Sujet de projet sans session** (`TOPIC_NO_SESSION=launch`) : un message lance la session du projet. Si le lancement échoue, le bot publie une commande de lancement manuel et ferme le sujet jusqu'à la connexion de la session.
-- **Gardien.** Une session est partie d'elle-même (ni archive, ni inactivité) → une minute plus tard, le bot écrit dans son chat « ⚠️ La session … s'est arrêtée », avec les commandes de relance et un bouton « 🚀 Lancer ». Un sujet de projet est fermé jusqu'à la reconnexion.
+- **Gardien.** Une session est partie d'elle-même (ni archive, ni inactivité) → une minute plus tard, le propriétaire reçoit en privé « ⚠️ La session … s'est arrêtée », avec les commandes pour la relancer et le bouton « 🚀 Lancer ». Le sujet du projet reçoit seulement l'avis, sans commandes ni boutons, et reste fermé jusqu'à la reconnexion ; un membre dont la propre session s'est arrêtée reçoit le bouton « 🙋 Demander un redémarrage », qui transmet la demande au propriétaire.
 - **Fermeture des sessions inactives :** `USER_IDLE_MIN` et `PROJECT_IDLE_MIN`, par défaut `0` — jamais. Une session inactive ne consomme pas de jetons, seulement de la mémoire.
 
 ### Ce qu'il faut faire à la main

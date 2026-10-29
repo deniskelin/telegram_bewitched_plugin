@@ -181,7 +181,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 
 - **La sesión de usuario arranca sola.** El primer mensaje del usuario → el demonio crea `~/user/<id>`, inicia Claude en una ventana nueva de tmux (`TMUX_SESSION`, con `--continue` si ya hubo conversaciones); el mensaje espera en cola y llega cuando la sesión se conecta.
 - **Tema de proyecto sin sesión** (`TOPIC_NO_SESSION=launch`): un mensaje inicia la sesión del proyecto. Si no se puede iniciar, el bot publica el comando para iniciarla a mano y cierra el tema hasta que la sesión se conecte.
-- **Vigilante.** Una sesión se fue sola (no por archivo ni por inactividad) → un minuto después el bot escribe en su chat «⚠️ La sesión … se ha detenido», con comandos para reiniciarla y un botón «🚀 Iniciar». Un tema de proyecto se cierra hasta que la sesión se reconecte.
+- **Vigilante.** Una sesión se fue sola (no por archivo ni por inactividad) → al minuto el dueño recibe por privado «⚠️ La sesión … se detuvo», con los comandos para reiniciarla y el botón «🚀 Iniciar». El tema del proyecto recibe solo el aviso, sin comandos ni botones, y queda cerrado hasta que la sesión se reconecte; un miembro cuya propia sesión se detuvo recibe el botón «🙋 Pedir reinicio», que pasa la solicitud al dueño.
 - **Cierre de sesiones inactivas:** `USER_IDLE_MIN` y `PROJECT_IDLE_MIN`, por defecto `0` (nunca). Una sesión inactiva no gasta tokens, solo memoria.
 
 ### Qué hay que hacer a mano
