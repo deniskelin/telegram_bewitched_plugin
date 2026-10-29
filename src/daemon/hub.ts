@@ -21,6 +21,7 @@ import { reportsScreen } from './reports.ts'
 import { serverReport } from './server.ts'
 import { button } from './stream.ts'
 import { digestReport, limitsLine, usageKeyboard, usageReport } from './usage.ts'
+import { idleScreen } from './idle.ts'
 
 const BACK = () => button(t('« Меню'), 'hub:main')
 const VOICE_INFO = { off: k('текстом'), mirror: k('голосом на голосовое'), always: k('всегда голосом') } as const
@@ -44,7 +45,8 @@ export function mainScreen(d: Daemon): Screen {
     [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list'), button(t('👥 Группы'), 'gp:list')],
     [button(t('📊 Статистика'), 'hub:stats'), button(t('👥 Люди'), 'hub:people')],
     [button(t('⏰ Напоминания'), 'hub:rem'), button(t('⚡ Быстрые команды'), 'hub:mc')],
-    [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('❓ Помощь'), 'hub:help')],
+    [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('💤 Приостановка сессий'), 'hub:idle')],
+    [button(t('❓ Помощь'), 'hub:help')],
   ]
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
 }
@@ -184,6 +186,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       return true
     case 'reports': screen = primary ? reportsScreen(d) : statsScreen(); if (!primary) toast = t('Отчёты — у владельца.'); break
     case 'set': screen = settingsScreen(d, place(ctx)); break
+    case 'idle': screen = primary ? idleScreen(d) : mainScreen(d); if (!primary) toast = t('Это настройка владельца.'); break
     case 'qh': {
       const v = QUIET_PRESETS[Number(value)]
       if (v) d.store.set('quiet_hours', v)

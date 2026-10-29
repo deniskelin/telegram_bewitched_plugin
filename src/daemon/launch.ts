@@ -15,11 +15,13 @@ import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { inChat } from './lang.ts'
+import { inChat, inSession } from './lang.ts'
 import { isStartupPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { sendNotice } from './journal.ts'
+import { idleKind, idleMin, idleName } from './idle.ts'
+import { announceSuspended } from './watchdog.ts'
 import { t as tr } from '../i18n/index.ts'
 
 /** Folder name from a topic name: letters/digits (any script), dot, dash, underscore. */
@@ -374,13 +376,14 @@ export function startIdleCloser(d: Daemon): void {
   const closing = new WeakSet<Session>()
   setInterval(() => {
     for (const s of d.activeSessions()) {
-      const role = d.roleOf(s)
-      const min = role === 'user' ? settings.userIdleMin : role === 'project' ? settings.projectIdleMin : 0
+      const kind = idleKind(d, s)
+      const min = kind ? idleMin(d, kind) : 0
       if (min <= 0 || s.turn || s.status !== 'idle' || closing.has(s)) continue
       if (Date.now() - s.lastActivity < min * 60_000) continue
       if (endSession(d, s)) {
         closing.add(s)
-        d.log(`${role} session ${s.id} idle ${min} min, closing`)
+        d.log(`${kind} session ${s.id} idle ${min} min, suspending`)
+        void inSession(d, s, () => announceSuspended(d, s, idleName(min))).catch(err => d.log(`suspend notice failed: ${err}`))
       }
     }
   }, 60_000).unref?.()

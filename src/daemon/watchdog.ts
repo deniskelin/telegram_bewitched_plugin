@@ -64,17 +64,43 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
 }
 
 /**
+ * A session suspended for idling (idle.ts): like a stop, but planned. Its
+ * member user hears it is suspended, with «🙋 Запросить запуск»; the owner
+ * (journal «🖥 Сессии») gets the commands and 🚀; a project topic only a
+ * line — the next message there starts the session again. All of it goes
+ * once the session is back.
+ */
+export async function announceSuspended(d: Daemon, s: Session, period: string): Promise<void> {
+  const role = d.roleOf(s)
+  const user = d.userIdOf(s)
+  const name = user ? `👤 ${d.userLabel(user)}` : `📂 ${projectTitle(s)}`
+  const transcript = s.claude.transcript ?? guessTranscript(s.argv, s.cwd)
+  const resume = s.claude.sessionId ?? (transcript ? basename(transcript, '.jsonl') : null)
+  const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey), user: user ?? undefined, v: 2 }
+  await dropStale(d, s.cwd)
+  if (role === 'project' && s.topic) {
+    const { chatId, threadId } = s.topic
+    await inChat(d, chatId, threadId, () => d.bot.api.sendMessage(chatId, tr('💤 Сессия приостановлена: {period} без дела. Напишите сюда — запущу снова.', { period }), { message_thread_id: threadId, disable_notification: true }))
+      .catch(err => d.log(`suspend notice failed: ${err}`))
+  }
+  await announce(d, restart, randomBytes(4).toString('hex'),
+    () => tr('💤 Сессия <b>{v}</b> (#{id}) приостановлена: {period} без дела.', { v: escapeHtml(name), id: s.id, period }), true,
+    () => tr('💤 Ваша сессия приостановлена: {period} без дела. Напишите — запущу снова, или попросите владельца запустить её.', { period }),
+    () => tr('🙋 Запросить запуск'))
+}
+
+/**
  * The DM notices of a stopped session: its member user gets «🙋 Запросить
  * перезапуск» (when tellUser), the owner the commands and 🚀. Saved under
  * wd:<id> with the sent message ids.
  */
-async function announce(d: Daemon, r: Restart, id: string, ownerHead: () => string, tellUser: boolean): Promise<void> {
+async function announce(d: Daemon, r: Restart, id: string, ownerHead: () => string, tellUser: boolean, userText: () => string = () => tr('⚠️ Ваша сессия остановилась. Можно попросить владельца бота запустить её заново.'), askLabel: () => string = () => tr('🙋 Запросить перезапуск')): Promise<void> {
   const o = owner()
   const sent: { chat: string; id: number }[] = []
   if (tellUser && r.user && r.user !== o) {
     const user = r.user
-    const ask = inChat(d, user, undefined, () => new InlineKeyboard([[button(tr('🙋 Запросить перезапуск'), `wd:ask:${id}`, 'primary')]]))
-    const m = await d.bot.api.sendMessage(user, inChat(d, user, undefined, () => tr('⚠️ Ваша сессия остановилась. Можно попросить владельца бота запустить её заново.')), { parse_mode: 'HTML', reply_markup: ask }).catch(err => { d.log(`watchdog notice failed: ${err}`); return null })
+    const ask = inChat(d, user, undefined, () => new InlineKeyboard([[button(askLabel(), `wd:ask:${id}`, 'primary')]]))
+    const m = await d.bot.api.sendMessage(user, inChat(d, user, undefined, userText), { parse_mode: 'HTML', reply_markup: ask }).catch(err => { d.log(`watchdog notice failed: ${err}`); return null })
     if (m) sent.push({ chat: user, id: m.message_id })
   }
   const n = await sendNotice(d, 'sessions', () => ownerNotice(r, ownerHead()), () => ({ reply_markup: runKb(id) }))
