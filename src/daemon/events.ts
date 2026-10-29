@@ -14,7 +14,7 @@
 
 import { InlineKeyboard, type Context } from 'grammy'
 import { execFile } from 'child_process'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml, maskSecrets } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
@@ -121,7 +121,7 @@ export function startCiWatch(d: Daemon): void {
 export async function handleCiCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^ci:fix:([0-9a-f]+)$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'write')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }

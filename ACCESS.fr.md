@@ -20,9 +20,13 @@ Tout l'état se trouve dans `~/.claude/channels/telegram-bewitched/access.json`.
 
 ## Inviter depuis le bot
 
-Le propriétaire (la première entrée de `allowFrom`) peut aussi ajouter des personnes sans code : `/invite` en privé avec le bot, ou « 👥 Inviter » dans `/sessions`. Le sélecteur de contacts de Telegram renvoie l'ID de la personne ; après confirmation, le bot l'ajoute à `allowFrom`, prépare `USERS_DIR/<id>` et lance sa session, crée un lien à usage unique vers le groupe de sujets (le bot doit avoir le droit « Inviter des utilisateurs ») et envoie au propriétaire un message à transférer. Tous ceux de `allowFrom` ont les mêmes droits complets. En mode `static`, cela ne fonctionne qu'après un redémarrage (le fichier est écrit, l'instantané non).
+Le propriétaire (la première entrée de `allowFrom`) peut aussi ajouter des personnes sans code : `/invite` en privé avec le bot, ou « 👥 Inviter » dans `/sessions`. Le sélecteur de contacts de Telegram renvoie l'ID de la personne ; après confirmation, le bot l'ajoute à `allowFrom`, prépare `USERS_DIR/<id>` et lance sa session, crée un lien à usage unique vers le groupe de sujets (le bot doit avoir le droit « Inviter des utilisateurs ») et envoie au propriétaire un message à transférer. Leurs droits dépendent de leur rôle (voir ci-dessous). En mode `static`, cela ne fonctionne qu'après un redémarrage (le fichier est écrit, l'instantané non).
 
 La suppression fonctionne de la même manière : « 🚫 Supprimer l'utilisateur » sur la fiche de sa session dans `/sessions`, ou `/users`. Après une confirmation qui énumère ce qui sera supprimé, le bot le retire de `allowFrom` (et des listes de groupes), ferme sa fenêtre tmux, supprime `USERS_DIR/<id>` et ses transcriptions Claude Code, et oublie son historique privé, sa file d'attente, sa mémoire, ses rappels et ses réglages ; il peut aussi le retirer du groupe de sujets (ban + unban).
+
+## Rôles
+
+Les utilisateurs appairés ont un rôle. 👑 **propriétaire** — la première entrée de `allowFrom` — peut tout faire. 👤 **membre** (par défaut) écrit aux sessions, répond aux boutons `ask_user` et arrête un tour avec ⏹. 👁 **observateur** lit seulement : ses messages et appuis sont ignorés. Approuver les autorisations (les demandes ne vont qu'en privé au propriétaire), le panneau, l'archive, les réglages, inviter et supprimer des personnes sont réservés au propriétaire. Le propriétaire change les rôles dans `/users` ; ils sont stockés dans `access.json` sous la forme `"roles": { "<id>": "member" | "viewer" }`. Les sessions voient le rôle de l'auteur (`user_role`) et ne laissent pas un non-propriétaire passer outre les instructions du propriétaire.
 
 ## Politiques des messages privés
 

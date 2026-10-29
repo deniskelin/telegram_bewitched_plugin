@@ -7,7 +7,7 @@
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import { clip, escapeHtml } from '../format.ts'
 import type { ChatRef, Daemon } from './daemon.ts'
 import { button } from './stream.ts'
@@ -169,7 +169,7 @@ export function remindersScreen(d: Daemon, chatId: string, threadId: number | un
 
 export function registerReminderCommands(d: Daemon, bot: Bot): void {
   bot.command('remind', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id) || !ctx.chat) return
+    if (!ctx.from || !can(ctx.from.id, 'write') || !ctx.chat) return
     const parsed = parseWhen(String(ctx.match ?? ''))
     const thread = threadOf(ctx)
     if (!parsed || !parsed.text) return void ctx.reply(USAGE(), { message_thread_id: thread })
@@ -178,7 +178,7 @@ export function registerReminderCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('reminders', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id) || !ctx.chat) return
+    if (!ctx.from || !can(ctx.from.id, 'write') || !ctx.chat) return
     const { text, kb } = remindersScreen(d, String(ctx.chat.id), threadOf(ctx))
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: threadOf(ctx) })
   })
@@ -187,7 +187,7 @@ export function registerReminderCommands(d: Daemon, bot: Bot): void {
 export async function handleReminderCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^rm:del:([0-9a-f]+)$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'write')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }

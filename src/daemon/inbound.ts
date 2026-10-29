@@ -9,7 +9,7 @@ import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { dmCommandGate, gate, isOwner, loadAccess, owner, prefsFor } from '../access.ts'
+import { can, dmCommandGate, gate, loadAccess, owner, prefsFor, roleOf } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
 import { toWav16k } from '../voice/audio.ts'
@@ -231,7 +231,7 @@ async function handleInbound(
 
   // Permission reply typed as text ("yes abcde").
   const permMatch = PERMISSION_REPLY_RE.exec(text)
-  if (permMatch) {
+  if (permMatch && can(from.id, 'permissions')) {
     const request_id = permMatch[2]!.toLowerCase()
     const behavior = permMatch[1]!.toLowerCase().startsWith('y') ? 'allow' : 'deny'
     resolvePermission(d, request_id, behavior)
@@ -290,6 +290,8 @@ async function handleInbound(
     message_id: String(msg.message_id),
     user: safeMeta(from.username ?? String(from.id)) ?? String(from.id),
     user_id: String(from.id),
+    // FR-4: who is writing — the model weighs instructions by it.
+    user_role: roleOf(String(from.id)) ?? 'guest',
     ts: new Date(msg.date * 1000).toISOString(),
     ...(threadId != null ? { thread_id: String(threadId) } : {}),
     ...(threadId != null && d.store.topic(chatId, threadId) ? { topic_name: safeMeta(d.store.topic(chatId, threadId)!.name) ?? '' } : {}),
@@ -407,7 +409,8 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   // A user's session asks only that user.
   const user = d.userIdOf(s)
   // A group's project asks only the owner: group members don't see or answer it.
-  const dmTo = user ? [user] : s.group ? [owner()].filter((x): x is string => !!x) : loadAccess().allowFrom
+  // FR-4: only the owner approves permissions.
+  const dmTo = [owner()].filter((x): x is string => !!x)
   if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
@@ -420,7 +423,7 @@ function permissionKb(requestId: string, tool: string, more: boolean): InlineKey
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const m = /^perm:(allow|deny|more|always|proj):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+  if (!can(ctx.from!.id, 'permissions')) return void ctx.answerCallbackQuery({ text: tr('Разрешения одобряет только владелец.') }).catch(() => {})
   const [, behavior, request_id] = m
   if (behavior === 'more') {
     const p = d.permissions.get(request_id)
@@ -468,7 +471,7 @@ export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
 
 async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const id = data.slice('stop:'.length)
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+  if (!can(ctx.from!.id, 'stop')) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
   if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
   const r = stopSession(d, s)
@@ -512,7 +515,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   bot.command('help', async ctx => {
     if (ctx.chat.type === 'private' && !dmCommandGate(ctx)) return
-    if (ctx.chat.type !== 'private' && !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' && !can(ctx.from!.id, 'write')) return
     const { text, kb } = helpScreen()
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
@@ -540,12 +543,12 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   // The subscription is the owner's, and the breakdown shows everyone's sessions.
   bot.command('usage', async ctx => {
-    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' || !can(ctx.from!.id, 'control')) return
     await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
   })
 
   bot.command('digest', async ctx => {
-    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' || !can(ctx.from!.id, 'control')) return
     await ctx.reply(await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
   })
 
@@ -578,7 +581,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     const stopped = (ctx.update as { stopped_message_generation?: { chat: { id: number }; draft_id: number } }).stopped_message_generation
     if (!stopped) return next()
     const chatId = String(stopped.chat.id)
-    if (!isOwner(chatId)) return
+    if (!can(chatId, 'stop')) return
     const s = d.activeSessions().find(x => x.lastChat?.chatId === chatId && x.status === 'working')
     if (s) stopSession(d, s)
   })

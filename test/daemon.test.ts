@@ -1505,6 +1505,47 @@ describe('languages', () => {
   })
 })
 
+describe('roles (FR-4)', () => {
+  test('a member writes and answers but cannot approve permissions or use the panel; a viewer is ignored; the owner switches roles in /users', async () => {
+    const { loadAccess, saveAccess, roleOf } = await import('../src/access.ts')
+    const a = loadAccess()
+    a.allowFrom.push('555', '556')
+    a.roles = { '556': 'viewer' }
+    saveAccess(a)
+    expect(roleOf('111')).toBe('owner')
+    expect(roleOf('555')).toBe('member')
+    expect(roleOf('556')).toBe('viewer')
+    const group = '-100500'
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    // A member's message reaches the session with its role.
+    tg.push(textMessage({ from: 555, chat: Number(group), thread, text: 'от участника' }))
+    expect((await client.inbound(x => x.content === 'от участника')).meta.user_role).toBe('member')
+    // A viewer's does not.
+    tg.push(textMessage({ from: 556, chat: Number(group), thread, text: 'от наблюдателя' }))
+    await Bun.sleep(400)
+    expect(client.msgs.some(x => (x as Inbound).content === 'от наблюдателя')).toBe(false)
+    // Permissions: only the owner is asked, a member's tap is refused.
+    client.sock.write(encode({ t: 'perm_req', request_id: 'rstuv', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
+    await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).startsWith('🔐 proj: Bash') || String(c.body.chat_id) === group && String(c.body.text).startsWith('🔐 proj: Bash'))
+    expect(tg.callsOf('sendMessage').some(c => c.body.chat_id === '555' && String(c.body.text).startsWith('🔐'))).toBe(false)
+    tg.push(callbackQuery('perm:allow:rstuv', { from: 555, chat: Number(group) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Разрешения одобряет только владелец.')
+    tg.push(callbackQuery('perm:allow:rstuv', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'rstuv')).toMatchObject({ behavior: 'allow' })
+    // The panel is the owner's.
+    tg.push(callbackQuery('sm:list', { from: 555 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.' && tg.callsOf('answerCallbackQuery').length > 0)
+    // /users: the owner switches roles.
+    tg.push(callbackQuery('ur:role:556:m'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '👤 Теперь участник')
+    expect(roleOf('556')).toBe('member')
+    const b = loadAccess()
+    b.allowFrom = b.allowFrom.filter(x => x !== '555' && x !== '556')
+    delete b.roles
+    saveAccess(b)
+  })
+})
+
 describe('reconnects', () => {
   test('a Claude process greeted before (daemon restart) gets no second welcome card or resume', async () => {
     const pid = process.pid // alive, so it survives pruning

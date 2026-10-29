@@ -6,7 +6,7 @@
  */
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
-import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
+import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { k, lang, LANG_NAMES, LANGS, normLang, t, withLang } from '../i18n/index.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { settings } from '../config.ts'
@@ -123,7 +123,7 @@ export function helpScreen(): Screen {
 
 export function registerHubCommands(d: Daemon, bot: Bot): void {
   bot.command('menu', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const { text, kb } = mainScreen(d)
     const thread = ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: thread })
@@ -131,7 +131,7 @@ export function registerHubCommands(d: Daemon, bot: Bot): void {
 
   // /lang [ru|en|es|zh|fr|de|auto]: the interface language of this chat (a topic follows its group unless set).
   bot.command('lang', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id) || !ctx.chat) return
+    if (!ctx.from || !can(ctx.from.id, 'control') || !ctx.chat) return
     const c = place(ctx)
     const arg = String(ctx.match ?? '').trim().toLowerCase()
     const thread = c.threadId != null ? { message_thread_id: c.threadId } : {}
@@ -148,7 +148,7 @@ export function registerHubCommands(d: Daemon, bot: Bot): void {
 export async function handleHubCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^hub:([a-z]+)(?::(\w+))?$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
     return true
   }

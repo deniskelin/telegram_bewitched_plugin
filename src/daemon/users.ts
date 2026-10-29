@@ -8,7 +8,7 @@
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { existsSync, readdirSync, rmSync, statSync } from 'fs'
 import { join, resolve, sep } from 'path'
-import { loadAccess, owner, saveAccess } from '../access.ts'
+import { loadAccess, owner, roleOf, saveAccess, setRole } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import { userPendingKey, type Daemon } from './daemon.ts'
@@ -147,10 +147,15 @@ export function usersScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
   const kb: ReturnType<typeof button>[][] = []
   for (const id of rest) {
     const s = d.userSession(id)
-    lines.push(`👤 ${escapeHtml(label(d, id))} · ${s ? t('сессия #{id}', { id: s.id }) : t('сессия не запущена')}`)
-    kb.push([button(clip(`🚫 ${label(d, id)}`, 40), `ur:ask:${id}`)])
+    const viewer = roleOf(id) === 'viewer'
+    lines.push(`${viewer ? '👁' : '👤'} ${escapeHtml(label(d, id))} · ${viewer ? t('наблюдатель') : t('участник')} · ${s ? t('сессия #{id}', { id: s.id }) : t('сессия не запущена')}`)
+    kb.push([
+      button(clip(`${viewer ? '👤' : '👁'} ${label(d, id)}`, 32), `ur:role:${id}:${viewer ? 'm' : 'v'}`),
+      button(clip(`🚫 ${label(d, id)}`, 32), `ur:ask:${id}`),
+    ])
   }
   if (!rest.length) lines.push('', t('Кроме вас — никого.'))
+  else lines.push('', t('👤 участник — пишет в сессии, отвечает на кнопки, жмёт ⏹; разрешения, архив, люди и настройки — только у владельца. 👁 наблюдатель только читает. Кнопка слева меняет роль.'))
   kb.push([button(t('👥 Пригласить'), 'inv:start'), button(t('« Меню'), 'hub:main')])
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb) }
 }
@@ -165,13 +170,19 @@ export function registerUserCommands(d: Daemon, bot: Bot): void {
 
 /** ur:ask|ok|kick:<id>, ur:list */
 export async function handleUserCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^ur:(ask|ok|kick|list)(?::(\d+))?$/.exec(data)
+  const m = /^ur:(ask|ok|kick|list|role)(?::(\d+))?(?::([mv]))?$/.exec(data)
   if (!m) return false
   if (!isPrimaryOwner(ctx)) {
     await ctx.answerCallbackQuery({ text: t('Удалять пользователей может только владелец.') }).catch(() => {})
     return true
   }
   const [, action, id] = m
+  if (action === 'role' && id && id !== owner()) {
+    setRole(id, m[3] === 'v' ? 'viewer' : 'member')
+    await ctx.answerCallbackQuery({ text: m[3] === 'v' ? t('👁 Теперь наблюдатель') : t('👤 Теперь участник') }).catch(() => {})
+    await show(ctx, usersScreen(d))
+    return true
+  }
   if (action === 'list') {
     await ctx.answerCallbackQuery().catch(() => {})
     await show(ctx, usersScreen(d))
