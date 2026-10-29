@@ -236,7 +236,7 @@ claude plugin update telegram-bewitched@bewitched
 | `BOT_LANGUAGE` | `ru` | 默认界面语言（`ru`、`en`、`es`、`zh`、`fr`、`de`），在聊天和所有者都未选择、且不知道用户 Telegram 语言时使用 |
 | `TMUX_SESSION` | `claude` | 新窗口所在的 tmux 会话 |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-<telegram id>`（用户会话）或 `-n claude-topic-<话题>`（项目）；tmux 窗口使用相同名称 |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-<telegram id>`（用户会话）或 `-n claude-<群组 id>-<话题 id>`（项目，与文件夹同名）；tmux 窗口使用相同名称 |
 
 访问控制（配对、allowlist、群组）与官方插件相同，见 [ACCESS.md](ACCESS.zh.md)和 `/telegram-bewitched:access`。
 
