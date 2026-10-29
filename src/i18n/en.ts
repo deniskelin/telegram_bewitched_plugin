@@ -346,9 +346,6 @@ const dict: Dict = {
   "{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.": "{head}\n\nWindow not found: the session is closed or tmux restarted.",
   "▶️ 1 мин": "▶️ 1 min",
   "« К сессии": "« To the session",
-  "На экране нет запроса о каналах — смотрите сами 👁": "No channels prompt on the screen — have a look yourself 👁",
-  "✅ Запуск подтверждён": "✅ Launch confirmed",
-  "Не вышло — нажмите клавиши вручную": "Didn't work — press the keys manually",
   "▶️ Обновляю минуту": "▶️ Refreshing for a minute",
   "⏸ Остановлено": "⏸ Stopped",
   "Нажато: {v}": "Pressed: {v}",
@@ -631,6 +628,16 @@ const dict: Dict = {
   "⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.": "⏳ Session <b>{v}</b> (window {v2}) is waiting for the launch to be confirmed — until then messages won't reach it.",
   "⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.": "⏳ Session <b>{v}</b> (window {v2}) was started but never connected. Have a look at the screen.",
   "⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.": "⏳ Your session is still being confirmed on the server — your message won't be lost and will arrive as soon as it connects.",
+  "✖️ Закрыть": "✖️ Close",
+  "✖️ Закрыто": "✖️ Closed",
+  "Уже подтверждаю…": "Already confirming…",
+  "На экране нет вопросов запуска — смотрите сами 👁": "No startup questions on the screen — have a look yourself 👁",
+  "✅ Подтверждаю запуск…": "✅ Confirming the launch…",
+  "⏳ Подтверждаю запуск — жду, пока сессия подключится…": "⏳ Confirming the launch — waiting for the session to connect…",
+  "✅ Сессия #{id} подключилась — можно писать.": "✅ Session #{id} is connected — you can write.",
+  "❌ Окно закрылось — сессия не запустилась.": "❌ The window closed — the session didn't start.",
+  "⌛ Сессия так и не подключилась — посмотрите экран.": "⌛ The session never connected — have a look at the screen.",
+  "⚠️ На экране вопрос, на который я не отвечаю сам, — ответьте клавишами.": "⚠️ The screen shows a question I don't answer myself — answer it with the keys.",
 }
 
 export default dict

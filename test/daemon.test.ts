@@ -1138,40 +1138,62 @@ describe('menu', () => {
 describe('convenience', () => {
   const group = '-100500'
 
-  test('✅ confirm launch presses only on the channels prompt; ▶️ live screen; owner only', async () => {
-    const { acceptChannels } = await import('../src/daemon/screen.ts')
-    const prompt = (focus: 'ok' | 'exit') => `WARNING: Loading development channels\n\n${focus === 'ok' ? '❯' : ' '} I am using this for local development\n${focus === 'exit' ? '❯' : ' '} Exit\n`
-    let screen: string | null = prompt('exit')
+  test('✅ confirm launch: folder trust, then channels, until the session connects; only those questions; ▶️ live; ✖️ close', async () => {
+    const { confirmLaunch, confirmKey } = await import('../src/daemon/screen.ts')
+    process.env.CONFIRM_POLL_MS = '20'
+    const trust = (focus: 'yes' | 'no') => `Accessing workspace:\n/root/user/777\n\n${focus === 'no' ? '❯' : ' '} No, exit\n${focus === 'yes' ? '❯' : ' '} Yes, I trust this folder\n`
+    const channels = 'WARNING: Loading development channels\n\n❯ 1. I am using this for local development\n  2. Exit\n'
+    let screen: string | null = trust('no')
     const pressed: string[] = []
+    let client: FakeClient | null = null
     d.tmuxCapture = async () => screen
+    d.tmuxPaneId = async () => '%15'
     d.tmuxKeys = async (t, k) => {
       pressed.push(`${t} ${k.join(' ')}`)
-      if (k[0] === 'Up') screen = prompt('ok')
-      else if (k[0] === 'Enter') screen = '╭ Claude Code ready'
+      if (screen?.includes('Accessing workspace')) screen = k[0] === 'Down' ? trust('yes') : k[0] === 'Enter' ? channels : screen
+      else if (screen?.includes('development channels') && k[0] === 'Enter') {
+        screen = '╭ Claude Code\n> '
+        client = new FakeClient()
+        await client.connect({ cwd: '/tmp/confirm', projectRoot: '/tmp/confirm', tmuxPane: '%15', claudePid: 1515 })
+      }
     }
-    expect(await acceptChannels(d, 'claude:5')).toBe('accepted')
-    expect(pressed).toEqual(['claude:5 Up', 'claude:5 Enter'])
-    // Something else on the screen (a folder-trust question): nothing is pressed.
-    screen = 'Do you trust the files in this folder?\n❯ 1. Yes, I trust this folder\n  2. No, exit'
-    expect(await acceptChannels(d, 'claude:5')).toBe('no_prompt')
-    expect(pressed.length).toBe(2)
+    try {
+      const r = await confirmLaunch(d, 'claude:5')
+      expect(r.result).toBe('connected')
+      expect(pressed).toEqual(['claude:5 Down', 'claude:5 Enter', 'claude:5 Enter'])
+      // Anything else is left alone: an unknown question, or no question at all.
+      expect(confirmKey('Do you want to delete everything?\n❯ Yes\n  No')).toBeNull()
+      screen = '╭ Claude Code\n> '
+      d.tmuxPaneId = async () => '%16'
+      expect((await confirmLaunch(d, 'claude:6')).result).toBe('no_prompt')
+      d.tmuxPaneId = async () => '%15'
+      expect(pressed.length).toBe(3)
+      client!.close()
+      await Bun.sleep(100)
 
-    screen = prompt('ok')
-    tg.push(callbackQuery('tx:w5'))
-    const v = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>claude:5</code>'))
-    expect(JSON.stringify(v.body.reply_markup)).toContain('tx:w5:c')
-    expect(JSON.stringify(v.body.reply_markup)).toContain('tx:w5:l')
-    tg.push(callbackQuery('tx:w5:c'))
-    await tg.waitFor('answerCallbackQuery', c => c.body.text === '✅ Запуск подтверждён')
-    expect(pressed.at(-1)).toBe('claude:5 Enter')
-    tg.push(callbackQuery('tx:w5:c', { from: 222 }))
-    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+      // The button: answers, then replaces the screen with "connected".
+      client = null
+      screen = channels
+      tg.push(callbackQuery('tx:w5'))
+      const v = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>claude:5</code>') && JSON.stringify(c.body.reply_markup).includes('tx:w5:c'))
+      expect(JSON.stringify(v.body.reply_markup)).toContain('tx:w5:z')
+      tg.push(callbackQuery('tx:w5:c', { messageId: 91 }))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '✅ Подтверждаю запуск…')
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Сессия #') && String(c.body.text).includes('подключилась'), 5000)
+      tg.push(callbackQuery('tx:w5:c', { from: 222 }))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
 
-    tg.push(callbackQuery('tx:w5:l', { messageId: 77 }))
-    const live = await tg.waitFor('editMessageText', c => String(c.body.text).includes('▶️ обновляется'))
-    expect(JSON.stringify(live.body.reply_markup)).toContain('tx:w5:s')
-    tg.push(callbackQuery('tx:w5:s', { messageId: 77 }))
-    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏸ Остановлено')
+      tg.push(callbackQuery('tx:w5:l', { messageId: 77 }))
+      const live = await tg.waitFor('editMessageText', c => String(c.body.text).includes('▶️ обновляется'))
+      expect(JSON.stringify(live.body.reply_markup)).toContain('tx:w5:s')
+      tg.push(callbackQuery('tx:w5:s', { messageId: 77 }))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏸ Остановлено')
+      tg.push(callbackQuery('tx:w5:z', { messageId: 77 }))
+      await tg.waitFor('deleteMessage', c => c.body.message_id === 77)
+    } finally {
+      ;(client as FakeClient | null)?.close()
+      delete process.env.CONFIRM_POLL_MS
+    }
   })
 
   test('⏳ a launch nobody confirmed: the owner is reminded with «✅ Подтвердить запуск», the user hears once', async () => {

@@ -346,9 +346,6 @@ const dict: Dict = {
   "{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.": "{head}\n\nVentana no encontrada: la sesión se cerró o tmux se reinició.",
   "▶️ 1 мин": "▶️ 1 min",
   "« К сессии": "« A la sesión",
-  "На экране нет запроса о каналах — смотрите сами 👁": "No hay solicitud de canales en pantalla: míralo tú 👁",
-  "✅ Запуск подтверждён": "✅ Inicio confirmado",
-  "Не вышло — нажмите клавиши вручную": "No funcionó: pulsa las teclas a mano",
   "▶️ Обновляю минуту": "▶️ Actualizando durante un minuto",
   "⏸ Остановлено": "⏸ Detenido",
   "Нажато: {v}": "Pulsado: {v}",
@@ -631,6 +628,16 @@ const dict: Dict = {
   "⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.": "⏳ La sesión <b>{v}</b> (ventana {v2}) espera que se confirme el inicio; hasta entonces los mensajes no le llegarán.",
   "⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.": "⏳ La sesión <b>{v}</b> (ventana {v2}) se inició pero nunca se conectó. Mira qué hay en la pantalla.",
   "⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.": "⏳ Tu sesión aún se está confirmando en el servidor: el mensaje no se perderá y llegará en cuanto se conecte.",
+  "✖️ Закрыть": "✖️ Cerrar",
+  "✖️ Закрыто": "✖️ Cerrado",
+  "Уже подтверждаю…": "Ya lo estoy confirmando…",
+  "На экране нет вопросов запуска — смотрите сами 👁": "No hay preguntas de inicio en pantalla: míralo tú 👁",
+  "✅ Подтверждаю запуск…": "✅ Confirmando el inicio…",
+  "⏳ Подтверждаю запуск — жду, пока сессия подключится…": "⏳ Confirmando el inicio: espero a que la sesión se conecte…",
+  "✅ Сессия #{id} подключилась — можно писать.": "✅ La sesión #{id} está conectada: ya puedes escribir.",
+  "❌ Окно закрылось — сессия не запустилась.": "❌ La ventana se cerró: la sesión no se inició.",
+  "⌛ Сессия так и не подключилась — посмотрите экран.": "⌛ La sesión no llegó a conectarse: mira la pantalla.",
+  "⚠️ На экране вопрос, на который я не отвечаю сам, — ответьте клавишами.": "⚠️ En pantalla hay una pregunta que no respondo yo: respóndela con las teclas.",
 }
 
 export default dict
