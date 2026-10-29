@@ -235,6 +235,7 @@ claude plugin update telegram-bewitched@bewitched
 | `QUIET_HOURS` | `off` | 免打扰时段，例如 `23:00-08:00`：机器人发送的一切都静音送达。「/menu → ⚙️」中的按钮优先于 `.env` |
 | `BOT_LANGUAGE` | `ru` | 默认界面语言（`ru`、`en`、`es`、`zh`、`fr`、`de`），在聊天和所有者都未选择、且不知道用户 Telegram 语言时使用 |
 | `TMUX_SESSION` | `claude` | 主会话所在的 tmux 会话（用户和项目会话各有自己的） |
+| `JOURNAL_CHAT_ID` | — | 用于接收机器人通知的群组（id，例如 `-100…`），代替私聊，每类通知在各自的话题中：🛡 访问（机器人被加入/移出群组、非用户发来消息）、🖥 会话、📊 限额、📰 报告、⚙️ 守护进程。需要你处理的——权限、待确认的启动、用户请求、你预约的提醒——仍在私聊。群组需开启话题，机器人需为可管理话题的管理员 |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-user-<telegram id>`（用户会话）或 `-n claude-project-<群组 id>-<话题 id>`（项目，与文件夹同名）；各自独立的 tmux 会话和窗口使用相同名称，`tmux ls` 一眼可见类型 |
 

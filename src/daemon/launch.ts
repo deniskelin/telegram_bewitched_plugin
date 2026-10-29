@@ -19,6 +19,7 @@ import { inChat } from './lang.ts'
 import { isStartupPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
+import { sendNotice } from './journal.ts'
 import { t as tr } from '../i18n/index.ts'
 
 /** Folder name from a topic name: letters/digits (any script), dot, dash, underscore. */
@@ -209,12 +210,14 @@ export async function remindLaunch(d: Daemon, dir: string, win: string, first: b
   const st = remindState(d, key) ?? { dir }
   if (!st.off) {
     const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
-    const text = inChat(d, o, undefined, () => isStartupPrompt(raw)
+    // A launch waiting for the owner: their DM, not the journal.
+    const out = o
+    const text = inChat(d, out, undefined, () => isStartupPrompt(raw)
       ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) })
       : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) }))
-    const kb = inChat(d, o, undefined, () => screenKb(win).row(button(tr('🔕 Не напоминать'), `lr:off:${key}`)))
-    const m = await d.bot.api.sendMessage(o, text, { parse_mode: 'HTML', reply_markup: kb }).catch(err => { d.log(`launch notice failed: ${err}`); return null })
-    if (m) d.store.set(`lr:${key}`, JSON.stringify({ ...st, sent: [...(st.sent ?? []), { chat: o, id: m.message_id }] }))
+    const kb = inChat(d, out, undefined, () => screenKb(win).row(button(tr('🔕 Не напоминать'), `lr:off:${key}`)))
+    const m = await d.bot.api.sendMessage(out, text, { parse_mode: 'HTML', reply_markup: kb }).catch(err => { d.log(`launch notice failed: ${err}`); return null })
+    if (m) d.store.set(`lr:${key}`, JSON.stringify({ ...st, sent: [...(st.sent ?? []), { chat: out, id: m.message_id }] }))
   }
   if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')))
 }
@@ -325,7 +328,7 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
     await say(d, where.chatId, where.threadId, o === userId
       ? tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) })
       : tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено, владелец бота получил уведомление.', { v: escapeHtml(r.error) }))
-    if (o && o !== userId) await say(d, o, undefined, tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
+    if (o !== userId) await sendNotice(d, 'sessions', () => tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
     return
   }
   const self = o === userId
@@ -333,7 +336,8 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
     ? tr('🚀 Запускаю вашу сессию в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(attachTarget(r.window)), v2: confirmHint(r.window) })
     : tr('🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.'), self ? screenKb(r.window) : undefined)
   if (o && !self) {
-    await say(d, o, undefined, tr('🚀 {v} ({userId}) написал(а) боту — запускаю сессию пользователя в <code>{v2}</code>. Подтвердите:{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(dir), v3: confirmHint(r.window) }), screenKb(r.window))
+    // The launch waits for the owner's confirmation: their DM.
+    await say(d, o, undefined, inChat(d, o, undefined, () => tr('🚀 {v} ({userId}) написал(а) боту — запускаю сессию пользователя в <code>{v2}</code>. Подтвердите:{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(dir), v3: confirmHint(r.window) })), inChat(d, o, undefined, () => screenKb(r.window)))
   }
 }
 
@@ -356,8 +360,7 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
   // The topic is seen by everyone: the error there, the command only in the owner's DM.
   const dir = projectKey.replace(/#.*$/, '')
   await say(d, chatId, threadId, tr('❌ Не удалось запустить сессию проекта: {v}\nСообщение сохранено. Топик закрыт, пока сессия не подключится.', { v: escapeHtml(r.error) }))
-  const o = owner()
-  if (o) await say(d, o, undefined, tr('❌ Не удалось запустить сессию проекта <code>{v}</code>: {v2}\nЗапустить вручную:{v3}', { v: escapeHtml(dir), v2: escapeHtml(r.error), v3: manualCmd(dir, { name: sessionName(d, dir) }) }))
+  await sendNotice(d, 'sessions', () => tr('❌ Не удалось запустить сессию проекта <code>{v}</code>: {v2}\nЗапустить вручную:{v3}', { v: escapeHtml(dir), v2: escapeHtml(r.error), v3: manualCmd(dir, { name: sessionName(d, dir) }) }))
   d.store.setTopicStatus(chatId, threadId, 'waiting')
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }
