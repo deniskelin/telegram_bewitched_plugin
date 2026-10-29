@@ -4,7 +4,8 @@
  * without `tmux attach`.
  *
  * Callback data: tx:<target>[:<key>], target p<N> = pane %N, w<N> = window N
- * of TMUX_SESSION. Keys are a fixed set; nothing typed by the user reaches tmux.
+ * of TMUX_SESSION, s<session>.<N> = window N of an own session (claude-user-…,
+ * claude-project-…). Keys are a fixed set; nothing typed by the user reaches tmux.
  * Besides keys: c — confirm the launch: answer the startup questions of a
  * new session (folder trust, development channels — only those) one after
  * another until the session connects; l / s — start / stop refreshing the
@@ -150,7 +151,7 @@ export async function screenView(d: Daemon, code: string, liveOn = false, note =
 }
 
 export async function handleScreenCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^tx:([pw]\d+)(?::(\w))?$/.exec(data)
+  const m = /^tx:([pw]\d+|sclaude-[\p{L}\p{N}_-]+\.\d+)(?::(\w))?$/u.exec(data)
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
   if (!ctx.from || !can(ctx.from.id, 'control')) {

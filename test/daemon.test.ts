@@ -1293,6 +1293,17 @@ describe('convenience', () => {
       tg.push(callbackQuery('tx:w5:c', { from: 222 }))
       await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
 
+      // An own session's window (claude-user-…) works the same: screen, then confirm.
+      client!.close()
+      await Bun.sleep(100)
+      client = null
+      screen = channels
+      tg.push(callbackQuery('tx:sclaude-user-555.0'))
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🖥 <b>Экран</b> <code>claude-user-555:0</code>') && JSON.stringify(c.body.reply_markup).includes('tx:sclaude-user-555.0:c'))
+      tg.push(callbackQuery('tx:sclaude-user-555.0:c', { messageId: 92 }))
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Сессия #') && c.body.message_id === 92, 5000)
+      expect(pressed.at(-1)).toBe('=claude-user-555:0 Enter')
+
       tg.push(callbackQuery('tx:w5:l', { messageId: 77 }))
       const live = await tg.waitFor('editMessageText', c => String(c.body.text).includes('▶️ обновляется'))
       expect(JSON.stringify(live.body.reply_markup)).toContain('tx:w5:s')
