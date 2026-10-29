@@ -1,10 +1,29 @@
 # telegram-bewitched
 
-🌍 [Русский](README.md) · [English](README.en.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · Deutsch
+🌍 [English](README.md) · [Русский](README.ru.md) · [Español](README.es.md) · [中文](README.zh.md) · [Français](README.fr.md) · Deutsch
 
-Ein Telegram-Kanal für Claude Code – ein Fork des [offiziellen Plugins](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) mit gemeinsamem Daemon, Projektthemen in einer Forum-Supergruppe, Live-Fortschritt, Antwortknöpfen und einem Verlauf, der Neustarts übersteht.
+**Claude Code aus Telegram steuern.** Sie schreiben einem Bot – es antwortet Claude Code, das auf Ihrem eigenen Server läuft und Zugriff auf Ihre Projekte hat. Jedes Projekt hat sein eigenes Thema in einer Gruppe, jede Person ihre eigene Sitzung. Sie sehen, was Claude gerade tut, bestätigen Berechtigungen per Knopf, schicken Sprachnachrichten und behalten Limits und Verbrauch in `/usage` im Blick.
 
-Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–8 sind umgesetzt, einschließlich Sprache (seit 1.2.0). Über das Pflichtenheft hinaus: das Steuerpult `/menu`, Abo-Limits und Verbrauch, Berichte mit Diagrammen, Erinnerungen, Steuerung des tmux-Fensters und von Git aus Telegram, Einladen und Entfernen von Personen, eine Oberfläche in sechs Sprachen. Was sich geändert hat: [CHANGELOG.md](CHANGELOG.md).
+Technisch ist es ein *Kanal*-Plugin für Claude Code (Channels lassen eine externe Quelle Nachrichten in eine laufende Sitzung schicken) – ein Fork des [offiziellen telegram-Plugins](https://github.com/anthropics/claude-plugins-official/tree/main/external_plugins/telegram) mit gemeinsamem Daemon, Projektthemen in einer Forum-Supergruppe, Live-Fortschritt, Antwortknöpfen und einem Verlauf, der Neustarts übersteht.
+
+Pflichtenheft: [docs/TZ.md](docs/TZ.md) (auf Russisch). Die Etappen 0–9 sind umgesetzt, einschließlich Sprache (seit 1.2.0). Über das Pflichtenheft hinaus: das Steuerpult `/menu`, Abo-Limits und Verbrauch, Berichte mit Diagrammen, Erinnerungen, Steuerung des tmux-Fensters und von Git aus Telegram, Einladen und Entfernen von Personen, eine Oberfläche in sechs Sprachen. Was sich geändert hat: [CHANGELOG.md](CHANGELOG.md).
+
+## So funktioniert es
+
+```
+Telegram: Privatchats, Gruppenthemen
+        │ Bot API (ein Bot)
+        ▼
+bewitched-Daemon (einer pro Server): Abfrage, Routing, Warteschlange, Verlauf (SQLite),
+                                     Steuerpult, Erinnerungen, Limits, Sprache
+        │ Unix-Socket                       ▲ Claude-Code-Hooks: Fortschritt, „fertig“
+        ▼                                   │
+Claude-Code-Sitzungen in tmux: 👤 eine pro Person (~/user/<id>) · 📂 eine pro Projekt (sein Thema)
+```
+
+- Eine Nachricht geht an die Sitzung, die ihren Chat bedient: im Privatchat an die Sitzung des Absenders, im Thema an die Sitzung des Projekts. Läuft die Sitzung nicht, startet der Daemon sie in tmux und stellt die Nachricht zu, sobald sie verbunden ist.
+- Die Sitzung antwortet mit den Werkzeugen des Plugins (`reply`, `ask_user`, …); während sie arbeitet, zeigt der Daemon den Fortschritt.
+- Sitzungen starten mit dem Flag für Entwicklungskanäle, daher wird jeder Start einmal bestätigt – der Bot bietet einen Knopf „✅ Start bestätigen“.
 
 ## Unterschiede zum offiziellen Plugin
 
