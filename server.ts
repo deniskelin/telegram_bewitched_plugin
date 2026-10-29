@@ -46,7 +46,7 @@ process.on('unhandledRejection', err => log(`unhandled rejection: ${err}`))
 process.on('uncaughtException', err => log(`uncaught exception: ${err}`))
 
 const mcp = new Server(
-  { name: 'telegram-bewitched', version: '1.5.3' },
+  { name: 'telegram-bewitched', version: '1.5.4' },
   {
     capabilities: {
       tools: {},
