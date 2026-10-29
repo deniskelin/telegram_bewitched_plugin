@@ -215,13 +215,16 @@ describe('topics', () => {
       body: JSON.stringify({ event: 'PreToolUse', claudePid: 424242, data: { tool_name: 'Bash', tool_input: { command: 'bun test', description: 'Run tests' } } }),
     })
     expect(res.status).toBe(200)
-    await tg.waitFor('editMessageText', c => String(c.body.text).includes('💻 Run tests'))
+    // FR-11: the progress message is rich — the steps in a collapsible quote.
+    const edit = await tg.waitFor('editMessageText', c => JSON.stringify(c.body.rich_message ?? '').includes('💻 Run tests'))
+    expect(String((edit.body.rich_message as { markdown: string }).markdown)).toContain('<blockquote expandable>')
 
+    // The chat ends an answer by editing (the default): the progress message becomes it, no second message.
     const r = await client.call('reply', { chat_id: group, text: 'готово' })
     expect(r.ok).toBe(true)
-    const ans = await tg.waitFor('sendMessage', c => c.body.text === 'готово')
-    expect(ans.body.message_thread_id).toBe(thread)
-    await tg.waitFor('deleteMessage')
+    const ans = await tg.waitFor('editMessageText', c => c.body.text === 'готово')
+    expect(ans.body.message_id).toBe(edit.body.message_id)
+    expect(ans.body.reply_markup).toBeUndefined()
   })
 
   test('topic without a session goes to the main session; the project session later sees it as handled', async () => {
@@ -236,8 +239,9 @@ describe('topics', () => {
     expect(m.meta.thread_id).toBe(String(thread))
     const r = await main.call('reply', { chat_id: group, message_thread_id: String(thread), text: 'я за него' })
     expect(r.ok).toBe(true)
-    const ans = await tg.waitFor('sendMessage', c => c.body.text === 'я за него')
-    expect(ans.body.message_thread_id).toBe(thread)
+    // The answer replaces the main session's progress message in that topic.
+    const ans = await tg.waitFor('editMessageText', c => c.body.text === 'я за него')
+    expect(ans.body.chat_id).toBe(group)
 
     const again = new FakeClient()
     await again.connect({ cwd: '/tmp/other', projectRoot: '/tmp/other', claudePid: 6 })
@@ -419,6 +423,15 @@ describe('topics', () => {
       expect(turnCostLine(ses, Date.now() - 60_000)).toBe('🔢 Ход: 3.0 млн ток. · кэш 100% · $0.50')
       expect(turnCostLine(ses, Date.now() - 60_000, Date.now(), true)).toMatch(/^🔢 \*\*Ход\*\* · .+\n3\.0 млн ток\. · кэш 100% · \*\*\$0\.50\*\*$/)
       expect(turnCostLine(ses, Date.now() + 60_000)).toBeNull()
+      // FR-11: the same turn appended to its answer — the full table collapsed, the gist in a grey footer below.
+      const { turnCostBlock } = await import('../src/daemon/usage.ts')
+      const block = turnCostBlock(ses, Date.now() - 60_000)!
+      expect(block).toStartWith('<details><summary>🔢 Расход хода</summary><table bordered striped compact>')
+      expect(block).toContain('<tr><td>Запросов к модели</td><td align="right">3</td></tr>')
+      expect(block).toMatch(/<td>Модель<\/td><td align="right">[^<]*opus-5-5 ×2/)
+      expect(block).toContain('haiku-5-5 ×1')
+      expect(block).toEndWith('</table></details><footer>🔢 1 мин · 3.0 млн ток. · кэш 100% · $0.50</footer>')
+      expect(turnCostBlock(ses, Date.now() + 60_000)).toBeNull()
       const digest = await digestReport(d)
       expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
       expect(digest).toContain('📂 proj · $0.50')
@@ -802,11 +815,22 @@ describe('topics', () => {
     await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
     await hook('MessageDisplay', { delta: 'Итог: всё ' })
     await hook('MessageDisplay', { delta: 'готово.' })
-    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Итог: всё') && String(c.body.text).includes('готово.') && !String(c.body.text).includes('Сейчас посмотрю'))
-    const r = await client.call('reply', { chat_id: group, use_last_message: true })
+    const md = (c: { body: Record<string, unknown> }) => String((c.body.rich_message as { markdown?: string } | undefined)?.markdown ?? '')
+    await tg.waitFor('editMessageText', c => md(c).includes('Итог: всё') && md(c).includes('готово.') && !md(c).includes('Сейчас посмотрю'))
+    const r = await client.call('reply', { chat_id: group, use_last_message: true, format: 'rich' })
     expect(r.ok).toBe(true)
+    const edited = await tg.waitFor('editMessageText', c => String((c.body.rich_message as { markdown?: string } | undefined)?.markdown ?? '').startsWith('Итог: всё'))
+    expect((edited.body.rich_message as { markdown: string }).markdown).toBe('Итог: всё  \nготово.')
+    // Ending with a new message (⚙️ «🆕 конец: новым»): the answer comes as its own message, the progress goes away.
+    setPref(`${group}:${thread}`, { streamFinal: 'new' })
+    tg.push(textMessage({ chat: Number(group), text: 'ещё раз', thread }))
+    await client.inbound(x => x.content === 'ещё раз')
+    await hook('MessageDisplay', { delta: 'Итог: всё ' })
+    await hook('MessageDisplay', { delta: 'готово.' })
+    await client.call('reply', { chat_id: group, use_last_message: true })
     const sent = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Итог: всё'))
     expect(String(sent.body.text)).toBe('Итог: всё \nготово.')
+    setPref(`${group}:${thread}`, { streamFinal: 'edit' })
     expect(String(sent.body.text)).not.toContain('Сейчас посмотрю')
     // Nothing written since the last tool: a clear error instead of an empty message.
     await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/b.ts' } })
@@ -1273,7 +1297,7 @@ describe('voice', () => {
       const vr = await client.call('reply', { text: 'ответ при запрете голоса', voice: true })
       expect(vr.ok).toBe(true)
       await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🔇 Telegram не даёт боту присылать вам голосовые') && JSON.stringify(c.body.reply_markup).includes(`vf:retry:${group}`))
-      await tg.waitFor('sendMessage', c => c.body.text === 'ответ при запрете голоса')
+      await tg.waitForAnswer('ответ при запрете голоса')
       expect(d.store.get(`voice_forbidden:${group}`)).toBe('1')
       tg.failures.delete('sendVoice')
       tg.push(callbackQuery(`vf:retry:${group}`, { chat: Number(group) }))
@@ -1285,7 +1309,7 @@ describe('voice', () => {
       await client.inbound(x => x.content === 'а теперь текстом')
       const voices = tg.callsOf('sendVoice').length
       await client.call('reply', { text: 'текстовый ответ' })
-      await tg.waitFor('sendMessage', c => c.body.text === 'текстовый ответ')
+      await tg.waitForAnswer('текстовый ответ')
       expect(tg.callsOf('sendVoice').length).toBe(voices)
 
       // Nothing said: the sender hears it, the session doesn't.
@@ -1333,6 +1357,25 @@ describe('server stats', () => {
 })
 
 describe('menu', () => {
+  test('FR-11: with rich screens a screen goes as a rich message — heading, divider, sections; HTML when Telegram refuses', async () => {
+    process.env.RICH_SCREENS = 'on'
+    try {
+      tg.push(textMessage({ text: '/menu' }))
+      const m = await tg.waitFor('sendRichMessage', c => String((c.body.rich_message as { html?: string } | undefined)?.html ?? '').startsWith('<h3>🎛 Меню</h3><hr/>'))
+      expect(JSON.stringify(m.body.reply_markup)).toContain('hub:stats')
+      expect(m.body.text).toBeUndefined()
+      tg.push(callbackQuery('hub:help'))
+      await tg.waitFor('editMessageText', c => String((c.body.rich_message as { html?: string } | undefined)?.html ?? '').startsWith('<h3>❓ Помощь</h3><hr/>'), 6000)
+      // Refused: the same screen as HTML.
+      tg.failures.set('sendRichMessage', { code: 400, description: 'Bad Request: RICH_MESSAGE_HTML_INVALID' })
+      tg.push(textMessage({ text: '/menu' }))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Меню</b>'))
+    } finally {
+      tg.failures.delete('sendRichMessage')
+      process.env.RICH_SCREENS = 'off'
+    }
+  }, 15_000)
+
   test('/menu leads to every section and back; chat settings are toggled with buttons', async () => {
     const { prefsFor } = await import('../src/access.ts')
     tg.push(textMessage({ text: '/menu' }))
@@ -1687,7 +1730,7 @@ describe('ordinary groups as projects', () => {
       tg.push(textMessage({ chat: Number(g1), text: 'дальше' }))
       expect((await c.inbound(m => m.content === 'дальше')).meta.chat_id).toBe(g1)
       expect((await c.call('reply', { chat_id: g1, text: 'ответ в группу' })).ok).toBe(true)
-      await tg.waitFor('sendMessage', x => String(x.body.chat_id) === g1 && x.body.text === 'ответ в группу')
+      await tg.waitFor('editMessageText', x => String(x.body.chat_id) === g1 && x.body.text === 'ответ в группу')
 
       // Permission requests of a group's project go to the owner only, never to the group.
       c.sock.write(encode({ t: 'perm_req', request_id: 'mnopq', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
@@ -1965,7 +2008,7 @@ describe('session types', () => {
     expect(m.meta.thread_id).toBeUndefined()
     const r = await u.call('reply', { text: 'ответ в general' })
     expect(r.ok).toBe(true)
-    const sent = await tg.waitFor('sendMessage', c => c.body.text === 'ответ в general')
+    const sent = await tg.waitForAnswer('ответ в general')
     expect(String(sent.body.chat_id)).toBe(group)
     expect(sent.body.message_thread_id).toBeUndefined()
   })

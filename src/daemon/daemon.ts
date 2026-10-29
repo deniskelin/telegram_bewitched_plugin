@@ -55,6 +55,8 @@ export type Session = {
   /** An ordinary group bound to this session's project (groups.ts): the session answers there. */
   group: { chatId: string; title: string } | null
   lastChat: ChatRef | null
+  /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
+  lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string } | null
   turn: { start: number; replied: boolean } | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
@@ -336,6 +338,7 @@ export class Daemon {
       group: null,
       answer: '',
       lastChat: null,
+      lastAnswer: null,
       turn: null,
       notes: [],
       claude: { sessionId: null, transcript: null, permissionMode: null },

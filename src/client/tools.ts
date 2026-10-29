@@ -34,7 +34,7 @@ export const TOOLS = [
         format: {
           type: 'string',
           enum: ['text', 'markdownv2', 'rich'],
-          description: "'text' (default, plain), 'markdownv2' (caller escapes per MarkdownV2), 'rich' (Telegram rich message from ordinary Markdown: **bold**, lists, tables, code; falls back to text if unsupported).",
+          description: "'text' (default, plain), 'markdownv2' (caller escapes per MarkdownV2), 'rich' (Telegram rich message from GitHub Markdown: # headings, --- dividers, lists, tables, code, > quotes, <details> blocks, [links](#anchor); a single newline stays a line break; falls back to text if unsupported).",
         },
         buttons: optionsSchema,
         voice: { type: 'boolean', description: 'Also send the text as a voice message (TTS). The chat\'s /voice mode may voice replies on its own; this forces it.' },
