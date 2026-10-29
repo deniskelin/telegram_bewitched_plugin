@@ -710,6 +710,14 @@ const dict: Dict = {
   "🔌 Отключена": "🔌 Déconnecté",
   "⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.": "⚠️ Le bot a été retiré du groupe de sujets « {title} ». Ses projets passent au groupe principal.",
   "✅ Группа «{title}» подключена как дополнительная группа топиков. Укажите её папки проектов: /topics → «🗂 Группы топиков»; топики, созданные в ней, сразу станут её проектами.": "✅ Le groupe « {title} » est connecté comme groupe de sujets supplémentaire. Définissez ses dossiers de projets : /topics → « 🗂 Groupes de sujets » ; les sujets créés dedans deviennent aussitôt ses projets.",
+  "✖️ Удалить": "✖️ Supprimer",
+  "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ Une nouvelle fenêtre de 5 heures a démarré juste après la réinitialisation — la prochaine vers {time}.",
+  "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ Impossible de démarrer la fenêtre après la réinitialisation : {err}",
+  "⚡ Окно сразу после сброса: вкл": "⚡ Fenêtre dès la réinit. : oui",
+  "⚡ Окно сразу после сброса: выкл": "⚡ Fenêtre dès la réinit. : non",
+  "🔄 Обновлено": "🔄 Actualisé",
+  "⚡ Окно будет запускаться сразу после сброса": "⚡ La fenêtre démarrera juste après chaque réinitialisation",
+  "Окно запускается как обычно": "La fenêtre démarre comme d'habitude",
 }
 
 export default dict
