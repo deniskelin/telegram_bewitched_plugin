@@ -1592,6 +1592,8 @@ describe('limit warmup', () => {
     let runs = 0
     setRunWarmup(async () => { runs++ })
     expect(warmupOn(d)).toBe(false)
+    tg.push(callbackQuery('us:r'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '📊 Собираю…')
     tg.push(callbackQuery('us:w:on'))
     await tg.waitFor('answerCallbackQuery', c => c.body.text === '⚡ Окно будет запускаться сразу после сброса')
     expect(warmupOn(d)).toBe(true)

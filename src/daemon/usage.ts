@@ -617,13 +617,13 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
   }
   const wOn = warmupOn(d)
   rows.push([button(wOn ? tr('⚡ Окно сразу после сброса: вкл') : tr('⚡ Окно сразу после сброса: выкл'), `us:w:${wOn ? 'off' : 'on'}`, wOn ? 'primary' : undefined)])
-  rows.push([button(tr('« Статистика'), 'hub:stats')])
+  rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), 'us:r')])
   return new InlineKeyboard(rows)
 }
 
-/** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections. */
+/** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections; us:r — refresh. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const p = /^us:p:(h5|d|w|m)$/.exec(data)
+  const p = /^us:(?:p:(h5|d|w|m)|r)$/.exec(data)
   const m = /^lr:(\d+)(:s)?$/.exec(data)
   const w = /^us:w:(on|off)$/.exec(data)
   const la = /^la:(r|x)(?::(\d+))?$/.exec(data)
@@ -657,7 +657,9 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
     return true
   }
   if (p) {
-    d.store.set('usage_period', p[1])
+    // us:r — the same view with fresh limits.
+    if (p[1]) d.store.set('usage_period', p[1])
+    else resetLimitsCache()
     await ctx.answerCallbackQuery({ text: tr('📊 Собираю…') }).catch(() => {})
     await ctx.editMessageText(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
       .catch(err => { if (!isMessageNotModified(err)) d.log(`usage period: ${err}`) })
