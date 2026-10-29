@@ -103,7 +103,7 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 ```
 
    Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
-3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.md) (en inglés).
+3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.es.md).
 
 **El plugin oficial y el fork no deben sondear el mismo token a la vez.** Desactiva el oficial (`/plugin disable telegram@claude-plugins-official`) o ejecuta Claude sin su `--channels`. Si el demonio ve el plugin oficial funcionando con el mismo token, espera en lugar de pelear por el sondeo.
 
@@ -156,7 +156,7 @@ Todo lo siguiente también está en botones en **`/menu`** (el menú de comandos
 
 Un grupo sin temas puede ser un proyecto propio: un chat familiar sobre una web, un chat de equipo sobre un servicio.
 
-1. Añade el bot al grupo y permítelo en la terminal: `/telegram-bewitched:access group add <id>` (el bot te indica el id al añadirlo; hasta entonces no habla allí). Por defecto el bot solo responde cuando se le menciona; `--no-mention` lo desactiva (también hay que desactivar el privacy mode en @BotFather; ver [ACCESS.md](ACCESS.md)).
+1. Añade el bot al grupo y permítelo en la terminal: `/telegram-bewitched:access group add <id>` (el bot te indica el id al añadirlo; hasta entonces no habla allí). Por defecto el bot solo responde cuando se le menciona; `--no-mention` lo desactiva (también hay que desactivar el privacy mode en @BotFather; ver [ACCESS.md](ACCESS.es.md)).
 2. Con el primer mensaje del grupo el propietario recibe una ficha por privado: «📁 Nuevo» (`~/projects/<nombre del grupo>`), «📂 Elegir proyecto» (una carpeta existente) o «🚫 No es proyecto» (responde la sesión principal, como antes). Lo escrito en el grupo espera en cola mientras tanto.
 3. La sesión del proyecto se inicia en tmux (se confirma con «✅ Confirmar inicio» en tu privado), responde directamente en el grupo y muestra ahí su progreso. No tiene tema.
 
@@ -232,7 +232,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voz: transcripción de mensajes entrantes y respuestas con voz; ver [docs/voice.md](docs/voice.md), instalación con `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-<telegram id>` (sesión de usuario) o `-n claude-topic-<tema>` (proyecto); la ventana de tmux recibe el mismo nombre |
 
-El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.md) (en inglés) y `/telegram-bewitched:access`.
+El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.es.md) y `/telegram-bewitched:access`.
 
 ## Desarrollo
 

@@ -281,7 +281,6 @@ const dict: Dict = {
   "Этот топик не привязан к проекту, а главная сессия не запущена.": "Dieses Thema ist mit keinem Projekt verknüpft, und die Hauptsitzung läuft nicht.",
   "🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.": "🗄 Das Thema ist archiviert. Die Nachricht ist gespeichert – sie erreicht die Sitzung nach der Wiederherstellung.",
   "▶️ Восстановить": "▶️ Wiederherstellen",
-  "(тишина)": "(Stille)",
   "💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.": "💤 Die Sitzung dieses Projekts läuft nicht. Ich stelle die Nachricht zu, sobald sie sich verbindet.",
   "💤 Главная сессия не запущена (папка {v}). Сообщение доставлю, когда она подключится.": "💤 Die Hauptsitzung läuft nicht (Ordner {v}). Ich stelle die Nachricht zu, sobald sie sich verbindet.",
   "⏳ Сессия проекта не подключена — сообщение в очереди.": "⏳ Die Projektsitzung ist nicht verbunden – die Nachricht ist eingereiht.",
@@ -679,6 +678,9 @@ const dict: Dict = {
   "🚫 Отвязано": "🚫 Gelöst",
   "⏳ Владелец ещё не настроил эту группу — сообщение сохранено и дойдёт, когда он решит.": "⏳ Der Besitzer hat diese Gruppe noch nicht eingerichtet – die Nachricht ist gespeichert und kommt an, sobald er entschieden hat.",
   "⚠️ процесс Claude Code ({pid}) ещё не завершился — транскрипты могут появиться снова": "⚠️ der Claude-Code-Prozess ({pid}) ist noch nicht beendet – Transkripte können wieder auftauchen",
+  "🎤 (в записи нет речи)": "🎤 (keine Sprache in der Aufnahme)",
+  "🎤 В записи нет речи — похоже, микрофон был выключен. Запишите ещё раз или напишите текстом.": "🎤 In der Aufnahme ist keine Sprache – das Mikrofon war wohl aus. Nehmen Sie erneut auf oder schreiben Sie es.",
+  "(в записи нет речи)": "(keine Sprache in der Aufnahme)",
 }
 
 export default dict
