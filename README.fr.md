@@ -182,7 +182,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 - **La session utilisateur démarre seule.** Le premier message d'un utilisateur → le démon crée `~/user/<id>`, lance Claude dans sa propre session tmux `claude-user-<id>` ( avec `--continue` s'il y a déjà eu des conversations) ; le message attend dans la file et arrive une fois la session connectée.
 - **Sujet de projet sans session** (`TOPIC_NO_SESSION=launch`) : un message lance la session du projet. Si le lancement échoue, le bot publie une commande de lancement manuel et ferme le sujet jusqu'à la connexion de la session.
 - **Gardien.** Une session est partie d'elle-même (ni archive, ni inactivité) → une minute plus tard, le propriétaire reçoit en privé « ⚠️ La session … s'est arrêtée », avec les commandes pour la relancer et le bouton « 🚀 Lancer ». Le sujet du projet reçoit seulement l'avis, sans commandes ni boutons, et reste fermé jusqu'à la reconnexion ; un membre dont la propre session s'est arrêtée reçoit le bouton « 🙋 Demander un redémarrage », qui transmet la demande au propriétaire.
-- **Fermeture des sessions inactives :** `USER_IDLE_MIN` et `PROJECT_IDLE_MIN`, par défaut `0` — jamais. Une session inactive ne consomme pas de jetons, seulement de la mémoire.
+- **💤 Mise en veille des sessions inactives** (`/menu → 💤`) : une ligne par type — sessions des utilisateurs, celle du propriétaire, sessions de projets — « jamais · 12 h · jour · 3 jours · semaine ». Le message suivant relance une session en veille. Le membre reçoit « 💤 Votre session est en veille » avec « 🙋 Demander le lancement » ; le propriétaire (journal « 🖥 Sessions ») les commandes et 🚀 ; un sujet de projet une ligne. Par défaut : la session du propriétaire une semaine, les autres `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0` — jamais). Une session inactive ne consomme pas de jetons, seulement de la mémoire.
 
 ### Ce qu'il faut faire à la main
 
@@ -220,6 +220,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 | `USERS_DIR` | `~/user` | Où se trouvent les dossiers des sessions utilisateurs (`<USERS_DIR>/<user_id>`) |
 | `USER_IDLE_MIN` | `0` | Fermer une session utilisateur après N minutes d'inactivité (0 — jamais) |
 | `PROJECT_IDLE_MIN` | `0` | Fermer une session de projet après N minutes d'inactivité (0 — jamais) |
+| `OWNER_IDLE_MIN` | `10080` | Fermer la session personnelle du propriétaire après N minutes d'inactivité (une semaine ; 0 — jamais). `/menu → 💤` remplace les trois |
 | `TOPIC_NO_SESSION` | `launch` | Sujet de projet sans session : `launch` — la lancer, `main` — la principale répond, `queue` — file d'attente seulement |
 | `WATCHDOG_GRACE_SEC` | `60` | Combien de secondes après l'arrêt d'une session la signaler |
 | `MAIN_DIR` | `~` | Dossier de la session principale (avec `USER_SESSIONS=off` — messages privés et General) |

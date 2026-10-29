@@ -182,7 +182,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 - **Die Nutzersitzung startet von selbst.** Die erste Nachricht eines Nutzers → der Daemon legt `~/user/<id>` an und startet Claude in einer eigenen tmux-Sitzung `claude-user-<id>` ( mit `--continue`, falls es dort schon Gespräche gab); die Nachricht wartet in der Warteschlange und kommt nach dem Verbinden an.
 - **Projektthema ohne Sitzung** (`TOPIC_NO_SESSION=launch`): Eine Nachricht startet die Projektsitzung. Klappt der Start nicht, schickt der Bot einen Befehl für den manuellen Start und schließt das Thema, bis die Sitzung verbunden ist.
 - **Wächter.** Eine Sitzung hat sich von selbst beendet (kein Archiv, kein Leerlauf) → nach einer Minute bekommt der Besitzer «⚠️ Sitzung … wurde beendet» per DM, mit Befehlen zum Neustart und der Taste «🚀 Starten». Das Projektthema bekommt nur die Meldung, ohne Befehle und Tasten, und bleibt bis zur Wiederverbindung geschlossen; ein Mitglied, dessen eigene Sitzung endete, bekommt die Taste «🙋 Neustart anfragen», die die Anfrage an den Besitzer weiterleitet.
-- **Beenden untätiger Sitzungen:** `USER_IDLE_MIN` und `PROJECT_IDLE_MIN`, Standard `0` – nie. Eine untätige Sitzung verbraucht keine Token, nur Speicher.
+- **💤 Untätige Sitzungen pausieren** (`/menu → 💤`): eine Zeile je Art — eigene Sitzungen der Nutzer, die eigene des Besitzers, Projektsitzungen — „nie · 12 Std. · Tag · 3 Tage · Woche“. Die nächste Nachricht startet eine pausierte Sitzung neu. Das Mitglied bekommt „💤 Ihre Sitzung ist pausiert“ mit „🙋 Start anfragen“; der Besitzer (Journal „🖥 Sitzungen“) Befehle und 🚀; ein Projektthema eine Zeile. Standard: die Sitzung des Besitzers eine Woche, sonst `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0` – nie). Eine untätige Sitzung verbraucht keine Token, nur Speicher.
 
 ### Was Sie von Hand tun
 
@@ -220,6 +220,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `USERS_DIR` | `~/user` | Wo die Ordner der Nutzersitzungen liegen (`<USERS_DIR>/<user_id>`) |
 | `USER_IDLE_MIN` | `0` | Nutzersitzung nach N Minuten Leerlauf beenden (0 – nie) |
 | `PROJECT_IDLE_MIN` | `0` | Projektsitzung nach N Minuten Leerlauf beenden (0 – nie) |
+| `OWNER_IDLE_MIN` | `10080` | Eigene Sitzung des Besitzers nach N Minuten Leerlauf beenden (eine Woche; 0 – nie). `/menu → 💤` überschreibt alle drei |
 | `TOPIC_NO_SESSION` | `launch` | Projektthema ohne Sitzung: `launch` – starten, `main` – die Hauptsitzung antwortet, `queue` – nur Warteschlange |
 | `WATCHDOG_GRACE_SEC` | `60` | Wie viele Sekunden nach dem Ende einer Sitzung sie gemeldet wird |
 | `MAIN_DIR` | `~` | Ordner der Hauptsitzung (bei `USER_SESSIONS=off` – Privatchats und General) |
