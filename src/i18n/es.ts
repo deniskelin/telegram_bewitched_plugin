@@ -678,6 +678,7 @@ const dict: Dict = {
   "🚫 Да, отвязать": "🚫 Sí, desvincular",
   "🚫 Отвязано": "🚫 Desvinculado",
   "⏳ Владелец ещё не настроил эту группу — сообщение сохранено и дойдёт, когда он решит.": "⏳ El propietario aún no ha configurado este grupo: el mensaje está guardado y llegará cuando lo decida.",
+  "⚠️ процесс Claude Code ({pid}) ещё не завершился — транскрипты могут появиться снова": "⚠️ el proceso de Claude Code ({pid}) aún no ha terminado: las transcripciones podrían reaparecer",
 }
 
 export default dict
