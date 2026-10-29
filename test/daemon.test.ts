@@ -1771,6 +1771,31 @@ describe('session types', () => {
     await tg.waitFor('editMessageText', c => String(c.body.text).includes('Запрос на перезапуск отправлен'))
   })
 
+  test('old stopped notices are announced again the new way; they go when the session is back', async () => {
+    const { renotifyStopped } = await import('../src/daemon/watchdog.ts')
+    for (const k of d.store.keys('wd:')) d.store.set(k, null)
+    d.store.set('wd:0ldc0de1', JSON.stringify({ dir: `${usersDir}/333`, resume: null, name: '👤 333', session: 'claude-333' }))
+    d.store.set('wd:0ldc0de2', JSON.stringify({ dir: '/tmp/back', resume: null, name: '📂 back' }))
+    const b = new FakeClient()
+    await b.connect({ cwd: '/tmp/back', projectRoot: '/tmp/back', claudePid: 5555 })
+    await renotifyStopped(d)
+    expect(d.store.get('wd:0ldc0de2')).toBeNull()
+    const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:ask:0ldc0de1'))
+    expect(String(mine.body.text)).not.toContain('<pre>')
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:run:0ldc0de1'))
+    expect(String(own.body.text)).toContain('-n claude-user-333')
+    expect(JSON.parse(d.store.get('wd:0ldc0de1')!).v).toBe(2)
+    await renotifyStopped(d)
+    expect(tg.callsOf('sendMessage').filter(c => JSON.stringify(c.body.reply_markup ?? '').includes('0ldc0de1')).length).toBe(2)
+
+    const deletes = tg.callsOf('deleteMessage').length
+    const m = new FakeClient()
+    await m.connect({ cwd: `${usersDir}/333`, projectRoot: `${usersDir}/333`, claudePid: 6666 })
+    await tg.waitFor('deleteMessage', () => tg.callsOf('deleteMessage').length >= deletes + 2)
+    expect(d.store.get('wd:0ldc0de1')).toBeNull()
+    m.close(); b.close()
+  })
+
   test('permission requests of a user session go only to that user', async () => {
     u.sock.write(encode({ t: 'perm_req', request_id: 'uvwxy', tool_name: 'Write', description: 'write', input_preview: '{}' }))
     await tg.waitFor('sendMessage', c => c.body.text === '🔐 111: Write' && String(c.body.chat_id) === '111')

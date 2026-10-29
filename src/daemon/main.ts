@@ -23,6 +23,7 @@ import { setLocalSttStarter } from '../voice/stt.ts'
 import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
+import { renotifyStopped } from './watchdog.ts'
 import { inSession } from './lang.ts'
 import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
@@ -122,6 +123,8 @@ startReminders(d)
 startCiWatch(d)
 startReports(d)
 startAllowlistWatch(d)
+// Stopped-session notices from before this version: once sessions had time to reconnect.
+setTimeout(() => void renotifyStopped(d).catch(err => log(`watchdog renotify: ${err}`)), Math.max(settings.watchdogGraceSec, 30) * 1000).unref?.()
 const voice = voiceServices(log)
 setLocalSttStarter(() => voice.stt.ensure())
 setSileroStarter(() => voice.silero.ensure())

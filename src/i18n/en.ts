@@ -4,6 +4,7 @@ import type { Dict } from './index.ts'
 const dict: Dict = {
   "… ещё {n}": "… {n} more",
   "👑 главная": "👑 main",
+  "⚠️ Сессия <b>{v}</b> остановилась.": "⚠️ Session <b>{v}</b> has stopped.",
   "⚠️ Сессия <b>{v}</b> (#{id}) остановилась.": "⚠️ Session <b>{v}</b> (#{id}) has stopped.",
   "Запустить заново в терминале:": "Start it again in a terminal:",
   "<pre>tmux attach -t {v}  # или: tmux new -s {v}</pre>": "<pre>tmux attach -t {v}  # or: tmux new -s {v}</pre>",

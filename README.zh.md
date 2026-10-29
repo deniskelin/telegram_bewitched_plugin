@@ -179,7 +179,7 @@ claude plugin update telegram-bewitched@bewitched
 
 日常事务由守护进程自己完成，不需要 Claude：控制命令、关闭和打开话题、启动会话、看门狗。
 
-- **用户会话自动启动。** 用户的第一条消息 → 守护进程创建 `~/user/<id>`，在新的 tmux 窗口（`TMUX_SESSION`，如果之前已有对话则带 `--continue`）中启动 Claude；消息在队列中等待，会话连接后送达。
+- **用户会话自动启动。** 用户的第一条消息 → 守护进程创建 `~/user/<id>`，在独立的 tmux 会话 `claude-user-<id>`（如果之前已有对话则带 `--continue`）中启动 Claude；消息在队列中等待，会话连接后送达。
 - **没有会话的项目话题**（`TOPIC_NO_SESSION=launch`）：消息会启动项目会话。如果启动失败，机器人会发出手动启动的命令，并在会话连接前关闭话题。
 - **看门狗。** 会话自行退出（不是归档也不是超时）→ 一分钟后所有者私聊收到「⚠️ 会话……已停止」，附重启命令和「🚀 启动」按钮。项目话题只收到通知，没有命令和按钮，并在会话重新连接前保持关闭；自己的会话停止的成员会收到「🙋 请求重启」按钮，请求会转给所有者。
 - **关闭空闲会话：** `USER_IDLE_MIN` 和 `PROJECT_IDLE_MIN`，默认 `0`——从不关闭。空闲会话不消耗 token，只占内存。
@@ -234,9 +234,9 @@ claude plugin update telegram-bewitched@bewitched
 | `CI_WATCH_MIN` | `5` | 查看项目会话分支最近一次 GitHub Actions 运行的频率（通过 `gh`；0——从不） |
 | `QUIET_HOURS` | `off` | 免打扰时段，例如 `23:00-08:00`：机器人发送的一切都静音送达。「/menu → ⚙️」中的按钮优先于 `.env` |
 | `BOT_LANGUAGE` | `ru` | 默认界面语言（`ru`、`en`、`es`、`zh`、`fr`、`de`），在聊天和所有者都未选择、且不知道用户 Telegram 语言时使用 |
-| `TMUX_SESSION` | `claude` | 新窗口所在的 tmux 会话 |
+| `TMUX_SESSION` | `claude` | 主会话所在的 tmux 会话（用户和项目会话各有自己的） |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-<telegram id>`（用户会话）或 `-n claude-<群组 id>-<话题 id>`（项目，与文件夹同名）；tmux 窗口使用相同名称 |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-user-<telegram id>`（用户会话）或 `-n claude-project-<群组 id>-<话题 id>`（项目，与文件夹同名）；各自独立的 tmux 会话和窗口使用相同名称，`tmux ls` 一眼可见类型 |
 
 访问控制（配对、allowlist、群组）与官方插件相同，见 [ACCESS.md](ACCESS.zh.md)和 `/telegram-bewitched:access`。
 
