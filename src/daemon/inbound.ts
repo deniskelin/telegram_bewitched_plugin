@@ -23,6 +23,8 @@ import { handleLaunchCallback, launchForTopic, launchUserSession } from './launc
 import { handleWatchdogCallback } from './watchdog.ts'
 import { journal, journalText, who } from './journal.ts'
 import { handleIdleCallback } from './idle.ts'
+import { handleShortcutCallback, withoutModel } from './shortcuts.ts'
+import { handleVoiceForbiddenCallback } from './tools.ts'
 import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu, sessionCommandScreen } from './menu.ts'
@@ -370,6 +372,11 @@ async function handleInbound(
     await reply(tr('⏳ Сессия проекта не подключена — сообщение в очереди.'), run)
     return
   }
+  // FR-9: what the daemon can answer itself never wakes the session.
+  if (!target.fallback && !msg.forward_origin && !imagePath && !(attachment && !isSpeech(attachment.kind))) {
+    const handled = await withoutModel(d, ctx, text, target.session, { chatId, threadId, messageId: msg.message_id, from: from.id }, (s2, t2) => d.deliver(s2, t2, meta, chat))
+    if (handled) return
+  }
   // The project session will see what the main session answered for it.
   if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
 
@@ -585,6 +592,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)
     if (await handleLaunchCallback(d, ctx, data)) return
     if (await handleIdleCallback(d, ctx, data)) return
+    if (await handleShortcutCallback(d, ctx, data)) return
+    if (await handleVoiceForbiddenCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return
