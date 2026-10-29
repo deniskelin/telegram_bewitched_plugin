@@ -48,7 +48,7 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 | Contexto de respuesta, citas, reenvíos | ❌ solo el texto del mensaje | ✅ `reply_to_text`, `quote_text`, `forward_from`, lotes de reenvíos |
 | Memoria entre reinicios | ❌ | ✅ `save_memory`, un resumen y el historial reciente al conectar una sesión |
 | Mensajes con la sesión apagada | ❌ se pierden | ✅ se guardan y se entregan cuando la sesión arranca |
-| Derechos de usuarios | todos los de la allowlist, por privado | ✅ todos los de la allowlist valen lo mismo que el propietario, también en el grupo de temas; los extraños se ignoran |
+| Derechos de usuarios | todos los de la allowlist, por privado | ✅ roles: 👑 propietario (todo), 👤 participante (escribe, responde, ⏹), 👁 observador (solo lee); permisos y panel, del propietario; los extraños se ignoran |
 | Detectar el tmux de la sesión | — | ✅ por el entorno o la terminal del proceso de Claude |
 | Mensajes de voz | un adjunto sin texto | ✅ transcripción con faster-whisper local, respuestas con voz (Silero/Piper/nube) — [docs/voice.md](docs/voice.md) |
 | Límites y gasto | ❌ | ✅ `/usage`: porcentajes de los límites de la suscripción, coste a precios de API, avisos de umbral y restablecimiento, resumen del día, informes con gráfico |
@@ -68,9 +68,9 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 | **Demonio compartido** | Un proceso sondea Telegram para todas las sesiones. Varias sesiones de Claude Code y `claude -p` funcionan con un bot sin 409 Conflict. |
 | **Temas** | Conectas un supergrupo con foros desde el privado (`/connect_group`); cada proyecto tiene su tema. En General están el panel fijado y los comandos de control. |
 | **Tipos de sesión** | 👤 una sesión por usuario (su privado y sus mensajes en General), 📂 una sesión por proyecto en su tema. Las sesiones arrancan solas con el primer mensaje; un vigilante avisa de las que se detienen y ofrece un botón para reiniciarlas. |
-| **Progreso en vivo** | Mientras Claude trabaja: en privado, un borrador nativo con un bloque de «razonamiento»; en un tema, un mensaje «⏳ Trabajando…» que se actualiza con acciones y un botón **⏹ Detener** (interrumpe el turno vía tmux). |
+| **Progreso en vivo** | La respuesta aparece mientras se escribe (en privado como borrador, en grupos dentro del mensaje de progreso), se cambia por chat en «/menu → ⚙️». Mientras Claude trabaja: en privado, un borrador nativo con un bloque de «razonamiento»; en un tema, un mensaje «⏳ Trabajando…» que se actualiza con acciones y un botón **⏹ Detener** (interrumpe el turno vía tmux). |
 | **Botones de respuesta** | La herramienta `ask_user` y `reply(buttons)`: opciones con un toque; la respuesta vuelve a la sesión. |
-| **Proyectos desde temas** | Creas un tema en el grupo → carpeta `~/projects/<nombre>` y una nueva sesión de Claude en una ventana de tmux ligada a ese tema. O `/new_session <nombre\|ruta>`. El inicio se confirma con el botón «✅ Confirmar inicio». |
+| **Proyectos desde temas** | Creas un tema en el grupo → carpeta `~/projects/<id del grupo>-<id del tema>` (por id: los nombres repetidos o cambiados no chocan; el id del grupo sin el signo menos) y una nueva sesión de Claude en una ventana de tmux ligada a ese tema. O `/new_session <nombre\|ruta>`. El inicio se confirma con el botón «✅ Confirmar inicio». |
 | **Archivo** | «🗄 Archivar» en la ficha del proyecto en `/sessions`: la sesión termina y el tema se cierra. Reabres el tema y arranca una sesión nueva. Cerrar el tema en Telegram equivale a archivarlo. |
 | **Notificaciones** | `notify` sin mensaje entrante, «✅ Listo» automático tras un turno largo, `bewitched notify` y HTTP `/notify` para scripts y CI. |
 | **Panel `/menu`** | Un mensaje con botones para todo: sesiones, temas, estadísticas, personas, recordatorios, ajustes de este chat, ayuda. El menú de comandos de Telegram solo muestra `/menu`, `/sessions`, `/usage`, `/help`. |
@@ -78,6 +78,7 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 | **Eventos externos** | `bewitched event --topic <nombre> "texto"` o `POST /event`: un mensaje «📡» en el tema del proyecto y para su sesión. Cada 5 minutos el bot mira la última ejecución de GitHub Actions de la rama de cada sesión de proyecto: si falla, «❌ El CI falló» con «🛠 Arreglar»; si vuelve a verde, «✅». |
 | **Voz** | Los mensajes de voz y los videomensajes se transcriben localmente; a un mensaje de voz se responde con voz. La voz rusa lee en ruso números, horas, fechas y palabras latinas. Voz y velocidad se ajustan por chat. |
 | **Estadísticas** | `/usage`: porcentajes de los límites con hora de restablecimiento y barra, gasto por modelo y sesión; avisos al 80/95 % y en el momento del restablecimiento (🔔/🔕); «🌙 Resumen del día»; `/reports`: día, semana, mes con gráfico; el coste de la sesión en su ficha; `/server`: carga de la máquina, registro del demonio y reinicio con un botón; 👥 cuánto gastó cada uno de la ventana de 5 horas, con aviso si alguien supera `USER_SHARE_ALERT`. 🌙 Horas de silencio: sin sonido por la noche. |
+| **Sin tokens** | Si un turno falla por el límite de la suscripción, el límite de peticiones de la API o el saldo agotado, el bot responde solo en el idioma del chat («⏸ La suscripción de Claude se quedó sin tokens… Responderé justo después de que el límite se restablezca a las 14:20»), guarda los mensajes nuevos y, al restablecerse, se los pasa a la sesión de una vez y le pide terminar el turno cortado. Límite de peticiones: reintento tras 2, 4, 8… min; saldo agotado: esperar «▶️ Continuar ahora» (también en `/menu` durante la pausa). Otros fallos reciben una pista clara en lugar de inglés sin más. |
 | **Recordatorios** | `/remind 2h revisa el CI`, «tomorrow 9:00», «every day 9:00»; a su hora el texto llega al chat y a su sesión; si la sesión no está en marcha, se inicia. |
 | **Personas** | `/invite`: eliges un contacto; el bot da acceso, inicia su sesión y da un enlace al grupo; `/users` y 🚫: eliminar a una persona con su sesión, carpeta, transcripciones e historial. A quien se añada con `/telegram-bewitched:access` el demonio lo detecta solo. |
 | **Grupos como proyectos** | Un grupo normal (sin temas) permitido en access se convierte en proyecto: el propietario recibe una ficha por privado — proyecto nuevo, carpeta existente o «no es proyecto». Su sesión responde en el grupo; se controla desde el privado del propietario. |
@@ -103,7 +104,7 @@ sesiones de Claude Code en tmux: 👤 una por persona (~/user/<id>) · 📂 una 
 ```
 
    Si antes tenías el plugin oficial, `.env` y `access.json` se copian de `~/.claude/channels/telegram/` automáticamente en el primer arranque.
-3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.md) (en inglés).
+3. Inicia una sesión con el canal (ver «Ejecución»), escribe al bot por privado —te responderá con un código de 6 caracteres— y ejecuta `/telegram-bewitched:access pair <código>` en Claude Code. El primer usuario emparejado se convierte en el propietario. Más en [ACCESS.md](ACCESS.es.md).
 
 **El plugin oficial y el fork no deben sondear el mismo token a la vez.** Desactiva el oficial (`/plugin disable telegram@claude-plugins-official`) o ejecuta Claude sin su `--channels`. Si el demonio ve el plugin oficial funcionando con el mismo token, espera en lugar de pelear por el sondeo.
 
@@ -144,7 +145,7 @@ Después reinicia las sesiones de Claude Code (el cliente y los hooks se toman d
 2. «➕ Añadir el bot a un grupo» → elige un grupo con «Temas» activados → confirma los permisos de administrador (gestionar temas, fijar, eliminar).
 3. Confirma la conexión en el privado.
 
-Todos los de la allowlist del bot pueden escribir a las sesiones y controlarlas (botones, panel, archivo, permisos): todos los usuarios emparejados tienen los mismos derechos completos. El resto de miembros del grupo se ignora. Los borradores nativos de Telegram solo funcionan en privado, así que en los temas el progreso se muestra como un mensaje que se actualiza.
+Los derechos van por roles (FR-4): 👑 el propietario —el primer usuario emparejado— puede hacerlo todo; 👤 un participante escribe a las sesiones, responde a los botones y pulsa ⏹; 👁 un observador solo lee. Aprobar permisos, el panel, el archivo, los ajustes e invitar o eliminar personas son del propietario; los roles se cambian en `/users`. El resto de miembros del grupo se ignora. Los borradores nativos de Telegram solo funcionan en privado, así que en los temas el progreso se muestra como un mensaje que se actualiza.
 
 `/sessions` es un menú en un solo mensaje, como el de BotFather: la lista de sesiones con un botón cada una; un botón abre la ficha de la sesión con acciones (⏹ Detener, 👑 Hacer principal, 🗄 Archivar, 💬 Abrir tema) y los ajustes de su chat (🔕0/🔔1/📢2 y «✅ listo»); «« A la lista» vuelve atrás. `/topics` es el mismo tipo de menú para los temas: el estado de cada uno (sesión, 💤 sin sesión, cola), una pantalla del tema con 💬 Abrir, 📋 ficha de la sesión, 🚀 Iniciar sesión, 🗄 Archivar / ↩️ Restaurar, 🗑 Eliminar; el archivo en su propia página. «👁 Pantalla y teclas» (en la ficha y en los mensajes de inicio) envía la vista actual de la ventana de tmux con los botones 1/2/3, Enter, Esc, ↑/↓, Tab: basta para responder a cualquier pregunta sin `tmux attach`. «🌿 Git» muestra el estado, los últimos commits y el PR de la rama (con `gh`); «📄 diff como archivo» envía `git diff HEAD`. Bajo una solicitud de permiso están «♾ Siempre <herramienta> en esta sesión» (hasta que la sesión se reconecte; se quita en la ficha) y «📌 Siempre <herramienta> en el proyecto» (el bot guarda la regla por carpeta del proyecto; se quita en la ficha). Los botones 🧹 `/compact`, 🆕 `/clear` y 🧠 Modelo escriben el comando en la ventana de la sesión (solo entre turnos). La ficha muestra: tipo (👑 principal o de proyecto), estado, `#id` y pid, carpeta de trabajo, rama, tema, dónde está en tmux (sesión, ventana, panel) con un `tmux attach -t <sesión>:<ventana>` listo, si «⏹ Detener» está disponible, el modo de permisos, modelo y tamaño del contexto, el turno actual y la última acción, el comando `claude --resume <id>`, el nombre de `/rename`, si 📱 Remote Control está activo con enlace a la sesión en claude.ai (por el evento `remote_session_change` del transcript; antes del primero, por el flag `--remote-control`/`--rc` o `remoteControlAtStartup`) y el tiempo desde el inicio y desde la última actividad. Las sesiones iniciadas sin el flag de canales aparecen en un bloque aparte «👻 Sin canal» con el comando para reiniciarlas: no reciben mensajes y antes eran invisibles.
 
@@ -152,12 +153,16 @@ Todo lo siguiente también está en botones en **`/menu`** (el menú de comandos
 
 `/usage` (solo el propietario): el plan de la suscripción de `~/.claude/.credentials.json`, los porcentajes de los límites (5 horas, semana) con hora de restablecimiento y el gasto de tokens de 5 horas, un día y 7 días en todos los transcripts a precios de API, por modelo y sesión. Los porcentajes vienen del endpoint **no documentado** de Anthropic `api/oauth/usage` (el mismo que llama `/usage` en Claude Code) con el token OAuth de la suscripción. Puede dejar de funcionar con cualquier actualización; entonces `/usage` mostrará solo datos locales. `USAGE_LIMITS=off` desactiva la consulta. Las secciones «Quién gasta», «Por modelo» y «Por sesión» muestran el periodo elegido con botones: 5 horas, día, semana o mes (para 5 horas y semana, «quién gasta» es la parte de la ventana de la suscripción; si no, la parte del gasto).
 
+## Varios grupos de temas
+
+El primer grupo conectado con `/connect_group` es el principal: General, el panel fijado y las sesiones de las personas. Conecta más con el mismo `/connect_group`: serán grupos de temas adicionales (por ejemplo, proyectos de trabajo y personales). En `/topics` → «🗂 Grupos de temas» cada grupo adicional recibe carpetas (marcadas de `PROJECTS_DIR`): un proyecto dentro de ellas tiene su tema ahí y el resto va al principal; los temas creados en un grupo adicional son sus proyectos al instante. `/topics` cambia de grupo con una fila de botones; «🔌 Desconectar» quita un grupo adicional.
+
 ## Grupos normales como proyectos
 
 Un grupo sin temas puede ser un proyecto propio: un chat familiar sobre una web, un chat de equipo sobre un servicio.
 
-1. Añade el bot al grupo y permítelo en la terminal: `/telegram-bewitched:access group add <id>` (el bot te indica el id al añadirlo; hasta entonces no habla allí). Por defecto el bot solo responde cuando se le menciona; `--no-mention` lo desactiva (también hay que desactivar el privacy mode en @BotFather; ver [ACCESS.md](ACCESS.md)).
-2. Con el primer mensaje del grupo el propietario recibe una ficha por privado: «📁 Nuevo» (`~/projects/<nombre del grupo>`), «📂 Elegir proyecto» (una carpeta existente) o «🚫 No es proyecto» (responde la sesión principal, como antes). Lo escrito en el grupo espera en cola mientras tanto.
+1. Añade el bot al grupo y permítelo en la terminal: `/telegram-bewitched:access group add <id>` (el bot te indica el id al añadirlo; hasta entonces no habla allí). Por defecto el bot solo responde cuando se le menciona; `--no-mention` lo desactiva (también hay que desactivar el privacy mode en @BotFather; ver [ACCESS.md](ACCESS.es.md)).
+2. Con el primer mensaje del grupo el propietario recibe una ficha por privado: «📁 Nuevo» (`~/projects/<id del grupo>`), «📂 Elegir proyecto» (una carpeta existente) o «🚫 No es proyecto» (responde la sesión principal, como antes). Lo escrito en el grupo espera en cola mientras tanto.
 3. La sesión del proyecto se inicia en tmux (se confirma con «✅ Confirmar inicio» en tu privado), responde directamente en el grupo y muestra ahí su progreso. No tiene tema.
 
 Todo lo demás, desde el privado del propietario: la ficha de la sesión en `/sessions` (con «👥 Desvincular el grupo»), la lista en «/menu → 👥 Grupos». Las solicitudes de permiso de la sesión de un grupo van solo al propietario. Recordatorios, `/macro`, `/event` y avisos de CI funcionan en el grupo igual que en un tema.
@@ -222,6 +227,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `CONTEXT_WARN_PCT` | `80` | Con este llenado del contexto, ofrecer `/compact` en el chat de la sesión (0: nunca) |
 | `DIGEST_AT` | `21:00` | A qué hora enviar al propietario el «🌙 Resumen del día» (gasto, commits, límites); `off`: nunca. A petición: `/digest` |
 | `LIMIT_ALERTS` | `80,95` | Umbrales de aviso de los límites de la suscripción en %; `off`: sin avisos. Una ventana que cruzó un umbral recibe «✅ Los tokens se renovaron» justo al restablecerse; en `/usage` se puede pedir lo mismo con 🔔 para cualquier ventana |
+| `LIMIT_WARMUP` | `off` | `on`: un minuto después del restablecimiento de la ventana de 5 horas, enviar una petición mínima `claude -p` (haiku) para que la siguiente ventana empiece ya. También el botón ⚡ en `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | Cada cuánto comprobar los límites (minutos, 0: nunca) |
 | `USAGE_LIMITS` | `on` | `/usage`: pedir los porcentajes al endpoint no documentado de Anthropic (`off`: solo datos locales) |
 | `USER_SHARE_ALERT` | `40` | Avisar al propietario cuando otro usuario ocupe este porcentaje de la ventana de 5 horas (una vez por ventana; 0: nunca). Funciona junto con `LIMIT_ALERTS` |
@@ -232,7 +238,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voz: transcripción de mensajes entrantes y respuestas con voz; ver [docs/voice.md](docs/voice.md), instalación con `bewitched voice install` |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-<telegram id>` (sesión de usuario) o `-n claude-topic-<tema>` (proyecto); la ventana de tmux recibe el mismo nombre |
 
-El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.md) (en inglés) y `/telegram-bewitched:access`.
+El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.es.md) y `/telegram-bewitched:access`.
 
 ## Desarrollo
 

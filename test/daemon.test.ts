@@ -655,6 +655,70 @@ describe('topics', () => {
     expect(c.body.message_thread_id).toBe(d.sessions.get(sessionId)!.topic!.threadId)
   })
 
+  test('FR-1: the answer streams as it is written and reply(use_last_message) sends it; narration before tools is not the answer', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    await hook('Stop', {})
+    tg.push(textMessage({ chat: Number(group), text: 'расскажи итог', thread }))
+    const m = await client.inbound(x => x.content === 'расскажи итог')
+    expect(m.meta.stream_answer).toBe('true')
+    await hook('MessageDisplay', { delta: 'Сейчас посмотрю файлы.' })
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
+    await hook('MessageDisplay', { delta: 'Итог: всё ' })
+    await hook('MessageDisplay', { delta: 'готово.' })
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Итог: всё') && String(c.body.text).includes('готово.') && !String(c.body.text).includes('Сейчас посмотрю'))
+    const r = await client.call('reply', { chat_id: group, use_last_message: true })
+    expect(r.ok).toBe(true)
+    const sent = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Итог: всё'))
+    expect(String(sent.body.text)).toBe('Итог: всё \nготово.')
+    expect(String(sent.body.text)).not.toContain('Сейчас посмотрю')
+    // Nothing written since the last tool: a clear error instead of an empty message.
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/b.ts' } })
+    const empty = await client.call('reply', { chat_id: group, use_last_message: true })
+    expect(empty.ok).toBe(false)
+    expect(empty.text).toContain('use_last_message')
+    // Switched off in the chat settings: no stream_answer.
+    setPref(`${group}:${thread}`, { streamAnswer: false })
+    tg.push(textMessage({ chat: Number(group), text: 'целиком', thread }))
+    expect((await client.inbound(x => x.content === 'целиком')).meta.stream_answer).toBeUndefined()
+    setPref(`${group}:${thread}`, { streamAnswer: true })
+    await client.call('reply', { chat_id: group, text: 'ок' })
+  })
+
+  test('out of tokens: the failed turn and new messages get a localized notice, are held, and reach the session at the reset', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    const { classify, parseReset, pauseOf, release } = await import('../src/daemon/outoftokens.ts')
+    expect(classify('rate_limit', "You've hit your limit · resets 2:20pm (Europe/Moscow)")).toBe('subscription')
+    expect(classify('rate_limit', 'API Error: 429 {"type":"rate_limit_error"}')).toBe('rate')
+    expect(classify('billing_error', 'Credit balance is too low')).toBe('billing')
+    expect(classify('server_error', 'API Error: 500')).toBeNull()
+    expect(new Date(parseReset('resets 2:20pm', new Date(2026, 9, 29, 9, 0).getTime())!).getHours()).toBe(14)
+    // Claude Code's real text: the clock of the named zone (Moscow is UTC+3).
+    expect(classify('rate_limit', "You've hit your 5-hour limit · resets 2:20pm (Europe/Moscow)")).toBe('subscription')
+    expect(new Date(parseReset("You've hit your 5-hour limit · resets 2:20pm (Europe/Moscow)", Date.UTC(2026, 9, 29, 9, 50))!).toISOString()).toBe('2026-10-29T11:20:00.000Z')
+    await hook('Stop', {})
+    tg.push(textMessage({ chat: Number(group), text: 'сделай отчёт', thread }))
+    await client.inbound(x => x.content === 'сделай отчёт')
+    await hook('StopFailure', { error: 'rate_limit', last_assistant_message: 'Claude AI usage limit reached|' + Math.floor(Date.now() / 1000 + 3600) })
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏸ Закончились токены подписки Claude. Ход прервался'))
+    expect(pauseOf(d)?.kind).toBe('subscription')
+    tg.push(textMessage({ chat: Number(group), text: 'и ещё вот это', thread }))
+    await tg.waitFor('sendMessage', c => String(c.body.text).includes('Сообщение записал. Отвечу сразу после сброса лимита в'))
+    await release(d)
+    const m = await client.inbound(x => x.content.includes('и ещё вот это'))
+    expect(m.content).toContain('Пока токенов не было')
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('▶️ Лимит восстановился'))
+    expect(pauseOf(d)).toBeNull()
+    await client.call('reply', { chat_id: group, text: 'ок' })
+  })
+
   test('long turn without reply sends a done notice on Stop', async () => {
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',
@@ -764,7 +828,7 @@ describe('projects from topics', () => {
     })
     const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('запускаю Claude в tmux'))
     expect(notice.body.message_thread_id).toBe(77)
-    const dir = `${process.env.PROJECTS_DIR}/Мой-Проект`
+    const dir = `${process.env.PROJECTS_DIR}/100500-77`
     expect(launched).toContain(dir)
     expect(d.store.topic(group, 77)?.project_key).toBe(dir)
 
@@ -1039,7 +1103,8 @@ describe('voice', () => {
     tg.files.set('voice1', readFileSync(`${dir}/in.ogg`))
     let sttForm: FormData | null = null
     let ttsBody: Record<string, unknown> | null = null
-    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: 'привет из голоса', language: 'ru', duration: 1 }) } })
+    let sttText = 'привет из голоса'
+    const stt = Bun.serve({ port: 0, fetch: async req => { sttForm = await req.formData(); return Response.json({ text: sttText, language: 'ru', duration: 1 }) } })
     const tts = Bun.serve({ port: 0, fetch: async req => { ttsBody = await req.json() as Record<string, unknown>; return new Response(readFileSync(`${dir}/out.wav`)) } })
     Object.assign(process.env, {
       STT_PROVIDER: 'openai-compatible', STT_URL: `http://127.0.0.1:${stt.port}/v1/audio/transcriptions`,
@@ -1077,6 +1142,17 @@ describe('voice', () => {
       await client.call('reply', { text: 'текстовый ответ' })
       await tg.waitFor('sendMessage', c => c.body.text === 'текстовый ответ')
       expect(tg.callsOf('sendVoice').length).toBe(voices)
+
+      // Nothing said: the sender hears it, the session doesn't.
+      sttText = '  '
+      tg.files.set('voice3', readFileSync(`${dir}/in.ogg`))
+      const before = client.msgs.length
+      tg.push({ message: { message_id: 91003, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+        chat: { id: Number(group), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+        voice: { file_id: 'voice3', file_unique_id: 'v3', duration: 1, mime_type: 'audio/ogg' } } })
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎤 В записи нет речи'), 8000)
+      await Bun.sleep(200)
+      expect(client.msgs.slice(before).some(x => x.t === 'inbound' && (x as Inbound).meta.attachment_file_id === 'voice3')).toBe(false)
 
       // STT down: the message still arrives, as before, with stt_error.
       stt.stop(true)
@@ -1406,7 +1482,7 @@ describe('ordinary groups as projects', () => {
     a.groups[g1] = { requireMention: false, allowFrom: [], allowPaired: true }
     a.groups[g2] = { requireMention: false, allowFrom: [], allowPaired: true }
     saveAccess(a)
-    const dir = join(settings.projectsDir, 'Test-Group')
+    const dir = join(settings.projectsDir, '200700')
     const launchedBefore = launched.length
 
     // Unbound: queued, the group hears once, the owner gets a card in DM.
@@ -1445,7 +1521,7 @@ describe('ordinary groups as projects', () => {
 
       // Permission requests of a group's project go to the owner only, never to the group.
       c.sock.write(encode({ t: 'perm_req', request_id: 'mnopq', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
-      await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 Test-Group: Bash'))
+      await tg.waitFor('sendMessage', x => x.body.chat_id === '111' && String(x.body.text).startsWith('🔐 200700: Bash'))
       expect(tg.callsOf('sendMessage').some(x => String(x.body.chat_id) === g1 && String(x.body.text).startsWith('🔐'))).toBe(false)
 
       // The card shows the group; unbinding asks first.
@@ -1453,7 +1529,7 @@ describe('ordinary groups as projects', () => {
       const sc = await tg.waitFor('editMessageText', x => String(x.body.text).includes('👥 группа «Test Group»'))
       expect(JSON.stringify(sc.body.reply_markup)).toContain(`gp:unbind:${g1}`)
       tg.push(callbackQuery('gp:list'))
-      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('👥 <b>Группы</b>') && String(x.body.text).includes('Test-Group'))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('👥 <b>Группы</b>') && String(x.body.text).includes('200700'))
       tg.push(callbackQuery(`gp:unbind:${g1}`))
       await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('Отвязать группу <b>Test Group</b>'))
       tg.push(callbackQuery(`gp:unbok:${g1}`))
@@ -1469,6 +1545,67 @@ describe('ordinary groups as projects', () => {
     tg.push(callbackQuery(`gp:none:${g2}`))
     await tg.waitFor('editMessageText', x => String(x.body.text).includes('не проект'))
     expect(groupBinding(d, g2)).toEqual({ dir: null, title: 'Test Group' })
+  })
+})
+
+describe('several topic groups (FR-3)', () => {
+  test('a second forum group is extra: projects under its folders get their topic there; messages route; /topics switches groups', async () => {
+    const extra = '-100900'
+    await connectGroup(d, extra, 'Work')
+    expect(d.topicsChatId).toBe('-100500')
+    expect(d.extraTopicGroups()).toEqual([{ chatId: extra, title: 'Work', paths: [] }])
+    const work = join(settings.projectsDir, 'work')
+    mkdirSync(join(work, 'api'), { recursive: true })
+    const groups = d.extraTopicGroups()
+    groups[0].paths = [work]
+    d.setExtraTopicGroups(groups)
+    expect(d.topicsChatFor(join(work, 'api'))).toBe(extra)
+    expect(d.topicsChatFor('/tmp/elsewhere')).toBe('-100500')
+
+    const c = new FakeClient()
+    await c.connect({ cwd: join(work, 'api'), projectRoot: join(work, 'api'), claudePid: 9090 })
+    try {
+      const created = await tg.waitFor('createForumTopic', x => String(x.body.chat_id) === extra)
+      expect(created.body.name).toBe('api')
+      const s = [...d.sessions.values()].find(x => x.projectKey === join(work, 'api'))!
+      expect(s.topic?.chatId).toBe(extra)
+      tg.push(textMessage({ chat: Number(extra), thread: s.topic!.threadId, text: 'в рабочей группе' }))
+      expect((await c.inbound(x => x.content === 'в рабочей группе')).meta.chat_id).toBe(extra)
+
+      tg.push(callbackQuery('tm:list:1'))
+      const list = await tg.waitFor('editMessageText', x => String(x.body.text).includes('Группа: <b>Work</b>'))
+      expect(JSON.stringify(list.body.reply_markup)).toContain(`tm:t:${s.topic!.threadId}:1`)
+      tg.push(callbackQuery('tm:groups'))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🗂 <b>Группы топиков</b>') && String(x.body.text).includes('Work'))
+      tg.push(callbackQuery('tm:goffok:1'))
+      await tg.waitFor('answerCallbackQuery', x => x.body.text === '🔌 Отключена')
+      expect(d.extraTopicGroups()).toEqual([])
+    } finally {
+      c.close()
+    }
+  })
+})
+
+describe('limit warmup', () => {
+  test('⚡ on: a tiny request right after the 5-hour reset, once per window; limit notices refresh and delete', async () => {
+    const { scheduleWarmup, setRunWarmup, warmupOn, fireWarmup } = await import('../src/daemon/usage.ts')
+    let runs = 0
+    setRunWarmup(async () => { runs++ })
+    expect(warmupOn(d)).toBe(false)
+    tg.push(callbackQuery('us:r'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '📊 Собираю…')
+    tg.push(callbackQuery('us:w:on'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⚡ Окно будет запускаться сразу после сброса')
+    expect(warmupOn(d)).toBe(true)
+    const at = new Date(Date.now() - 59_990)
+    scheduleWarmup(d, at)
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚡ Новое окно «5 часов» запущено'))
+    expect(runs).toBe(1)
+    await fireWarmup(d, at.toISOString())
+    expect(runs).toBe(1)
+    tg.push(callbackQuery('la:x', { messageId: 4242 }))
+    await tg.waitFor('deleteMessage', c => c.body.message_id === 4242)
+    d.store.set('limit_warmup', null)
   })
 })
 
@@ -1490,6 +1627,47 @@ describe('languages', () => {
     tg.push(textMessage({ text: '/lang auto' }))
     await tg.waitFor('sendMessage', c => c.body.text === 'Язык: как в Telegram')
     expect(prefsFor('111').lang).toBe('')
+  })
+})
+
+describe('roles (FR-4)', () => {
+  test('a member writes and answers but cannot approve permissions or use the panel; a viewer is ignored; the owner switches roles in /users', async () => {
+    const { loadAccess, saveAccess, roleOf } = await import('../src/access.ts')
+    const a = loadAccess()
+    a.allowFrom.push('555', '556')
+    a.roles = { '556': 'viewer' }
+    saveAccess(a)
+    expect(roleOf('111')).toBe('owner')
+    expect(roleOf('555')).toBe('member')
+    expect(roleOf('556')).toBe('viewer')
+    const group = '-100500'
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    // A member's message reaches the session with its role.
+    tg.push(textMessage({ from: 555, chat: Number(group), thread, text: 'от участника' }))
+    expect((await client.inbound(x => x.content === 'от участника')).meta.user_role).toBe('member')
+    // A viewer's does not.
+    tg.push(textMessage({ from: 556, chat: Number(group), thread, text: 'от наблюдателя' }))
+    await Bun.sleep(400)
+    expect(client.msgs.some(x => (x as Inbound).content === 'от наблюдателя')).toBe(false)
+    // Permissions: only the owner is asked, a member's tap is refused.
+    client.sock.write(encode({ t: 'perm_req', request_id: 'rstuv', tool_name: 'Bash', description: 'ls', input_preview: '{}' }))
+    await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).startsWith('🔐 proj: Bash') || String(c.body.chat_id) === group && String(c.body.text).startsWith('🔐 proj: Bash'))
+    expect(tg.callsOf('sendMessage').some(c => c.body.chat_id === '555' && String(c.body.text).startsWith('🔐'))).toBe(false)
+    tg.push(callbackQuery('perm:allow:rstuv', { from: 555, chat: Number(group) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Разрешения одобряет только владелец.')
+    tg.push(callbackQuery('perm:allow:rstuv', { chat: Number(group) }))
+    expect(await client.wait(m => m.t === 'perm' && m.request_id === 'rstuv')).toMatchObject({ behavior: 'allow' })
+    // The panel is the owner's.
+    tg.push(callbackQuery('sm:list', { from: 555 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.' && tg.callsOf('answerCallbackQuery').length > 0)
+    // /users: the owner switches roles.
+    tg.push(callbackQuery('ur:role:556:m'))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '👤 Теперь участник')
+    expect(roleOf('556')).toBe('member')
+    const b = loadAccess()
+    b.allowFrom = b.allowFrom.filter(x => x !== '555' && x !== '556')
+    delete b.roles
+    saveAccess(b)
   })
 })
 

@@ -5,7 +5,9 @@
  * priced at API rates.
  */
 
+import { execFile } from 'child_process'
 import { readdirSync, readFileSync, statSync } from 'fs'
+import { homedir } from 'os'
 import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
@@ -435,23 +437,25 @@ type LimitState = { level: number; resetsAt: string | null; notified?: boolean }
 export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
   const thresholds = settings.limitAlerts
   const to = owner()
-  if (!thresholds.length || !to || !settings.usageLimits) return
+  if (!to || !settings.usageLimits || (!thresholds.length && !warmupOn(d))) return
   if (limitsCache && now - limitsCache.at >= 60_000) limitsCache = null
   const limits = await fetchLimits()
   if (typeof limits === 'string') return
-  for (const l of limits.items) {
+  // ⚡ Start the next 5-hour window right at its reset.
+  const session = limits.items.find(l => l.label === LIMIT_LABELS.session)
+  if (warmupOn(d) && session?.resetsAt) scheduleWarmup(d, session.resetsAt, now)
+  if (!thresholds.length) return
+  for (const [i, l] of limits.items.entries()) {
     const key = `limit:${l.label}`
     const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
     const resetsAt = l.resetsAt?.toISOString() ?? null
     const level = thresholds.filter(t => l.percent >= t).at(-1) ?? 0
-    const reset = l.resetsAt ? `\n${fmtReset(l.resetsAt, now)}` : ''
     const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
     // The reset timer (below) already said so, on the minute; this is the fallback if it didn't run.
     if (prev.level > 0 && level === 0 && !prev.notified) {
       await d.bot.api.sendMessage(to, tr('✅ Лимит «{v}» восстановился: {v2}% {v3}', { v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent) }), { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
     } else if (level > (newWindow ? 0 : prev.level)) {
-      const icon = level >= thresholds.at(-1)! ? '🚨' : '⚠️'
-      await d.bot.api.sendMessage(to, tr('{icon} Лимит «{v}»: <b>{v2}%</b> {v3}{reset}', { icon, v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent), reset }), { parse_mode: 'HTML' }).catch(err => d.log(`limit notice failed: ${err}`))
+      await d.bot.api.sendMessage(to, alertText(l, level, now), { parse_mode: 'HTML', reply_markup: alertKb(i) }).catch(err => d.log(`limit notice failed: ${err}`))
     }
     d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
     // Over a threshold: say "tokens are back" exactly when the window resets.
@@ -460,6 +464,67 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
   await checkShares(d, to, limits, now)
   rescheduleRequested(d)
   d.onSessionsChanged()
+}
+
+function alertText(l: Limit, level: number, now: number): string {
+  const icon = level >= (settings.limitAlerts.at(-1) ?? 100) ? '🚨' : level > 0 ? '⚠️' : '✅'
+  const reset = l.resetsAt ? `\n${fmtReset(l.resetsAt, now)}` : ''
+  return tr('{icon} Лимит «{v}»: <b>{v2}%</b> {v3}{reset}', { icon, v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent), reset })
+}
+
+/** 🔄 refresh the numbers in place, ✖️ delete the notice. */
+function alertKb(i: number): InlineKeyboard {
+  return new InlineKeyboard([[button(tr('🔄 Обновить'), `la:r:${i}`), button(tr('✖️ Удалить'), 'la:x')]])
+}
+
+// --------------------------------------------------------------------------
+// ⚡ Start the next 5-hour window right at its reset
+// --------------------------------------------------------------------------
+
+/**
+ * The 5-hour window starts with the first request after a reset. Sending a
+ * tiny one right at the reset starts it then, not when work resumes hours
+ * later: the window ends sooner, and the tokens left before a reset can be
+ * spent knowing a fresh window is minutes away. Off by default (LIMIT_WARMUP
+ * or the ⚡ button in /usage).
+ */
+export function warmupOn(d: Daemon): boolean {
+  const v = d.store.get('limit_warmup')
+  return v != null ? v === 'on' : settings.limitWarmup
+}
+
+/** The tiny request: one-word answer from the smallest model, via Claude Code (the subscription). Replaced in tests. */
+export let runWarmup = (): Promise<void> => new Promise((res, rej) => execFile(settings.claudeBin, ['-p', '--model', 'haiku', 'Reply with one word: ok'],
+  { cwd: homedir(), timeout: 120_000, env: { ...process.env, TMUX_PANE: '' } }, err => (err ? rej(err) : res())))
+export function setRunWarmup(f: () => Promise<void>): void {
+  runWarmup = f
+}
+
+const warmupTimers = new Map<string, ReturnType<typeof setTimeout>>()
+
+export function scheduleWarmup(d: Daemon, resetsAt: Date, now = Date.now()): void {
+  const key = resetsAt.toISOString()
+  if (warmupTimers.has(key) || resetsAt.getTime() < now - 60_000) return
+  // A minute after resets_at: the API counts the new window by then.
+  const t = setTimeout(() => void fireWarmup(d, key), Math.max(0, resetsAt.getTime() + 60_000 - now))
+  t.unref?.()
+  warmupTimers.set(key, t)
+}
+
+export async function fireWarmup(d: Daemon, key: string): Promise<void> {
+  warmupTimers.delete(key)
+  if (!warmupOn(d) || d.store.get('limit_warmup_done') === key) return
+  d.store.set('limit_warmup_done', key)
+  const to = owner()
+  try {
+    await runWarmup()
+    d.log('limit warmup: the 5-hour window started')
+    const ends = new Date(Date.now() + 5 * 3600_000).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+    if (to) await d.bot.api.sendMessage(to, tr('⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.', { time: ends }), { disable_notification: true }).catch(() => {})
+  } catch (err) {
+    d.log(`limit warmup failed: ${err}`)
+    if (to) await d.bot.api.sendMessage(to, tr('⚠️ Не удалось запустить окно после сброса: {err}', { err: escapeHtml(String(err instanceof Error ? err.message : err)).slice(0, 300) }), { parse_mode: 'HTML', disable_notification: true }).catch(() => {})
+  }
 }
 
 /** USER_SHARE_ALERT: tell the owner once per window when someone else took that much of the 5-hour window. */
@@ -550,21 +615,51 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
       button(`${asked?.silent ? '✅' : '🔕'} ${tr(it.label)}`, `lr:${i}:s`),
     ])
   }
-  rows.push([button(tr('« Статистика'), 'hub:stats')])
+  const wOn = warmupOn(d)
+  rows.push([button(wOn ? tr('⚡ Окно сразу после сброса: вкл') : tr('⚡ Окно сразу после сброса: выкл'), `us:w:${wOn ? 'off' : 'on'}`, wOn ? 'primary' : undefined)])
+  rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), 'us:r')])
   return new InlineKeyboard(rows)
 }
 
-/** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections. */
+/** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections; us:r — refresh. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const p = /^us:p:(h5|d|w|m)$/.exec(data)
+  const p = /^us:(?:p:(h5|d|w|m)|r)$/.exec(data)
   const m = /^lr:(\d+)(:s)?$/.exec(data)
-  if (!m && !p) return false
+  const w = /^us:w:(on|off)$/.exec(data)
+  const la = /^la:(r|x)(?::(\d+))?$/.exec(data)
+  if (!m && !p && !w && !la) return false
   if (!ctx.from || String(ctx.from.id) !== owner()) {
     await ctx.answerCallbackQuery({ text: tr('Только для владельца подписки.') }).catch(() => {})
     return true
   }
+  if (la) {
+    if (la[1] === 'x') {
+      await ctx.answerCallbackQuery().catch(() => {})
+      await ctx.deleteMessage().catch(() => ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {}))
+      return true
+    }
+    resetLimitsCache()
+    const fresh = await fetchLimits()
+    const l = typeof fresh === 'string' ? null : fresh.items[Number(la[2])]
+    if (!l) { await ctx.answerCallbackQuery({ text: tr('Данные о лимитах устарели — откройте /usage заново.') }).catch(() => {}); return true }
+    const level = settings.limitAlerts.filter(x => l.percent >= x).at(-1) ?? 0
+    await ctx.answerCallbackQuery({ text: tr('🔄 Обновлено') }).catch(() => {})
+    await ctx.editMessageText(alertText(l, level, Date.now()), { parse_mode: 'HTML', reply_markup: alertKb(Number(la[2])) })
+      .catch(err => { if (!isMessageNotModified(err)) d.log(`limit refresh: ${err}`) })
+    return true
+  }
+  if (w) {
+    d.store.set('limit_warmup', w[1])
+    const session = lastLimits()?.limits.items.find(l => l.label === LIMIT_LABELS.session)
+    if (w[1] === 'on' && session?.resetsAt) scheduleWarmup(d, session.resetsAt)
+    await ctx.answerCallbackQuery({ text: w[1] === 'on' ? tr('⚡ Окно будет запускаться сразу после сброса') : tr('Окно запускается как обычно') }).catch(() => {})
+    await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
+    return true
+  }
   if (p) {
-    d.store.set('usage_period', p[1])
+    // us:r — the same view with fresh limits.
+    if (p[1]) d.store.set('usage_period', p[1])
+    else resetLimitsCache()
     await ctx.answerCallbackQuery({ text: tr('📊 Собираю…') }).catch(() => {})
     await ctx.editMessageText(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
       .catch(err => { if (!isMessageNotModified(err)) d.log(`usage period: ${err}`) })
@@ -585,6 +680,9 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
 
 export function startLimitWatch(d: Daemon): void {
   rescheduleRequested(d)
+  // After a restart: the reset of the window seen last, if ⚡ is on.
+  const session = lastLimits()?.limits.items.find(l => l.label === LIMIT_LABELS.session)
+  if (warmupOn(d) && session?.resetsAt) scheduleWarmup(d, session.resetsAt)
   const min = settings.limitCheckMin
   if (min <= 0) return
   const tick = () => void checkLimits(d).catch(err => d.log(`limit check failed: ${err}`))

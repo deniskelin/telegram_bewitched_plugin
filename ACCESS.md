@@ -1,5 +1,7 @@
 # Telegram — Access & Delivery
 
+🌍 English · [Русский](ACCESS.ru.md) · [Español](ACCESS.es.md) · [中文](ACCESS.zh.md) · [Français](ACCESS.fr.md) · [Deutsch](ACCESS.de.md)
+
 A Telegram bot is publicly addressable. Anyone who finds its username can DM it, and without a gate those messages would flow straight into your assistant session. The access model described here decides who gets through.
 
 By default, a DM from an unknown sender triggers **pairing**: the bot replies with a 6-character code and drops the message. You run `/telegram-bewitched:access pair <code>` from your assistant session to approve them. Once approved, their messages pass through.
@@ -18,9 +20,13 @@ All state lives in `~/.claude/channels/telegram-bewitched/access.json`. The `/te
 
 ## Inviting from the bot
 
-The owner (the first entry in `allowFrom`) can also add people without pairing codes: `/invite` in the bot's DM, or «👥 Пригласить» in `/sessions`. Telegram's contact picker returns the person's user ID; after a confirmation the bot adds it to `allowFrom`, prepares `USERS_DIR/<id>` and starts their session, creates a single-use link to the topics group (needs the bot's "invite users" right) and sends the owner a message to forward. Everyone in `allowFrom` has the same full rights. Works in `static` mode only after a restart (the file is written, the snapshot is not).
+The owner (the first entry in `allowFrom`) can also add people without pairing codes: `/invite` in the bot's DM, or «👥 Invite» in `/sessions` (button labels follow the chat's language). Telegram's contact picker returns the person's user ID; after a confirmation the bot adds it to `allowFrom`, prepares `USERS_DIR/<id>` and starts their session, creates a single-use link to the topics group (needs the bot's "invite users" right) and sends the owner a message to forward. Their rights depend on their role (see below). Works in `static` mode only after a restart (the file is written, the snapshot is not).
 
-Removing works the same way: «🚫 Удалить пользователя» on their session card in `/sessions`, or `/users`. After a confirmation that lists what goes, the bot drops them from `allowFrom` (and group lists), closes their tmux window, deletes `USERS_DIR/<id>` and its Claude Code transcripts, and forgets their DM history, queue, memory, reminders and prefs; optionally removes them from the topics group (ban + unban).
+Removing works the same way: «🚫 Remove user» on their session card in `/sessions`, or `/users`. After a confirmation that lists what goes, the bot drops them from `allowFrom` (and group lists), closes their tmux window, deletes `USERS_DIR/<id>` and its Claude Code transcripts, and forgets their DM history, queue, memory, reminders and prefs; optionally removes them from the topics group (ban + unban).
+
+## Roles
+
+Paired users have roles. 👑 **owner** — the first entry in `allowFrom` — can do everything. 👤 **member** (the default) writes to sessions, answers `ask_user` buttons and stops a turn with ⏹. 👁 **viewer** only reads: their messages and taps are ignored. Approving permissions (requests go to the owner's DM only), the control panel, archiving, settings, inviting and removing people are the owner's. The owner switches roles in `/users`; they are stored in `access.json` as `"roles": { "<id>": "member" | "viewer" }`. Sessions see the author's role (`user_role`) and don't let a non-owner override the owner's instructions.
 
 ## DM policies
 
@@ -55,7 +61,7 @@ Groups are off by default. Opt each one in individually.
 /telegram-bewitched:access group add -1001654782309
 ```
 
-Supergroup IDs are negative numbers with a `-100` prefix, e.g. `-1001654782309`. They're not shown in the Telegram UI. To find one, either add [@RawDataBot](https://t.me/RawDataBot) to the group temporarily (it dumps a JSON blob including the chat ID), or add your bot and run `/telegram-bewitched:access` to see recent dropped-from groups.
+Supergroup IDs are negative numbers with a `-100` prefix, e.g. `-1001654782309`. They're not shown in the Telegram UI. To find one, either add [@RawDataBot](https://t.me/RawDataBot) to the group temporarily (it dumps a JSON blob including the chat ID), or add your bot: it sends the owner the group's ID and a ready command; `/telegram-bewitched:access` also shows groups whose messages were recently dropped.
 
 With the default `requireMention: true`, the bot responds only when @mentioned or replied to. Pass `--no-mention` to process every message, or `--allow id1,id2` to restrict which members can trigger it.
 

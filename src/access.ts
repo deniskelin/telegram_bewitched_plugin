@@ -39,6 +39,8 @@ export type Prefs = {
   ttsVoice?: string
   /** Speech rate, 0.5–2 (1 = as synthesized). */
   ttsSpeed?: number
+  /** Stream the answer as it is written (the model writes it as text, then reply with use_last_message). */
+  streamAnswer?: boolean
   /** Interface language of the chat (ru, en, es, zh, fr, de); unset — the user's Telegram language or BOT_LANGUAGE. */
   lang?: string
 }
@@ -53,6 +55,8 @@ export type Access = {
   replyToMode?: 'off' | 'first' | 'all'
   textChunkLimit?: number
   chunkMode?: 'length' | 'newline'
+  /** FR-4: role per user id (absent — member; the owner is always the first in allowFrom). */
+  roles?: Record<string, 'member' | 'viewer'>
   /** Global prefs, plus overrides keyed by "chatId" or "chatId:threadId". */
   prefs?: Prefs & { chats?: Record<string, Prefs> }
 }
@@ -77,6 +81,7 @@ function readAccessFile(): Access {
       textChunkLimit: parsed.textChunkLimit,
       chunkMode: parsed.chunkMode,
       prefs: parsed.prefs,
+      roles: parsed.roles,
     }
   } catch (err) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') return defaultAccess()
@@ -115,15 +120,45 @@ export function owner(a: Access = loadAccess()): string | undefined {
   return a.allowFrom[0]
 }
 
+/** Any paired user (in allowFrom). Rights within that: roleOf / can. */
 export function isOwner(userId: string | number, a: Access = loadAccess()): boolean {
   return a.allowFrom.includes(String(userId))
+}
+
+/**
+ * FR-4 roles. 👑 owner — the first in allowFrom, everything. 👤 member (the
+ * default for the others) — writes to sessions, answers ask_user buttons,
+ * stops a turn. 👁 viewer — reads only: messages and taps are ignored.
+ */
+export type Role = 'owner' | 'member' | 'viewer'
+export type Action = 'write' | 'answer' | 'stop' | 'control' | 'permissions'
+
+export function roleOf(userId: string | number, a: Access = loadAccess()): Role | null {
+  const id = String(userId)
+  if (!a.allowFrom.includes(id)) return null
+  if (a.allowFrom[0] === id) return 'owner'
+  return a.roles?.[id] ?? 'member'
+}
+
+export function can(userId: string | number, action: Action, a: Access = loadAccess()): boolean {
+  const r = roleOf(userId, a)
+  if (r === 'owner') return true
+  if (r !== 'member') return false
+  return action === 'write' || action === 'answer' || action === 'stop'
+}
+
+export function setRole(userId: string, role: 'member' | 'viewer'): void {
+  const a = loadAccess()
+  a.roles = { ...a.roles, [userId]: role }
+  if (role === 'member') delete a.roles[userId]
+  saveAccess(a)
 }
 
 export function prefsFor(chatId: string, threadId?: number | null, a: Access = loadAccess()): Required<Prefs> {
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '' }
+  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const
@@ -202,7 +237,8 @@ export function gate(ctx: Context, botUsername: string): GateResult {
   const chatType = ctx.chat?.type
 
   if (chatType === 'private') {
-    if (access.allowFrom.includes(senderId)) return { action: 'deliver', access }
+    // 👁 Viewers read only: their messages don't reach sessions.
+    if (access.allowFrom.includes(senderId)) return roleOf(senderId, access) === 'viewer' ? { action: 'drop' } : { action: 'deliver', access }
     if (access.dmPolicy === 'allowlist') return { action: 'drop' }
 
     for (const [code, p] of Object.entries(access.pending)) {
@@ -230,6 +266,7 @@ export function gate(ctx: Context, botUsername: string): GateResult {
       if (!access.allowFrom.includes(senderId) && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
     } else if (groupAllowFrom.length > 0 && !groupAllowFrom.includes(senderId)) return { action: 'drop' }
     if ((policy.requireMention ?? true) && !isMentioned(ctx, botUsername, access.mentionPatterns)) return { action: 'drop' }
+    if (roleOf(senderId, access) === 'viewer') return { action: 'drop' }
     return { action: 'deliver', access }
   }
 

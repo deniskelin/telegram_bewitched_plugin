@@ -12,7 +12,7 @@
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { basename } from 'path'
-import { isOwner, owner } from '../access.ts'
+import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
@@ -68,12 +68,13 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
   const m = /^wd:(run|topic):([0-9a-f]+|\d+)$/.exec(data)
   if (!m) return false
   const answer = (t?: string) => ctx.answerCallbackQuery(t ? { text: t } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(tr('Нет доступа.'))
     return true
   }
   if (m[1] === 'topic') {
-    const chat = d.topicsChatId
+    const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')
+    const chat = d.isTopicsChat(pressedIn) ? pressedIn : d.topicsChatId
     const t = chat ? d.store.topic(chat, Number(m[2])) : null
     if (!chat || !t?.project_key) { await answer(tr('Топик не привязан к проекту.')); return true }
     await answer(tr('🚀 Запускаю'))

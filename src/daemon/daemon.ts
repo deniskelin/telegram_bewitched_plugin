@@ -4,12 +4,13 @@
  * sessions connected over the unix socket.
  */
 
+import { holdIfPaused } from './outoftokens.ts'
 import type { Socket } from 'bun'
 import { Bot, GrammyError } from 'grammy'
 import { randomBytes } from 'crypto'
 import { chmodSync, existsSync, readFileSync, rmSync } from 'fs'
 import { basename, join, relative } from 'path'
-import { loadAccess, owner } from '../access.ts'
+import { loadAccess, owner, prefsFor } from '../access.ts'
 import { DB_FILE, LEGACY_STATE_DIR, PROTOCOL_VERSION, SOCK_FILE, settings } from '../config.ts'
 import { Store, type TopicRow } from '../db.ts'
 import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from '../ipc.ts'
@@ -31,6 +32,9 @@ export function userPendingKey(userId: string): string {
 
 export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 
+/** An extra forum group for project topics (FR-3). */
+export type TopicGroup = { chatId: string; title: string; paths: string[] }
+
 export type Session = {
   id: string
   sock: Socket<SockData>
@@ -45,6 +49,8 @@ export type Session = {
   lastActivity: number
   status: 'idle' | 'working' | 'waiting'
   topic: { chatId: string; threadId: number; name: string } | null
+  /** The model's text since its last tool call in this turn: the answer being written (FR-1). */
+  answer: string
   /** An ordinary group bound to this session's project (groups.ts): the session answers there. */
   group: { chatId: string; title: string } | null
   lastChat: ChatRef | null
@@ -102,9 +108,48 @@ export class Daemon {
     return this.store.get('topics_chat_id')
   }
 
+  /**
+   * FR-3: more forum groups for project topics. The main one (topicsChatId)
+   * keeps General and the pinned panel; each extra one takes the projects
+   * under its folders (longest match wins) and the topics created in it.
+   */
+  extraTopicGroups(): TopicGroup[] {
+    try {
+      const v = JSON.parse(this.store.get('topic_groups') ?? '[]')
+      return Array.isArray(v) ? v : []
+    } catch {
+      return []
+    }
+  }
+
+  setExtraTopicGroups(list: TopicGroup[]): void {
+    this.store.set('topic_groups', list.length ? JSON.stringify(list) : null)
+  }
+
+  /** Every topics group, the main one first. */
+  topicChats(): string[] {
+    const main = this.topicsChatId
+    return [...(main ? [main] : []), ...this.extraTopicGroups().map(g => g.chatId).filter(c => c !== main)]
+  }
+
+  isTopicsChat(chatId: string): boolean {
+    return this.topicChats().includes(chatId)
+  }
+
+  /** The group a project's topic belongs in: an extra group whose folder holds it, else the main one. */
+  topicsChatFor(projectKey: string): string | null {
+    let best: { chatId: string; len: number } | null = null
+    for (const g of this.extraTopicGroups()) {
+      for (const p of g.paths) {
+        if ((projectKey === p || projectKey.startsWith(p.endsWith('/') ? p : p + '/')) && (!best || p.length > best.len)) best = { chatId: g.chatId, len: p.length }
+      }
+    }
+    return best?.chatId ?? this.topicsChatId
+  }
+
   /** True when only paired users can post in the topics group — safe to show permission buttons there. */
-  topicsGroupIsStrict(): boolean {
-    const chat = this.topicsChatId
+  topicsGroupIsStrict(chatId: string | null = this.topicsChatId): boolean {
+    const chat = chatId
     if (!chat) return false
     const a = loadAccess()
     const g = a.groups[chat]
@@ -222,9 +267,14 @@ export class Daemon {
       content = session.notes.map(n => `[${n}]`).join('\n') + '\n\n' + content
       session.notes = []
     }
+    // Out of tokens: the message waits for the reset (outoftokens.ts).
+    if (from && holdIfPaused(this, session, content, meta, from)) return
+    // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
+    if (from && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     this.send(session, { t: 'inbound', content, meta })
     session.lastActivity = Date.now()
     if (from) {
+      session.answer = ''
       session.lastChat = from
       if (!session.turn) session.turn = { start: Date.now(), replied: false }
       session.status = 'working'
@@ -277,6 +327,7 @@ export class Daemon {
       status: 'idle',
       topic: null,
       group: null,
+      answer: '',
       lastChat: null,
       turn: null,
       notes: [],
@@ -469,8 +520,11 @@ export class Daemon {
 
   /** Topic row for a session's project in the topics group, if any. */
   topicRowFor(s: Session): TopicRow | null {
-    const chat = this.topicsChatId
-    return chat ? this.store.topicForProject(chat, s.projectKey) : null
+    for (const chat of this.topicChats()) {
+      const row = this.store.topicForProject(chat, s.projectKey)
+      if (row) return row
+    }
+    return null
   }
 
   socketExists(): boolean {

@@ -8,7 +8,7 @@ import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
 import { join } from 'path'
-import { isOwner, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
+import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { clip, fmtDuration, safeMeta } from '../format.ts'
@@ -59,10 +59,12 @@ export async function ensureTopic(d: Daemon, s: Session): Promise<Session['topic
     s.group = g
     return (s.topic = null)
   }
-  const chatId = d.topicsChatId
   // Only project sessions own a topic; user and main sessions live in DMs and General.
-  if (!chatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
+  if (!d.topicsChatId || s.passive || settings.topicMode === 'off' || d.roleOf(s) !== 'project') return (s.topic = null)
   const { key, kind } = topicKey(s)
+  // An existing topic in any group wins; a new one goes to the group whose folders hold the project (FR-3).
+  const home = d.topicChats().find(c => d.store.topicForProject(c, key))
+  const chatId = home ?? d.topicsChatFor(s.projectKey)!
   let row = d.store.topicForProject(chatId, key)
   // Closed by the bot while the session was down: open it again.
   if (row && row.status === 'waiting') {
@@ -339,13 +341,19 @@ async function sendConnectCard(d: Daemon, code: string, c: ConnectState): Promis
   })
 }
 
-export async function connectGroup(d: Daemon, chatId: string): Promise<void> {
+/** Connect a forum group: the first becomes the main one; more become extra topic groups (FR-3). */
+export async function connectGroup(d: Daemon, chatId: string, title = chatId): Promise<void> {
   const a = loadAccess()
   const o = owner(a)
   if (!o) throw new Error('no owner paired')
   const prev = d.topicsChatId
   a.groups[chatId] = { requireMention: false, allowFrom: [], allowPaired: true }
   saveAccess(a)
+  if (prev && prev !== chatId) {
+    const list = d.extraTopicGroups().filter(g => g.chatId !== chatId)
+    d.setExtraTopicGroups([...list, { chatId, title, paths: [] }])
+    return
+  }
   d.store.set('topics_chat_id', chatId)
   if (prev !== chatId) d.store.set('dashboard_msg_id', null)
   for (const s of d.activeSessions()) {
@@ -354,6 +362,12 @@ export async function connectGroup(d: Daemon, chatId: string): Promise<void> {
   }
   dashLast = 0
   scheduleDashboard(d)
+}
+
+/** Drop an extra topic group: its projects' topics will be made in the main group from now on. */
+export function removeTopicGroup(d: Daemon, chatId: string): void {
+  d.setExtraTopicGroups(d.extraTopicGroups().filter(g => g.chatId !== chatId))
+  for (const s of d.sessions.values()) if (s.topic?.chatId === chatId) s.topic = null
 }
 
 export function disconnectGroup(d: Daemon): void {
@@ -367,7 +381,7 @@ export function disconnectGroup(d: Daemon): void {
 // --------------------------------------------------------------------------
 
 function isControlChat(d: Daemon, ctx: Context): boolean {
-  if (!ctx.from || !isOwner(ctx.from.id)) return false
+  if (!ctx.from || !can(ctx.from.id, 'control')) return false
   if (ctx.chat?.type === 'private') return true
   return String(ctx.chat?.id) === d.topicsChatId && !ctx.message?.is_topic_message
 }
@@ -542,7 +556,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   const mainCommand = async (ctx: Context) => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const arg = String(ctx.match ?? '').trim().replace(/^#/, '')
     if (arg === 'reset') {
       d.store.set('main_dir', null)
@@ -561,7 +575,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.command('use', mainCommand)
 
   bot.command('verbose', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const arg = (ctx.match ?? '').trim()
     const levels = ([0, 1, 2] as const).map(l => `${verboseBadge(l)} ${tr(VERBOSE_INFO[l])}`).join('\n')
     if (!arg) {
@@ -575,7 +589,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('notify_done', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const help = '/notify_done off|long|always\n' + tr('long — если ход дольше {sec} с и без ответа', { sec: settings.notifyLongSec })
     if (!v) return void ctx.reply(tr('Здесь: {badge}\n\n', { badge: `✅ ${tr(NOTIFY_DONE_INFO[prefsFor(String(ctx.chat!.id), threadOf(ctx)).notifyDone])}` }) + help, { message_thread_id: threadOf(ctx) })
@@ -585,7 +599,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('voice', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const info = { off: tr('только текст'), mirror: tr('голосом на голосовое'), always: tr('всегда голосом') } as const
     const help = `/voice off|mirror|always\noff — ${info.off}, mirror — ${info.mirror}, always — ${info.always}${ttsEnabled() ? '' : '\n' + tr('⚠️ Синтез речи выключен (TTS_PROVIDER=off): bewitched voice install')}`
@@ -596,7 +610,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('transcript', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const v = (ctx.match ?? '').trim()
     const help = tr('/transcript on|off — показывать расшифровку голосовых в чате') + (sttEnabled() ? '' : '\n' + tr('⚠️ Распознавание выключено (STT_PROVIDER=off): bewitched voice install'))
     const shown = (on: boolean) => (on ? tr('показывается') : tr('не показывается'))
@@ -607,7 +621,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('forget', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const thread = threadOf(ctx) ?? 0
     await ctx.reply(tr('Удалить историю этого чата/топика из памяти бота? Сообщения в Telegram останутся.'), {
       message_thread_id: threadOf(ctx),
@@ -616,7 +630,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('remember', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'write')) return
     const chat = String(ctx.chat!.id)
     const thread = threadOf(ctx)
     const own = settings.userSessions ? d.userSession(String(ctx.from.id)) : null
@@ -631,7 +645,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   // --- group connection (DM only) ---
 
   bot.command('connect_group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const code = randomBytes(4).toString('hex')
     d.store.set(`connect:${code}`, JSON.stringify({ owner: String(ctx.from!.id), exp: Date.now() + 15 * 60_000 } satisfies ConnectState))
     const url = `https://t.me/${d.botUsername}?startgroup=${code}&admin=manage_topics+delete_messages+pin_messages`
@@ -642,7 +656,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const chat = topicsChat()
     if (!chat) return void ctx.reply(tr('Группа не подключена. /connect_group'))
     try {
@@ -656,7 +670,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   })
 
   bot.command('disconnect_group', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     if (!topicsChat()) return void ctx.reply(tr('Группа не подключена.'))
     await ctx.reply(tr('Отключить группу? Топики и история останутся, сессии вернутся в личку.'), { reply_markup: confirmKb('cg:disok:0', 'cg:no:0') })
   })
@@ -678,6 +692,10 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const chatId = String(upd.chat.id)
     const gone = upd.new_chat_member.status === 'left' || upd.new_chat_member.status === 'kicked'
     const o = owner()
+    if (gone && chatId !== topicsChat() && d.extraTopicGroups().some(g => g.chatId === chatId)) {
+      removeTopicGroup(d, chatId)
+      if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Её проекты переходят в основную группу.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
+    }
     if (gone && chatId === topicsChat()) {
       disconnectGroup(d)
       if (o) void inChat(d, o, undefined, () => d.bot.api.sendMessage(o, tr('⚠️ Бота убрали из группы топиков «{title}». Сессии вернулись в личку. /connect_group — подключить заново.', { title: ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId }))).catch(() => {})
@@ -688,19 +706,19 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   // Users can create topics by hand; keep the registry in sync.
   bot.on('message:forum_topic_created', async (ctx, next) => {
     const chat = String(ctx.chat.id)
-    if (chat === topicsChat() && ctx.from?.id !== d.botId && ctx.message.message_thread_id != null) {
+    if (d.isTopicsChat(chat) && ctx.from?.id !== d.botId && ctx.message.message_thread_id != null) {
       d.store.upsertTopic({
         chat_id: chat, thread_id: ctx.message.message_thread_id, name: ctx.message.forum_topic_created.name,
         kind: 'manual', project_key: null, status: 'active', created_at: Date.now(), last_activity_at: Date.now(),
       })
-      if (ctx.from && isOwner(ctx.from.id)) void onManualTopic(d, chat, ctx.message.message_thread_id, ctx.message.forum_topic_created.name)
+      if (ctx.from && can(ctx.from.id, 'control')) void onManualTopic(d, chat, ctx.message.message_thread_id, ctx.message.forum_topic_created.name)
     }
     return next()
   })
   bot.on('message:forum_topic_closed', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+    if (d.isTopicsChat(chat) && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status !== 'archived') {
         const stuck = await archiveTopic(d, chat, thread, { alreadyClosed: true }).catch(() => [])
@@ -714,7 +732,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
   bot.on('message:forum_topic_reopened', async (ctx, next) => {
     const chat = String(ctx.chat.id)
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && thread != null && ctx.from?.id !== d.botId && ctx.from && isOwner(ctx.from.id)) {
+    if (d.isTopicsChat(chat) && thread != null && ctx.from?.id !== d.botId && ctx.from && can(ctx.from.id, 'control')) {
       const t = d.store.topic(chat, thread)
       if (t && t.status === 'archived') await unarchiveTopic(d, chat, thread, { launch: settings.topicProjects !== 'off', alreadyOpen: true }).catch(err => d.log(`unarchive failed: ${err}`))
     }
@@ -724,7 +742,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     const chat = String(ctx.chat.id)
     const name = ctx.message.forum_topic_edited.name
     const thread = ctx.message.message_thread_id
-    if (chat === topicsChat() && name && thread != null && ctx.from?.id !== d.botId) {
+    if (d.isTopicsChat(chat) && name && thread != null && ctx.from?.id !== d.botId) {
       const t = d.store.topic(chat, thread)
       if (t) d.store.upsertTopic({ ...t, name, last_activity_at: Date.now() })
     }
@@ -741,11 +759,13 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
   if (!m) return false
   const [, ns, action, arg, arg2] = m
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(tr('Нет доступа.'))
     return true
   }
-  const chat = d.topicsChatId
+  // Pressed in a topics group (main or extra): that group; from the DM or General: the main one.
+  const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')
+  const chat = d.isTopicsChat(pressedIn) ? pressedIn : d.topicsChatId
   const edit = (text: string) => ctx.editMessageText(text).catch(() => {})
 
   try {
@@ -831,9 +851,12 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
       } else if (action === 'ok') {
         const { problems, title } = await checkGroup(d, c.chatId)
         if (problems.length) { await sendConnectCard(d, arg, c); return true }
-        await connectGroup(d, c.chatId)
+        const extra = !!d.topicsChatId && d.topicsChatId !== c.chatId
+        await connectGroup(d, c.chatId, title)
         d.store.set(`connect:${arg}`, null)
-        await edit(tr('✅ Группа «{title}» подключена. Топики проектов: {n}.', { title, n: d.activeSessions().filter(s => s.topic).length }))
+        await edit(extra
+          ? tr('✅ Группа «{title}» подключена как дополнительная группа топиков. Укажите её папки проектов: /topics → «🗂 Группы топиков»; топики, созданные в ней, сразу станут её проектами.', { title })
+          : tr('✅ Группа «{title}» подключена. Топики проектов: {n}.', { title, n: d.activeSessions().filter(s => s.topic).length }))
       }
     } else if (ns === 'fg') {
       if (action === 'ok') {

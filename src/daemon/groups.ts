@@ -22,7 +22,7 @@ import { clip, escapeHtml } from '../format.ts'
 import { t } from '../i18n/index.ts'
 import { MAIN_PENDING_KEY, type Daemon } from './daemon.ts'
 import { inChat } from './lang.ts'
-import { endSession, launchOnce, manualCmd, screenKb, sessionName, slugify } from './launch.ts'
+import { endSession, idProjectDir, launchOnce, manualCmd, screenKb, sessionName } from './launch.ts'
 import { show, type Screen } from './menu.ts'
 import { button } from './stream.ts'
 
@@ -65,7 +65,7 @@ export const groupPendingKey = (chatId: string) => `group:${chatId}`
 
 /** Is this a group that can be a project: allowed in access.json, not the topics group. */
 export function isProjectGroup(d: Daemon, chatId: string): boolean {
-  return chatId.startsWith('-') && chatId !== d.topicsChatId && !!loadAccess().groups[chatId]
+  return chatId.startsWith('-') && !d.isTopicsChat(chatId) && !!loadAccess().groups[chatId]
 }
 
 /** Folders in PROJECTS_DIR, newest first — for «📂 Выбрать проект». */
@@ -82,8 +82,9 @@ function projectDirs(): string[] {
   }
 }
 
-function newDir(title: string): string {
-  return join(settings.projectsDir, slugify(title) || 'group')
+/** A group's new project folder: by its id (see idProjectDir), not its title. */
+function newDir(chatId: string): string {
+  return idProjectDir(chatId)
 }
 
 /** The owner's card: what is this group? */
@@ -95,7 +96,7 @@ function bindScreen(d: Daemon, chatId: string, title: string): Screen {
   return {
     text: lines.join('\n'),
     kb: new InlineKeyboard([
-      [button(clip(t('📁 Новый: {dir}', { dir: newDir(title).replace(process.env.HOME ?? '\0', '~') }), 40), `gp:new:${chatId}`, 'success')],
+      [button(clip(t('📁 Новый: {dir}', { dir: newDir(chatId).replace(process.env.HOME ?? '\0', '~') }), 40), `gp:new:${chatId}`, 'success')],
       [button(t('📂 Выбрать проект'), `gp:ask:${chatId}`)],
       [button(t('🚫 Не проект (главная сессия)'), `gp:none:${chatId}`)],
     ]),
@@ -184,7 +185,7 @@ export function registerGroupHandlers(d: Daemon, bot: Bot): void {
     const chatId = String(upd.chat.id)
     const added = ['member', 'administrator'].includes(upd.new_chat_member.status) && ['left', 'kicked'].includes(upd.old_chat_member.status)
     const o = owner()
-    if (added && o && chatId.startsWith('-') && chatId !== d.topicsChatId && !groupBinding(d, chatId)) {
+    if (added && o && chatId.startsWith('-') && !d.isTopicsChat(chatId) && !groupBinding(d, chatId)) {
       const title = ('title' in upd.chat ? upd.chat.title : undefined) ?? chatId
       if (isProjectGroup(d, chatId)) await askOwnerAboutGroup(d, chatId, title)
       else await inChat(d, o, undefined, () => d.bot.api.sendMessage(o, t('👥 Бота добавили в группу «{title}» (<code>{chat}</code>). Она не разрешена — бот там молчит. Разрешить можно в терминале:', { title: escapeHtml(title), chat: chatId }) + `\n<code>/telegram-bewitched:access group add ${chatId}</code>`, { parse_mode: 'HTML' })).catch(() => {})
@@ -221,7 +222,7 @@ export async function handleGroupCallback(d: Daemon, ctx: Context, data: string)
       return true
     case 'new':
     case 'pick': {
-      const dir = action === 'new' ? newDir(title) : projectDirs()[Number(n)]
+      const dir = action === 'new' ? newDir(chatId) : projectDirs()[Number(n)]
       if (!dir) { await answer(t('Папка не найдена.')); return true }
       const other = groupForProject(d, dir)
       if (other && other.chatId !== chatId) { await answer(t('Этот проект уже привязан к группе «{title}».', { title: other.title })); return true }

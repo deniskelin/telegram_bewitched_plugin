@@ -12,7 +12,7 @@
  */
 
 import { InlineKeyboard, type Context } from 'grammy'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml, maskSecrets } from '../format.ts'
 import { isMessageNotModified } from '../tg.ts'
@@ -150,7 +150,7 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
   const m = /^tx:([pw]\d+)(?::(\w))?$/.exec(data)
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(t('Нет доступа.'))
     return true
   }

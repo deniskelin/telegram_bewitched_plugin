@@ -6,7 +6,7 @@
  */
 
 import { InlineKeyboard, InputFile, type Bot, type Context } from 'grammy'
-import { isOwner, owner } from '../access.ts'
+import { can, owner } from '../access.ts'
 import { escapeHtml } from '../format.ts'
 import { columnChartSvg, svgToPng, type Column } from './chart.ts'
 import type { Daemon } from './daemon.ts'
@@ -240,7 +240,7 @@ export function reportsScreen(d: Daemon): { text: string; kb: InlineKeyboard } {
 
 export function registerReportCommands(d: Daemon, bot: Bot): void {
   bot.command('reports', async ctx => {
-    if (ctx.chat?.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
     const { text, kb } = reportsScreen(d)
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb })
   })
@@ -249,7 +249,7 @@ export function registerReportCommands(d: Daemon, bot: Bot): void {
 export async function handleReportCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^rp:(t|now):(day|week|month)$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
     return true
   }

@@ -10,7 +10,7 @@ import { execFile } from 'child_process'
 import { existsSync, mkdirSync, readdirSync } from 'fs'
 import { homedir } from 'os'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
-import { isOwner, owner } from '../access.ts'
+import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
@@ -305,7 +305,8 @@ export function startIdleCloser(d: Daemon): void {
 export async function startProject(d: Daemon, dir: string, where: { chatId: string; threadId?: number }, bindThread?: number): Promise<void> {
   const created = !existsSync(dir)
   mkdirSync(dir, { recursive: true })
-  const chat = d.topicsChatId
+  // Binding a topic: the group it lives in (main or extra).
+  const chat = bindThread != null ? where.chatId : d.topicsChatId
   if (chat && bindThread != null) {
     const t = d.store.topic(chat, bindThread)
     d.store.upsertTopic({
@@ -335,12 +336,22 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   ].join('\n'), screenKb(win))
 }
 
-/** Owner created a topic by hand → offer/start a project named after it. */
+/**
+ * The folder of a project made from a topic or a group: named by ids, not by
+ * the (changeable, possibly repeated) title — PROJECTS_DIR/<group id>-<topic
+ * id>, or PROJECTS_DIR/<group id> for an ordinary group. The minus of
+ * Telegram's group ids is left out: a name starting with "-" reads as a flag.
+ */
+export function idProjectDir(chatId: string, threadId?: number): string {
+  const g = chatId.replace(/^-/, '')
+  return join(settings.projectsDir, threadId != null ? `${g}-${threadId}` : g)
+}
+
+/** Owner created a topic by hand → offer/start a project for it (folder by ids). */
 export async function onManualTopic(d: Daemon, chatId: string, threadId: number, name: string): Promise<void> {
   const mode = settings.topicProjects
   if (mode === 'off') return
-  const dir = projectPath(name)
-  if (!dir) return
+  const dir = idProjectDir(chatId, threadId)
   const other = d.store.topicForProject(chatId, dir)
   if (other && other.thread_id !== threadId && other.status === 'active') {
     await say(d, chatId, threadId, tr('📁 Проект <code>{v}</code> уже привязан к топику «{v2}». Этот топик оставляю без проекта.', { v: escapeHtml(dir), v2: escapeHtml(other.name) }))
@@ -359,19 +370,21 @@ export async function onManualTopic(d: Daemon, chatId: string, threadId: number,
 export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^np:(ok|no):(\d+)$/.exec(data)
   if (!m) return false
-  if (!ctx.from || !isOwner(ctx.from.id)) {
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
     return true
   }
   await ctx.answerCallbackQuery().catch(() => {})
-  const chat = d.topicsChatId
+  // The offer is posted in the topic itself: its group (main or extra).
+  const pressedIn = String(ctx.callbackQuery?.message?.chat.id ?? '')
+  const chat = d.isTopicsChat(pressedIn) ? pressedIn : d.topicsChatId
   const thread = Number(m[2])
   if (m[1] === 'no' || !chat) {
     await ctx.editMessageText(tr('Ок, без проекта.')).catch(() => {})
     return true
   }
   const t = d.store.topic(chat, thread)
-  const dir = t ? projectPath(t.name) : null
+  const dir = t ? idProjectDir(chat, thread) : null
   await ctx.editMessageReplyMarkup().catch(() => {})
   if (dir) await startProject(d, dir, { chatId: chat, threadId: thread }, thread)
   return true
@@ -379,7 +392,7 @@ export async function handleLaunchCallback(d: Daemon, ctx: Context, data: string
 
 export function registerLaunchCommands(d: Daemon, bot: Bot): void {
   bot.command('new_session', async ctx => {
-    if (!ctx.from || !isOwner(ctx.from.id)) return
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
     const inControl = ctx.chat.type === 'private' || (String(ctx.chat.id) === d.topicsChatId && !ctx.message?.is_topic_message)
     if (!inControl) return
     const dir = projectPath(ctx.match ?? '')

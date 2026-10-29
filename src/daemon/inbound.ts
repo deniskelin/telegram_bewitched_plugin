@@ -9,7 +9,7 @@ import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
 import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
 import { join } from 'path'
-import { dmCommandGate, gate, isOwner, loadAccess, owner, prefsFor } from '../access.ts'
+import { can, dmCommandGate, gate, loadAccess, owner, prefsFor, roleOf } from '../access.ts'
 import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
 import { toWav16k } from '../voice/audio.ts'
@@ -21,6 +21,7 @@ import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
+import { handleTokensCallback } from './outoftokens.ts'
 import { digestReport, handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
 import { handleSessionMenu } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
@@ -93,7 +94,7 @@ type Target =
 function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const main = d.mainSession()
   const { chatId, threadId } = chat
-  if (chatId === d.topicsChatId && threadId != null) {
+  if (d.isTopicsChat(chatId) && threadId != null) {
     const t = d.store.topic(chatId, threadId)
     if (t?.status === 'archived') return { kind: 'archived', projectKey: t.project_key, threadId }
     const s = d.sessionForThread(chatId, threadId)
@@ -120,7 +121,7 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
     }
   }
   // DMs and General: the author's own session; without user sessions, the main one.
-  if (settings.userSessions && (chat.isPrivate || chatId === d.topicsChatId)) return userTarget(d, fromId)
+  if (settings.userSessions && (chat.isPrivate || d.isTopicsChat(chatId))) return userTarget(d, fromId)
   return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
 }
 
@@ -231,7 +232,7 @@ async function handleInbound(
 
   // Permission reply typed as text ("yes abcde").
   const permMatch = PERMISSION_REPLY_RE.exec(text)
-  if (permMatch) {
+  if (permMatch && can(from.id, 'permissions')) {
     const request_id = permMatch[2]!.toLowerCase()
     const behavior = permMatch[1]!.toLowerCase().startsWith('y') ? 'allow' : 'deny'
     resolvePermission(d, request_id, behavior)
@@ -242,7 +243,7 @@ async function handleInbound(
   const target = resolveTarget(d, chat, String(from.id))
   const reply = (t: string, kb?: InlineKeyboard) => ctx.reply(t, { message_thread_id: threadId, reply_markup: kb }).catch(() => {})
   // Unknown commands in General are not for Claude.
-  if (chatId === d.topicsChatId && threadId == null && text.startsWith('/')) return
+  if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
     await reply(tr('Этот топик не привязан к проекту, а главная сессия не запущена.'))
     return
@@ -264,7 +265,13 @@ async function handleInbound(
     if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: '✍' }]).catch(() => {})
     const r = await speechToText(d, attachment)
     if ('error' in r) sttMeta = { stt_error: safeMeta(r.error) ?? 'error' }
-    else {
+    else if (!r.text.trim() && !caption) {
+      // Nothing was said (a muted mic, a pocket recording): tell the sender, don't bother the session.
+      d.store.updateMessageText(chatId, msg.message_id, tr('🎤 (в записи нет речи)'))
+      await ctx.reply(tr('🎤 В записи нет речи — похоже, микрофон был выключен. Запишите ещё раз или напишите текстом.'), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+      if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, []).catch(() => {})
+      return
+    } else {
       text = caption ? `${caption}\n\n🎤 ${r.text}` : `🎤 ${r.text}`
       d.store.updateMessageText(chatId, msg.message_id, text)
       sttMeta = {
@@ -273,7 +280,7 @@ async function handleInbound(
         ...(r.language ? { voice_language: r.language } : {}),
       }
       if (prefsFor(chatId, threadId).transcript) {
-        void ctx.reply(`🎤 ${r.text || tr('(тишина)')}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
+        void ctx.reply(`🎤 ${r.text || tr('(в записи нет речи)')}`.slice(0, 4000), { reply_parameters: { message_id: msg.message_id }, message_thread_id: threadId }).catch(() => {})
       }
     }
     if (access.ackReaction) void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
@@ -284,6 +291,8 @@ async function handleInbound(
     message_id: String(msg.message_id),
     user: safeMeta(from.username ?? String(from.id)) ?? String(from.id),
     user_id: String(from.id),
+    // FR-4: who is writing — the model weighs instructions by it.
+    user_role: roleOf(String(from.id)) ?? 'guest',
     ts: new Date(msg.date * 1000).toISOString(),
     ...(threadId != null ? { thread_id: String(threadId) } : {}),
     ...(threadId != null && d.store.topic(chatId, threadId) ? { topic_name: safeMeta(d.store.topic(chatId, threadId)!.name) ?? '' } : {}),
@@ -395,13 +404,14 @@ export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: 
   const text = `🔐 ${s.projectName}: ${p.tool_name}`
   const kb = permissionKb(p.request_id, p.tool_name, true)
   const mode = settings.permissionsTo
-  const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict()
+  const toTopic = (mode === 'topic' || mode === 'both') && s.topic && d.topicsGroupIsStrict(s.topic.chatId)
   const toDm = mode === 'dm' || mode === 'both' || !toTopic
   if (toTopic) void d.bot.api.sendMessage(s.topic!.chatId, text, { message_thread_id: s.topic!.threadId, reply_markup: kb }).catch(err => d.log(`permission → topic failed: ${err}`))
   // A user's session asks only that user.
   const user = d.userIdOf(s)
   // A group's project asks only the owner: group members don't see or answer it.
-  const dmTo = user ? [user] : s.group ? [owner()].filter((x): x is string => !!x) : loadAccess().allowFrom
+  // FR-4: only the owner approves permissions.
+  const dmTo = [owner()].filter((x): x is string => !!x)
   if (toDm) for (const chat of dmTo) void d.bot.api.sendMessage(chat, text, { reply_markup: kb }).catch(err => d.log(`permission → ${chat} failed: ${err}`))
 }
 
@@ -414,7 +424,7 @@ function permissionKb(requestId: string, tool: string, more: boolean): InlineKey
 async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const m = /^perm:(allow|deny|more|always|proj):([a-km-z]{5})$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+  if (!can(ctx.from!.id, 'permissions')) return void ctx.answerCallbackQuery({ text: tr('Разрешения одобряет только владелец.') }).catch(() => {})
   const [, behavior, request_id] = m
   if (behavior === 'more') {
     const p = d.permissions.get(request_id)
@@ -462,7 +472,7 @@ export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
 
 async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const id = data.slice('stop:'.length)
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+  if (!can(ctx.from!.id, 'stop')) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
   if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
   const r = stopSession(d, s)
@@ -506,7 +516,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   bot.command('help', async ctx => {
     if (ctx.chat.type === 'private' && !dmCommandGate(ctx)) return
-    if (ctx.chat.type !== 'private' && !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' && !can(ctx.from!.id, 'write')) return
     const { text, kb } = helpScreen()
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined })
   })
@@ -534,12 +544,12 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   // The subscription is the owner's, and the breakdown shows everyone's sessions.
   bot.command('usage', async ctx => {
-    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' || !can(ctx.from!.id, 'control')) return
     await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
   })
 
   bot.command('digest', async ctx => {
-    if (ctx.chat.type !== 'private' || !isOwner(ctx.from!.id)) return
+    if (ctx.chat.type !== 'private' || !can(ctx.from!.id, 'control')) return
     await ctx.reply(await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true } })
   })
 
@@ -552,6 +562,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleWatchdogCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return
+    if (await handleTokensCallback(d, ctx, data)) return
     if (await handleReminderCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
@@ -572,7 +583,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     const stopped = (ctx.update as { stopped_message_generation?: { chat: { id: number }; draft_id: number } }).stopped_message_generation
     if (!stopped) return next()
     const chatId = String(stopped.chat.id)
-    if (!isOwner(chatId)) return
+    if (!can(chatId, 'stop')) return
     const s = d.activeSessions().find(x => x.lastChat?.chatId === chatId && x.status === 'working')
     if (s) stopSession(d, s)
   })

@@ -6,7 +6,7 @@
 
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
-import { isOwner } from '../access.ts'
+import { can } from '../access.ts'
 import type { QuestionRow } from '../db.ts'
 import { clip, safeMeta } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
@@ -129,7 +129,7 @@ function deliverAnswer(d: Daemon, q: QuestionRow, chosen: number[], ctx: Context
 export async function handleQuestionCallback(d: Daemon, ctx: Context, data: string): Promise<void> {
   const m = /^q:([0-9a-f]{8}):(\d+|done)$/.exec(data)
   if (!m) return void ctx.answerCallbackQuery().catch(() => {})
-  if (!isOwner(ctx.from!.id)) return void ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
+  if (!can(ctx.from!.id, 'answer')) return void ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {})
   const q = d.store.question(m[1])
   if (!q || q.closed) return void ctx.answerCallbackQuery({ text: t('На этот вопрос уже ответили.') }).catch(() => {})
   const opts = JSON.parse(q.options) as Option[]
