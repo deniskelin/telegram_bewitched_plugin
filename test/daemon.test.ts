@@ -1775,6 +1775,14 @@ describe('journal (JOURNAL_CHAT_ID)', () => {
       await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('➕ Бота добавили в группу «Чужая»'))
       tg.push(upd('member', 'kicked'))
       await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '-5300' && String(c.body.text).startsWith('➖ Бота исключили из группы «Чужая»'))
+
+      // Topics switched on: the group becomes a supergroup with a new id, the journal follows.
+      tg.push({ message: { message_id: 5, date: 0, chat: { id: -5300, type: 'group', title: 'Журнал' }, from: { id: 111, is_bot: false, first_name: 'Owner' }, migrate_to_chat_id: -1005300 } })
+      await Bun.sleep(200)
+      ;(d as unknown as { lastWarn: number }).lastWarn = 0
+      warnOwner('⚠️ после переезда')
+      const moved = await tg.waitFor('sendMessage', c => c.body.text === '⚠️ после переезда')
+      expect(String(moved.body.chat_id)).toBe('-1005300')
     } finally {
       delete process.env.JOURNAL_CHAT_ID
     }
