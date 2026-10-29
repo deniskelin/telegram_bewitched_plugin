@@ -181,7 +181,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 
 - **A user session starts by itself.** A user's first message → the daemon creates `~/user/<id>`, starts Claude in a new tmux window (`TMUX_SESSION`, with `--continue` if there were conversations already); the message waits in the queue and arrives after the session connects.
 - **A project topic without a session** (`TOPIC_NO_SESSION=launch`): a message starts the project session. If the start fails, the bot posts a command for a manual start and closes the topic until the session connects.
-- **Watchdog.** A session went away by itself (not archive, not timeout) → a minute later the bot writes «⚠️ Session … has stopped» to its chat, with restart commands and a «🚀 Start» button. A project topic is closed until the session reconnects.
+- **Watchdog.** A session went away by itself (not archive, not timeout) → a minute later the owner gets «⚠️ Session … has stopped» in DM, with restart commands and a «🚀 Start» button. The project topic gets the notice without commands or buttons and is closed until the session reconnects; a member whose own session stopped gets a «🙋 Ask for a restart» button, which forwards the request to the owner.
 - **Closing idle sessions:** `USER_IDLE_MIN` and `PROJECT_IDLE_MIN`, default `0` — never. An idle session spends no tokens, only memory.
 
 ### What you do by hand

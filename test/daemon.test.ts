@@ -1751,6 +1751,26 @@ describe('session types', () => {
     expect(u.msgs.some(x => x.t === 'inbound' && (x as Inbound).content === 'я второй пользователь')).toBe(false)
   })
 
+  test('a member\'s stopped session: no commands for them, 🙋 asks the owner, who gets the commands and 🚀', async () => {
+    process.env.WATCHDOG_GRACE_SEC = '0'
+    const m = new FakeClient()
+    await m.connect({ cwd: `${usersDir}/333`, projectRoot: `${usersDir}/333`, claudePid: 4444 })
+    m.close()
+    const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && String(c.body.text).startsWith('⚠️ Ваша сессия остановилась'))
+    expect(String(mine.body.text)).not.toContain('<pre>')
+    expect(JSON.stringify(mine.body.reply_markup)).not.toContain('wd:run')
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('остановилась') && String(c.body.text).includes('claude-333'))
+    expect(JSON.stringify(own.body.reply_markup)).toContain('wd:run')
+    const id = /wd:ask:([0-9a-f]+)/.exec(JSON.stringify(mine.body.reply_markup))![1]
+    tg.push(callbackQuery(`wd:run:${id}`, { from: 333, chat: 333 }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Нет доступа.')
+    tg.push(callbackQuery(`wd:ask:${id}`, { from: 333, chat: 333 }))
+    const ask = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).startsWith('🙋 '))
+    expect(String(ask.body.text)).toContain('просит перезапустить')
+    expect(JSON.stringify(ask.body.reply_markup)).toContain(`wd:run:${id}`)
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Запрос на перезапуск отправлен'))
+  })
+
   test('permission requests of a user session go only to that user', async () => {
     u.sock.write(encode({ t: 'perm_req', request_id: 'uvwxy', tool_name: 'Write', description: 'write', input_preview: '{}' }))
     await tg.waitFor('sendMessage', c => c.body.text === '🔐 111: Write' && String(c.body.chat_id) === '111')
@@ -1772,7 +1792,10 @@ describe('session types', () => {
     d.launchSession = async () => { throw new Error('no tmux') }
     tg.push(textMessage({ chat: Number(group), text: 'ещё раз', thread }))
     const failed = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта') && c.body.message_thread_id === thread)
-    expect(String(failed.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-other</pre>`)
+    // The topic is seen by everyone: the command goes to the owner's DM only.
+    expect(String(failed.body.text)).not.toContain('<pre>')
+    const cmd = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта <code>/tmp/other</code>'))
+    expect(String(cmd.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-other</pre>`)
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     tg.push(textMessage({ chat: Number(group), text: 'и ещё', thread }))
@@ -1791,7 +1814,10 @@ describe('session types', () => {
     process.env.WATCHDOG_GRACE_SEC = '0'
     const closes = tg.callsOf('closeForumTopic').length
     p.close()
-    const notice = await tg.waitFor('sendMessage', c => String(c.body.text).includes('остановилась') && c.body.message_thread_id === thread)
+    const inTopic = await tg.waitFor('sendMessage', c => String(c.body.text).includes('остановилась') && c.body.message_thread_id === thread)
+    expect(String(inTopic.body.text)).not.toContain(settings.launchCmd)
+    expect(inTopic.body.reply_markup).toBeUndefined()
+    const notice = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('📂 other') && String(c.body.text).includes('остановилась'))
     expect(String(notice.body.text)).toContain(`${settings.launchCmd} -n claude-other --continue`)
     await tg.waitFor('closeForumTopic', () => tg.callsOf('closeForumTopic').length > closes)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')

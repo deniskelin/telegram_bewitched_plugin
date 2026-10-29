@@ -244,7 +244,9 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
     return
   }
   if (!r.ok) {
-    await say(d, where.chatId, where.threadId, tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
+    await say(d, where.chatId, where.threadId, o === userId
+      ? tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) })
+      : tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено, владелец бота получил уведомление.', { v: escapeHtml(r.error) }))
     if (o && o !== userId) await say(d, o, undefined, tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
     return
   }
@@ -273,8 +275,11 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
     await say(d, chatId, threadId, tr('🚀 Запускаю сессию проекта в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(r.window), v2: confirmHint(r.window) }), screenKb(r.window))
     return
   }
+  // The topic is seen by everyone: the error there, the command only in the owner's DM.
   const dir = projectKey.replace(/#.*$/, '')
-  await say(d, chatId, threadId, tr('❌ Не удалось запустить сессию проекта: {v}\nСообщение сохранено. Запустите вручную:{v2}Топик закрыт, пока сессия не подключится.', { v: escapeHtml(r.error), v2: manualCmd(dir, { name: sessionName(d, dir) }) }))
+  await say(d, chatId, threadId, tr('❌ Не удалось запустить сессию проекта: {v}\nСообщение сохранено. Топик закрыт, пока сессия не подключится.', { v: escapeHtml(r.error) }))
+  const o = owner()
+  if (o) await say(d, o, undefined, tr('❌ Не удалось запустить сессию проекта <code>{v}</code>: {v2}\nЗапустить вручную:{v3}', { v: escapeHtml(dir), v2: escapeHtml(r.error), v3: manualCmd(dir, { name: sessionName(d, dir) }) }))
   d.store.setTopicStatus(chatId, threadId, 'waiting')
   await d.bot.api.closeForumTopic(chatId, threadId).catch(err => d.log(`closeForumTopic failed: ${err}`))
 }

@@ -343,7 +343,9 @@ async function handleInbound(
   }
   if (target.kind === 'waiting') {
     d.store.addPending(target.projectKey, text, meta)
-    await reply(tr('⏳ Сессия проекта не подключена — сообщение в очереди.'), new InlineKeyboard([[button(tr('🚀 Запустить'), `wd:topic:${threadId}`, 'success')]]))
+    // 🚀 only for whoever may press it: a member would get «Нет доступа».
+    const run = ctx.from && can(ctx.from.id, 'control') ? new InlineKeyboard([[button(tr('🚀 Запустить'), `wd:topic:${threadId}`, 'success')]]) : undefined
+    await reply(tr('⏳ Сессия проекта не подключена — сообщение в очереди.'), run)
     return
   }
   // The project session will see what the main session answered for it.
