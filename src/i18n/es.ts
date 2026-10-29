@@ -641,7 +641,6 @@ const dict: Dict = {
   "ничего": "nada",
   "🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>": "🧠 <b>Por modelo</b>, {period}\n<blockquote>{v}</blockquote>",
   "🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>": "🗂 <b>Por sesión</b>, {period}\n<blockquote expandable>{v}</blockquote>",
-  "<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>": "<i>🔔 — recordar el restablecimiento de la ventana, 🔕 — lo mismo sin sonido.</i>",
   "👥 Группы": "👥 Grupos",
   "Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы": "Un grupo normal (sin temas) también puede ser un proyecto: permítelo con access y el bot te enviará una ficha — /menu → 👥 Grupos",
   "Меню: сессии, группы, статистика, люди, настройки": "Menú: sesiones, grupos, estadísticas, personas, ajustes",
@@ -713,8 +712,6 @@ const dict: Dict = {
   "✖️ Удалить": "✖️ Eliminar",
   "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ Una nueva ventana de 5 horas empezó justo tras el restablecimiento; el siguiente será hacia las {time}.",
   "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ No se pudo iniciar la ventana tras el restablecimiento: {err}",
-  "⚡ Окно сразу после сброса: вкл": "⚡ Ventana tras el reinicio: sí",
-  "⚡ Окно сразу после сброса: выкл": "⚡ Ventana tras el reinicio: no",
   "🔄 Обновлено": "🔄 Actualizado",
   "⚡ Окно будет запускаться сразу после сброса": "⚡ La ventana empezará justo tras cada restablecimiento",
   "Окно запускается как обычно": "La ventana empieza como siempre",
@@ -737,6 +734,11 @@ const dict: Dict = {
   "Сервер Anthropic ответил ошибкой или перегружен — повторите сообщение чуть позже.": "El servidor de Anthropic devolvió un error o está saturado; reenvía el mensaje un poco más tarde.",
   "Ответ упёрся в максимальную длину — попросите продолжить.": "La respuesta alcanzó la longitud máxima; pide que continúe.",
   "Запрос отклонён API (слишком большой контекст или вложение?) — попробуйте /compact.": "La API rechazó la petición (¿contexto o adjunto demasiado grande?); prueba /compact.",
+  "<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>": "<i>Recordar el restablecimiento de la ventana: 🔔 — con sonido, 🔕 — sin sonido.</i>",
+  "{v}: выкл": "{v}: no",
+  "⚡ Окно: обычно": "⚡ Ventana: normal",
+  "⚡ Сразу после сброса": "⚡ Tras el reinicio",
+  "Без напоминания о сбросе": "Sin aviso de restablecimiento",
 }
 
 export default dict

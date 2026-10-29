@@ -641,7 +641,6 @@ const dict: Dict = {
   "ничего": "rien",
   "🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>": "🧠 <b>Par modèle</b>, {period}\n<blockquote>{v}</blockquote>",
   "🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>": "🗂 <b>Par session</b>, {period}\n<blockquote expandable>{v}</blockquote>",
-  "<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>": "<i>🔔 — rappeler la réinitialisation de la fenêtre, 🔕 — pareil, sans son.</i>",
   "👥 Группы": "👥 Groupes",
   "Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы": "Un groupe ordinaire (sans sujets) peut aussi être un projet : autorisez-le via access et le bot vous enverra une fiche — /menu → 👥 Groupes",
   "Меню: сессии, группы, статистика, люди, настройки": "Menu : sessions, groupes, statistiques, personnes, réglages",
@@ -713,8 +712,6 @@ const dict: Dict = {
   "✖️ Удалить": "✖️ Supprimer",
   "⚡ Новое окно «5 часов» запущено сразу после сброса — следующий сброс около {time}.": "⚡ Une nouvelle fenêtre de 5 heures a démarré juste après la réinitialisation — la prochaine vers {time}.",
   "⚠️ Не удалось запустить окно после сброса: {err}": "⚠️ Impossible de démarrer la fenêtre après la réinitialisation : {err}",
-  "⚡ Окно сразу после сброса: вкл": "⚡ Fenêtre dès la réinit. : oui",
-  "⚡ Окно сразу после сброса: выкл": "⚡ Fenêtre dès la réinit. : non",
   "🔄 Обновлено": "🔄 Actualisé",
   "⚡ Окно будет запускаться сразу после сброса": "⚡ La fenêtre démarrera juste après chaque réinitialisation",
   "Окно запускается как обычно": "La fenêtre démarre comme d'habitude",
@@ -737,6 +734,11 @@ const dict: Dict = {
   "Сервер Anthropic ответил ошибкой или перегружен — повторите сообщение чуть позже.": "Le serveur Anthropic a renvoyé une erreur ou est surchargé — renvoyez le message un peu plus tard.",
   "Ответ упёрся в максимальную длину — попросите продолжить.": "La réponse a atteint la longueur maximale — demandez de continuer.",
   "Запрос отклонён API (слишком большой контекст или вложение?) — попробуйте /compact.": "L'API a refusé la requête (contexte ou pièce jointe trop gros ?) — essayez /compact.",
+  "<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>": "<i>Rappel de réinitialisation de la fenêtre : 🔔 — avec son, 🔕 — en silence.</i>",
+  "{v}: выкл": "{v} : non",
+  "⚡ Окно: обычно": "⚡ Fenêtre : normale",
+  "⚡ Сразу после сброса": "⚡ Dès la réinit.",
+  "Без напоминания о сбросе": "Pas de rappel de réinitialisation",
 }
 
 export default dict

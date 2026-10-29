@@ -418,7 +418,7 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
   const none = tr('ничего')
   out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
   out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
-  if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>🔔 — напомнить о сбросе окна, 🔕 — то же без звука.</i>'))
+  if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>'))
   out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
   return out.join('\n\n')
 }
@@ -569,24 +569,27 @@ async function fireResetNotice(d: Daemon, label: string, key: string): Promise<v
   if (!to) return
   // Asked for in /usage for this window (maybe silently): done now.
   const req = parseRequest(d.store.get(`limit_notify:${label}`))
-  const silent = req?.at === key.split('|')[1] && req.silent
-  if (req?.at === key.split('|')[1]) d.store.set(`limit_notify:${label}`, null)
+  const mine = req?.at === key.split('|')[1]
+  const silent = mine && req.silent
+  if (mine) d.store.set(`limit_notify:${label}`, null)
+  // «выкл» in /usage: no notice for this window.
   // The 10-minute check would otherwise announce the same reset again.
   d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
+  if (mine && req.off) return
   await d.bot.api.sendMessage(to, tr('✅ Токены обновились: лимит «{v}» сброшен, можно пользоваться.', { v: escapeHtml(tr(label)) }), { parse_mode: 'HTML', disable_notification: silent })
     .catch(err => d.log(`reset notice failed: ${err}`))
 }
 
-/** Stored as "<iso>" or "<iso>|silent". */
-function parseRequest(raw: string | null): { at: string; silent: boolean } | null {
+/** Stored as "<iso>", "<iso>|silent" or "<iso>|off". */
+function parseRequest(raw: string | null): { at: string; silent: boolean; off: boolean } | null {
   if (!raw) return null
   const [at, mode] = raw.split('|')
-  return { at, silent: mode === 'silent' }
+  return { at, silent: mode === 'silent', off: mode === 'off' }
 }
 
 /** "🔔 Напомнить о сбросе" / "🔕 Тихо" in /usage: remembered in the store, so a restart keeps it. */
-export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false): void {
-  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${silent ? '|silent' : ''}`)
+export function requestResetNotice(d: Daemon, label: string, resetsAt: Date, silent = false, off = false): void {
+  d.store.set(`limit_notify:${label}`, `${resetsAt.toISOString()}${off ? '|off' : silent ? '|silent' : ''}`)
   scheduleResetNotice(d, label, resetsAt)
 }
 
@@ -605,18 +608,20 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
   const rows: ReturnType<typeof button>[][] = [
     PERIODS.map(p => button(`${p === period ? '• ' : ''}${tr(PERIOD_BUTTON[p])}`, `us:p:${p}`, p === period ? 'primary' : undefined)),
   ]
-  // Short labels: a phone shows about 15 characters of a half-width button.
+  // One row per limit, like the periods: off / with sound / silent, the chosen one marked.
+  const seg = (on: boolean, text: string, data: string) => button(`${on ? '• ' : ''}${text}`, data, on ? 'primary' : undefined)
   for (const [i, it] of (l?.limits.items ?? []).entries()) {
     if (!it.resetsAt) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
-    const asked = req?.at === it.resetsAt.toISOString() ? req : null
+    const asked = req?.at === it.resetsAt.toISOString() && !req.off ? req : null
     rows.push([
-      button(`${asked && !asked.silent ? '✅' : '🔔'} ${tr(it.label)}`, `lr:${i}`),
-      button(`${asked?.silent ? '✅' : '🔕'} ${tr(it.label)}`, `lr:${i}:s`),
+      seg(!asked, tr('{v}: выкл', { v: tr(it.label) }), `lr:${i}:x`),
+      seg(!!asked && !asked.silent, '🔔', `lr:${i}`),
+      seg(!!asked?.silent, '🔕', `lr:${i}:s`),
     ])
   }
   const wOn = warmupOn(d)
-  rows.push([button(wOn ? tr('⚡ Окно сразу после сброса: вкл') : tr('⚡ Окно сразу после сброса: выкл'), `us:w:${wOn ? 'off' : 'on'}`, wOn ? 'primary' : undefined)])
+  rows.push([seg(!wOn, tr('⚡ Окно: обычно'), 'us:w:off'), seg(wOn, tr('⚡ Сразу после сброса'), 'us:w:on')])
   rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), 'us:r')])
   return new InlineKeyboard(rows)
 }
@@ -624,7 +629,7 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
 /** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections; us:r — refresh. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const p = /^us:(?:p:(h5|d|w|m)|r)$/.exec(data)
-  const m = /^lr:(\d+)(:s)?$/.exec(data)
+  const m = /^lr:(\d+)(?::(s|x))?$/.exec(data)
   const w = /^us:w:(on|off)$/.exec(data)
   const la = /^la:(r|x)(?::(\d+))?$/.exec(data)
   if (!m && !p && !w && !la) return false
@@ -671,9 +676,10 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
     await ctx.answerCallbackQuery({ text: tr('Данные о лимитах устарели — откройте /usage заново.') }).catch(() => {})
     return true
   }
-  const silent = !!m[2]
-  requestResetNotice(d, it.label, it.resetsAt, silent)
-  await ctx.answerCallbackQuery({ text: `${silent ? tr('🔕 Тихо напомню') : tr('🔔 Напомню')} ${fmtReset(it.resetsAt, Date.now(), false)}` }).catch(() => {})
+  const silent = m[2] === 's'
+  const off = m[2] === 'x'
+  requestResetNotice(d, it.label, it.resetsAt, silent, off)
+  await ctx.answerCallbackQuery({ text: off ? tr('Без напоминания о сбросе') : `${silent ? tr('🔕 Тихо напомню') : tr('🔔 Напомню')} ${fmtReset(it.resetsAt, Date.now(), false)}` }).catch(() => {})
   await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
   return true
 }
