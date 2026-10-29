@@ -25,7 +25,7 @@ import { limitsLine } from './usage.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
 import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
-import { onSessionStopped } from './watchdog.ts'
+import { onSessionBack, onSessionStopped } from './watchdog.ts'
 
 const ARCHIVE_PREFIX = '🗄 '
 
@@ -162,6 +162,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   if (s.passive) return
   d.launching.delete(s.projectKey)
   d.launching.delete(s.cwd)
+  onSessionBack(d, s.cwd)
   try {
     await ensureTopic(d, s)
   } catch (err) {

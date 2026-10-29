@@ -967,7 +967,7 @@ describe('invite', () => {
       tg.push(callbackQuery('inv:ok:555'))
       await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('✅ Ann добавлен'))
       expect(loadAccess().allowFrom).toContain('555')
-      expect(launches).toEqual([`${process.env.USERS_DIR}/555 claude-555`])
+      expect(launches).toEqual([`${process.env.USERS_DIR}/555 claude-user-555`])
       const inv = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))
       expect(String(inv.body.text)).toContain('https://t.me/testbot?start=hello')
       expect(String(inv.body.text)).toContain('https://t.me/+fakeInvite')
@@ -1006,7 +1006,7 @@ describe('allowlist watcher', () => {
       expect(newUsers(d)).toEqual(['777'])
       expect(newUsers(d)).toEqual([])
       await onUserAdded(d, '777')
-      expect(launches).toEqual([`${process.env.USERS_DIR}/777 claude-777`])
+      expect(launches).toEqual([`${process.env.USERS_DIR}/777 claude-user-777`])
       const note = tg.callsOf('sendMessage').find(c => String(c.body.text).startsWith('👥 <b>777</b> в списке доступа'))!
       expect(String(note.body.chat_id)).toBe('111')
       expect(JSON.stringify(note.body.reply_markup)).toContain('tx:w4')
@@ -1311,7 +1311,7 @@ describe('convenience', () => {
     const dir = join(settings.usersDir, '555')
     d.tmuxCapture = async t => (t === 'claude:9' ? 'WARNING: Loading development channels\n❯ 1. I am using this for local development\n  2. Exit' : null)
     await remindLaunch(d, dir, '9', true)
-    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно 9) ждёт подтверждения запуска'))
+    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно claude:9) ждёт подтверждения запуска'))
     expect(JSON.stringify(owner.body.reply_markup)).toContain('tx:w9:c')
     await tg.waitFor('sendMessage', c => c.body.chat_id === '555' && String(c.body.text).startsWith('⏳ Вашу сессию ещё подтверждают'))
     // The second reminder goes to the owner only; a gone window is not reported.
@@ -1731,7 +1731,7 @@ describe('session types', () => {
     const launchMsg = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
     expect(JSON.stringify(launchMsg.body.reply_markup)).toContain('tx:w7')
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
-    expect(calls.at(-1)!.o?.name).toBe('claude-111')
+    expect(calls.at(-1)!.o?.name).toBe('claude-user-111')
     u = new FakeClient()
     await u.connect({ cwd: `${usersDir}/111`, projectRoot: `${usersDir}/111`, claudePid: 1111 })
     const resume = await u.inbound(x => x.meta.event === 'session_resume')
@@ -1770,7 +1770,7 @@ describe('session types', () => {
     const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && String(c.body.text).startsWith('⚠️ Ваша сессия остановилась'))
     expect(String(mine.body.text)).not.toContain('<pre>')
     expect(JSON.stringify(mine.body.reply_markup)).not.toContain('wd:run')
-    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('остановилась') && String(c.body.text).includes('claude-333'))
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('остановилась') && String(c.body.text).includes('claude-user-333'))
     expect(JSON.stringify(own.body.reply_markup)).toContain('wd:run')
     const id = /wd:ask:([0-9a-f]+)/.exec(JSON.stringify(mine.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { from: 333, chat: 333 }))
@@ -1780,6 +1780,31 @@ describe('session types', () => {
     expect(String(ask.body.text)).toContain('просит перезапустить')
     expect(JSON.stringify(ask.body.reply_markup)).toContain(`wd:run:${id}`)
     await tg.waitFor('editMessageText', c => String(c.body.text).includes('Запрос на перезапуск отправлен'))
+  })
+
+  test('old stopped notices are announced again the new way; they go when the session is back', async () => {
+    const { renotifyStopped } = await import('../src/daemon/watchdog.ts')
+    for (const k of d.store.keys('wd:')) d.store.set(k, null)
+    d.store.set('wd:0ldc0de1', JSON.stringify({ dir: `${usersDir}/333`, resume: null, name: '👤 333', session: 'claude-333' }))
+    d.store.set('wd:0ldc0de2', JSON.stringify({ dir: '/tmp/back', resume: null, name: '📂 back' }))
+    const b = new FakeClient()
+    await b.connect({ cwd: '/tmp/back', projectRoot: '/tmp/back', claudePid: 5555 })
+    await renotifyStopped(d)
+    expect(d.store.get('wd:0ldc0de2')).toBeNull()
+    const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:ask:0ldc0de1'))
+    expect(String(mine.body.text)).not.toContain('<pre>')
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && JSON.stringify(c.body.reply_markup ?? '').includes('wd:run:0ldc0de1'))
+    expect(String(own.body.text)).toContain('-n claude-user-333')
+    expect(JSON.parse(d.store.get('wd:0ldc0de1')!).v).toBe(2)
+    await renotifyStopped(d)
+    expect(tg.callsOf('sendMessage').filter(c => JSON.stringify(c.body.reply_markup ?? '').includes('0ldc0de1')).length).toBe(2)
+
+    const deletes = tg.callsOf('deleteMessage').length
+    const m = new FakeClient()
+    await m.connect({ cwd: `${usersDir}/333`, projectRoot: `${usersDir}/333`, claudePid: 6666 })
+    await tg.waitFor('deleteMessage', () => tg.callsOf('deleteMessage').length >= deletes + 2)
+    expect(d.store.get('wd:0ldc0de1')).toBeNull()
+    m.close(); b.close()
   })
 
   test('permission requests of a user session go only to that user', async () => {
@@ -1796,7 +1821,7 @@ describe('session types', () => {
     d.launching.clear()
     tg.push(textMessage({ chat: Number(group), text: 'запустись', thread }))
     await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🚀 Запускаю сессию проекта') && c.body.message_thread_id === thread)
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { name: 'claude-other' } })
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { name: 'claude-project-other' } })
 
     d.launching.clear()
     const ok = d.launchSession
@@ -1806,7 +1831,7 @@ describe('session types', () => {
     // The topic is seen by everyone: the command goes to the owner's DM only.
     expect(String(failed.body.text)).not.toContain('<pre>')
     const cmd = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).startsWith('❌ Не удалось запустить сессию проекта <code>/tmp/other</code>'))
-    expect(String(cmd.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-other</pre>`)
+    expect(String(cmd.body.text)).toContain(`cd /tmp/other &amp;&amp; ${settings.launchCmd} -n claude-project-other</pre>`)
     await tg.waitFor('closeForumTopic', c => c.body.message_thread_id === thread)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     tg.push(textMessage({ chat: Number(group), text: 'и ещё', thread }))
@@ -1829,13 +1854,13 @@ describe('session types', () => {
     expect(String(inTopic.body.text)).not.toContain(settings.launchCmd)
     expect(inTopic.body.reply_markup).toBeUndefined()
     const notice = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('📂 other') && String(c.body.text).includes('остановилась'))
-    expect(String(notice.body.text)).toContain(`${settings.launchCmd} -n claude-other --continue`)
+    expect(String(notice.body.text)).toContain(`${settings.launchCmd} -n claude-project-other --continue`)
     await tg.waitFor('closeForumTopic', () => tg.callsOf('closeForumTopic').length > closes)
     expect(d.store.topic(group, thread)?.status).toBe('waiting')
     const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-other' } })
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-project-other' } })
   })
 
   test('a stopped user session is reported in its DM; a planned end is not', async () => {

@@ -22,7 +22,7 @@ import { clip, escapeHtml } from '../format.ts'
 import { t } from '../i18n/index.ts'
 import { MAIN_PENDING_KEY, type Daemon } from './daemon.ts'
 import { inChat } from './lang.ts'
-import { endSession, idProjectDir, launchOnce, manualCmd, screenKb, sessionName } from './launch.ts'
+import { attachTarget, confirmHint, endSession, idProjectDir, launchOnce, manualCmd, screenKb, sessionName } from './launch.ts'
 import { show, type Screen } from './menu.ts'
 import { button } from './stream.ts'
 
@@ -131,7 +131,7 @@ export async function launchForGroup(d: Daemon, chatId: string, dir: string): Pr
   if (!r.ok && r.skipped) return
   if (r.ok) {
     await inChat(d, chatId, undefined, () => say(chatId, t('🚀 Запускаю сессию проекта — сообщение дойдёт, когда она подключится.')))
-    if (o) await inChat(d, o, undefined, () => say(o, t('🚀 Группа «{title}»: запускаю сессию проекта <code>{dir}</code> в tmux (окно {win}). Подтвердите запуск:', { title: escapeHtml(groupBinding(d, chatId)?.title ?? chatId), dir: escapeHtml(dir), win: escapeHtml(r.window) }), screenKb(r.window)))
+    if (o) await inChat(d, o, undefined, () => say(o, t('🚀 Группа «{title}»: запускаю сессию проекта <code>{dir}</code> в tmux (окно {win}). Подтвердите запуск:', { title: escapeHtml(groupBinding(d, chatId)?.title ?? chatId), dir: escapeHtml(dir), win: escapeHtml(attachTarget(r.window)) }) + confirmHint(r.window), screenKb(r.window)))
     return
   }
   await inChat(d, chatId, undefined, () => say(chatId, t('❌ Не удалось запустить сессию проекта. Сообщение сохранено.')))
