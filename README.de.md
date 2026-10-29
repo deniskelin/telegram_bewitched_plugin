@@ -179,7 +179,7 @@ Der Bot ist für einen kleinen Kreis eigener Leute (zum Beispiel eine Familie) i
 
 Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Schließen und Öffnen von Themen, Starten von Sitzungen, der Wächter.
 
-- **Die Nutzersitzung startet von selbst.** Die erste Nachricht eines Nutzers → der Daemon legt `~/user/<id>` an und startet Claude in einem neuen tmux-Fenster (`TMUX_SESSION`, mit `--continue`, falls es dort schon Gespräche gab); die Nachricht wartet in der Warteschlange und kommt nach dem Verbinden an.
+- **Die Nutzersitzung startet von selbst.** Die erste Nachricht eines Nutzers → der Daemon legt `~/user/<id>` an und startet Claude in einer eigenen tmux-Sitzung `claude-user-<id>` ( mit `--continue`, falls es dort schon Gespräche gab); die Nachricht wartet in der Warteschlange und kommt nach dem Verbinden an.
 - **Projektthema ohne Sitzung** (`TOPIC_NO_SESSION=launch`): Eine Nachricht startet die Projektsitzung. Klappt der Start nicht, schickt der Bot einen Befehl für den manuellen Start und schließt das Thema, bis die Sitzung verbunden ist.
 - **Wächter.** Eine Sitzung hat sich von selbst beendet (kein Archiv, kein Leerlauf) → nach einer Minute bekommt der Besitzer «⚠️ Sitzung … wurde beendet» per DM, mit Befehlen zum Neustart und der Taste «🚀 Starten». Das Projektthema bekommt nur die Meldung, ohne Befehle und Tasten, und bleibt bis zur Wiederverbindung geschlossen; ein Mitglied, dessen eigene Sitzung endete, bekommt die Taste «🙋 Neustart anfragen», die die Anfrage an den Besitzer weiterleitet.
 - **Beenden untätiger Sitzungen:** `USER_IDLE_MIN` und `PROJECT_IDLE_MIN`, Standard `0` – nie. Eine untätige Sitzung verbraucht keine Token, nur Speicher.
@@ -234,9 +234,9 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `CI_WATCH_MIN` | `5` | Wie oft der letzte GitHub-Actions-Lauf der Branches von Projektsitzungen geprüft wird (über `gh`; 0 – nie) |
 | `QUIET_HOURS` | `off` | Ruhezeiten, z. B. `23:00-08:00`: Alles, was der Bot sendet, kommt ohne Ton an. Die Knöpfe in „/menu → ⚙️“ haben Vorrang vor `.env` |
 | `BOT_LANGUAGE` | `ru` | Standardsprache der Oberfläche (`ru`, `en`, `es`, `zh`, `fr`, `de`), wenn weder der Chat noch der Besitzer eine gewählt hat und die Telegram-Sprache des Nutzers unbekannt ist |
-| `TMUX_SESSION` | `claude` | Die tmux-Sitzung für neue Fenster |
+| `TMUX_SESSION` | `claude` | Die tmux-Sitzung der Hauptsitzung (Nutzer- und Projektsitzungen bekommen eigene) |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Sprache: Transkription eingehender Nachrichten und gesprochene Antworten – siehe [docs/voice.md](docs/voice.md), Installation mit `bewitched voice install` |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Der Befehl für eine neue Sitzung. Der Bot fügt `-n claude-<telegram id>` (Nutzersitzung) oder `-n claude-<Gruppen-ID>-<Themen-ID>` (Projekt, wie der Ordner) hinzu; das tmux-Fenster heißt genauso |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | Der Befehl für eine neue Sitzung. Der Bot fügt `-n claude-user-<telegram id>` (Nutzersitzung) oder `-n claude-project-<Gruppen-ID>-<Themen-ID>` (Projekt, wie der Ordner) hinzu; eigene tmux-Sitzung und Fenster heißen genauso, `tmux ls` zeigt also, was was ist |
 
 Der Zugriff (Kopplung, Allowlist, Gruppen) funktioniert wie im offiziellen Plugin, siehe [ACCESS.md](ACCESS.de.md) und `/telegram-bewitched:access`.
 

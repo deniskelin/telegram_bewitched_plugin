@@ -179,7 +179,7 @@ El bot está pensado para un círculo pequeño de personas cercanas (una familia
 
 El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, cerrar y abrir temas, iniciar sesiones, el vigilante.
 
-- **La sesión de usuario arranca sola.** El primer mensaje del usuario → el demonio crea `~/user/<id>`, inicia Claude en una ventana nueva de tmux (`TMUX_SESSION`, con `--continue` si ya hubo conversaciones); el mensaje espera en cola y llega cuando la sesión se conecta.
+- **La sesión de usuario arranca sola.** El primer mensaje del usuario → el demonio crea `~/user/<id>`, inicia Claude en su propia sesión de tmux `claude-user-<id>` ( con `--continue` si ya hubo conversaciones); el mensaje espera en cola y llega cuando la sesión se conecta.
 - **Tema de proyecto sin sesión** (`TOPIC_NO_SESSION=launch`): un mensaje inicia la sesión del proyecto. Si no se puede iniciar, el bot publica el comando para iniciarla a mano y cierra el tema hasta que la sesión se conecte.
 - **Vigilante.** Una sesión se fue sola (no por archivo ni por inactividad) → al minuto el dueño recibe por privado «⚠️ La sesión … se detuvo», con los comandos para reiniciarla y el botón «🚀 Iniciar». El tema del proyecto recibe solo el aviso, sin comandos ni botones, y queda cerrado hasta que la sesión se reconecte; un miembro cuya propia sesión se detuvo recibe el botón «🙋 Pedir reinicio», que pasa la solicitud al dueño.
 - **Cierre de sesiones inactivas:** `USER_IDLE_MIN` y `PROJECT_IDLE_MIN`, por defecto `0` (nunca). Una sesión inactiva no gasta tokens, solo memoria.
@@ -234,9 +234,9 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `CI_WATCH_MIN` | `5` | Cada cuánto mirar la última ejecución de GitHub Actions de las ramas de las sesiones de proyecto (con `gh`; 0: nunca) |
 | `QUIET_HOURS` | `off` | Horas de silencio, p. ej. `23:00-08:00`: todo lo que envía el bot llega sin sonido. Los botones de «/menu → ⚙️» prevalecen sobre `.env` |
 | `BOT_LANGUAGE` | `ru` | Idioma de la interfaz por defecto (`ru`, `en`, `es`, `zh`, `fr`, `de`) cuando ni el chat ni el propietario eligieron uno y no se conoce el idioma de Telegram del usuario |
-| `TMUX_SESSION` | `claude` | La sesión de tmux para las ventanas nuevas |
+| `TMUX_SESSION` | `claude` | La sesión de tmux de la sesión principal (las de usuario y proyecto tienen la suya) |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | Voz: transcripción de mensajes entrantes y respuestas con voz; ver [docs/voice.md](docs/voice.md), instalación con `bewitched voice install` |
-| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-<telegram id>` (sesión de usuario) o `-n claude-<id de grupo>-<id de tema>` (proyecto, como la carpeta); la ventana de tmux recibe el mismo nombre |
+| `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | El comando para una sesión nueva. El bot añade `-n claude-user-<telegram id>` (sesión de usuario) o `-n claude-project-<id de grupo>-<id de tema>` (proyecto, como la carpeta); su propia sesión y ventana de tmux llevan ese nombre, así `tmux ls` muestra qué es cada una |
 
 El acceso (emparejamiento, allowlist, grupos) funciona como en el plugin oficial: ver [ACCESS.md](ACCESS.es.md) y `/telegram-bewitched:access`.
 

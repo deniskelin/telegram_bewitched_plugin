@@ -38,8 +38,10 @@ function keyboard(q: Pick<QuestionRow, 'id' | 'multi'>, opts: Option[], chosen: 
   const rows: ReturnType<typeof button>[][] = []
   opts.forEach((o, i) => {
     const picked = chosen.includes(i)
-    const label = closed ? (picked ? `✅ ${o.label}` : o.label) : q.multi ? `${picked ? '☑️' : '▫️'} ${o.label}` : o.label
-    const b = button(label, `q:${q.id}:${i}`, closed ? undefined : o.style, closed && !picked)
+    // The answer: one ✅ (a label that already starts with one doesn't get a second) and green;
+    // the session's own colour (e.g. its recommendation) is gone once the question is closed.
+    const label = closed ? (picked ? `✅ ${o.label.replace(/^(✅|☑️|✔️)\s*/u, '')}` : o.label) : q.multi ? `${picked ? '☑️' : '▫️'} ${o.label}` : o.label
+    const b = button(label, `q:${q.id}:${i}`, closed ? (picked ? 'success' : undefined) : o.style, closed && !picked)
     if (short && rows.length && rows[rows.length - 1].length < 3) rows[rows.length - 1].push(b)
     else rows.push([b])
   })
