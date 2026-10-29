@@ -687,6 +687,11 @@ const dict: Dict = {
   "👁 Теперь наблюдатель": "👁 Now a viewer",
   "👤 Теперь участник": "👤 Now a member",
   "Разрешения одобряет только владелец.": "Only the owner approves permissions.",
+  "Ответ: {v}": "Answer: {v}",
+  "пишется на глазах": "written as you watch",
+  "приходит целиком": "arrives whole",
+  "✍️ на глазах": "✍️ live",
+  "📦 целиком": "📦 whole",
 }
 
 export default dict

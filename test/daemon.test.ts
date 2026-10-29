@@ -655,6 +655,39 @@ describe('topics', () => {
     expect(c.body.message_thread_id).toBe(d.sessions.get(sessionId)!.topic!.threadId)
   })
 
+  test('FR-1: the answer streams as it is written and reply(use_last_message) sends it; narration before tools is not the answer', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    await hook('Stop', {})
+    tg.push(textMessage({ chat: Number(group), text: 'расскажи итог', thread }))
+    const m = await client.inbound(x => x.content === 'расскажи итог')
+    expect(m.meta.stream_answer).toBe('true')
+    await hook('MessageDisplay', { delta: 'Сейчас посмотрю файлы.' })
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
+    await hook('MessageDisplay', { delta: 'Итог: всё ' })
+    await hook('MessageDisplay', { delta: 'готово.' })
+    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Итог: всё') && String(c.body.text).includes('готово.') && !String(c.body.text).includes('Сейчас посмотрю'))
+    const r = await client.call('reply', { chat_id: group, use_last_message: true })
+    expect(r.ok).toBe(true)
+    const sent = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Итог: всё'))
+    expect(String(sent.body.text)).toBe('Итог: всё \nготово.')
+    expect(String(sent.body.text)).not.toContain('Сейчас посмотрю')
+    // Nothing written since the last tool: a clear error instead of an empty message.
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/b.ts' } })
+    const empty = await client.call('reply', { chat_id: group, use_last_message: true })
+    expect(empty.ok).toBe(false)
+    expect(empty.text).toContain('use_last_message')
+    // Switched off in the chat settings: no stream_answer.
+    setPref(`${group}:${thread}`, { streamAnswer: false })
+    tg.push(textMessage({ chat: Number(group), text: 'целиком', thread }))
+    expect((await client.inbound(x => x.content === 'целиком')).meta.stream_answer).toBeUndefined()
+    setPref(`${group}:${thread}`, { streamAnswer: true })
+    await client.call('reply', { chat_id: group, text: 'ок' })
+  })
+
   test('long turn without reply sends a done notice on Stop', async () => {
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',

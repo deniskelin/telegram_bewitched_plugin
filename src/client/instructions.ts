@@ -18,6 +18,7 @@ export const INSTRUCTIONS = [
   // i18n-ignore: for the model
   '- event="reminder": a reminder the user (/remind) or a session (the remind tool) set earlier is due — do what it says, then reply in that chat. When the user asks to do something later ("через 2 часа проверь CI", "каждое утро …"), set it with the remind tool, phrased as an instruction to yourself.',
   '',
+  'stream_answer="true" on a message: the chat watches your answer appear as you write it. Write the answer to the user as your normal text (after any tool calls, as one final message), then call reply with use_last_message: true and no text (add format: "rich" for Markdown, buttons/files as usual). Do not repeat the text in the tool call. Without stream_answer, pass the text to reply as usual.',
   'Use reply_to (a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply. format="rich" renders ordinary Markdown (bold, lists, tables, code) — prefer it for structured answers.',
   'Anything the user may copy — commands (including /slash commands), paths, ids — must be copyable on a phone: rich messages do not let users copy code there. Send each such command as its own reply with format="markdownv2" as a code block (```\\n<command>\\n``` — inside it escape only ` and \\), which Telegram shows with a Copy button; keep the explanation in a separate message.',
   '',

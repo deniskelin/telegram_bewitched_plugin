@@ -108,7 +108,10 @@ function idsResult(ids: number[]): string {
 async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Promise<string> {
   const c = resolveChat(d, s, args)
   assertAllowedChat(c.chatId)
-  const text = String(args.text ?? '')
+  // FR-1: the user watched the answer stream; send what the model wrote since its last tool call.
+  const text = args.use_last_message === true ? s.answer.trim() : String(args.text ?? '')
+  if (args.use_last_message === true && !text) throw new Error('use_last_message: no text written since the last tool call — write the answer first, or pass text')
+  if (!text && !(args.files as unknown[] | undefined)?.length) throw new Error('text is required')
   const replyTo = int(args.reply_to)
   const files = (args.files as string[] | undefined) ?? []
   const format = str(args.format) ?? 'text'

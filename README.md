@@ -68,7 +68,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | **Shared daemon** | One process polls Telegram for all sessions. Several Claude Code sessions and `claude -p` work with one bot without 409 Conflict. |
 | **Topics** | Connect a forum supergroup from DM (`/connect_group`); each project gets its own topic. General holds the pinned control panel and control commands. |
 | **Session types** | 👤 a session for each user (their DM and their messages in General), 📂 a session per project in its topic. Sessions start by themselves on the first message; a watchdog reports stopped ones and offers a restart button. |
-| **Live progress** | While Claude works: in DM — a native draft with a «thinking» block; in a topic — an updating «⏳ Working…» message with actions and a **⏹ Stop** button (interrupts the turn via tmux). |
+| **Live progress** | The answer appears as it is written (in a DM draft, in groups inside the progress message), switchable per chat in «/menu → ⚙️». While Claude works: in DM — a native draft with a «thinking» block; in a topic — an updating «⏳ Working…» message with actions and a **⏹ Stop** button (interrupts the turn via tmux). |
 | **Answer buttons** | The `ask_user` tool and `reply(buttons)`: options by tap, the answer goes back to the session. |
 | **Projects from topics** | Create a topic in the group → a `~/projects/<name>` folder and a new Claude session in a tmux window bound to that topic. Or `/new_session <name\|path>`. The launch is confirmed with the «✅ Confirm launch» button. |
 | **Archive** | «🗄 Archive» on the project card in `/sessions`: the session ends, the topic closes. Reopen the topic — a new session starts. Closing the topic in Telegram is the same as archiving. |
