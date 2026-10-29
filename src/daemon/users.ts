@@ -195,7 +195,7 @@ export async function handleUserCallback(d: Daemon, ctx: Context, data: string):
   if (action === 'ask') {
     await ctx.answerCallbackQuery().catch(() => {})
     const s = d.userSession(id)
-    await show(ctx, confirmScreen(d, id, s ? `sm:s:${s.id}` : 'ur:list'))
+    await show(ctx, confirmScreen(d, id, s ? `sm:g:${s.id}:m` : 'ur:list'))
     return true
   }
   if (!loadAccess().allowFrom.includes(id)) {
