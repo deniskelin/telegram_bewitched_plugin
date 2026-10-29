@@ -104,6 +104,17 @@ describe('ipc', () => {
   })
 })
 
+describe('projectTitle', async () => {
+  const { projectTitle } = await import('../src/daemon/report.ts')
+  test('topic or group title over the id folder; a folder by hand keeps its name', () => {
+    const s = (o: object) => ({ projectName: '1004291818146-37', topic: null, group: null, ...o }) as never
+    expect(projectTitle(s({ topic: { chatId: '-1004291818146', threadId: 37, name: 'telegram_bewitched_plugin' } }))).toBe('telegram_bewitched_plugin')
+    expect(projectTitle(s({ topic: { chatId: '-1', threadId: 2, name: '🗄 old' } }))).toBe('old')
+    expect(projectTitle(s({ group: { chatId: '-200700', title: 'Test Group' } }))).toBe('Test Group')
+    expect(projectTitle(s({ projectName: 'my-repo' }))).toBe('my-repo')
+  })
+})
+
 describe('launch', async () => {
   const { slugify, projectPath, launchCommand } = await import('../src/daemon/launch.ts')
   test('launch command: -n only for a safe name, then --resume or --continue', () => {

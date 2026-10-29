@@ -20,6 +20,7 @@ import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
 import { t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
+import { projectTitle } from './report.ts'
 
 const MAX_CHUNK_LIMIT = 4096
 const MAX_ATTACHMENT_BYTES = 50 * 1024 * 1024
@@ -469,7 +470,7 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       if (!t) throw new Error('topic not found')
       const o = owner()
       if (!o) throw new Error('no owner')
-      await d.bot.api.sendMessage(o, inChat(d, o, undefined, () => tr('Claude (#{id} · {name}) просит удалить топик «{topic}» со всеми сообщениями. Удалить?', { id: s.id, name: s.projectName, topic: t.name })), {
+      await d.bot.api.sendMessage(o, inChat(d, o, undefined, () => tr('Claude (#{id} · {name}) просит удалить топик «{topic}» со всеми сообщениями. Удалить?', { id: s.id, name: projectTitle(s), topic: t.name })), {
         reply_markup: inChat(d, o, undefined, () => new InlineKeyboard([[button(tr('🗑 Удалить'), `tp:delok:${thread}`, 'danger'), button(tr('Отмена'), 'tp:cancel:0')]])),
       })
       return 'deletion requested — the user must confirm with a button in Telegram'
