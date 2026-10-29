@@ -18,9 +18,10 @@ export async function toWav16k(input: string, output: string, maxSec: number): P
   await ffmpeg(['-i', input, '-vn', '-ac', '1', '-ar', '16000', '-t', String(maxSec), '-f', 'wav', output])
 }
 
-/** WAV → OGG/Opus 48 kHz mono, the format Telegram plays as a voice message. */
-export async function toOggOpus(input: string, output: string): Promise<void> {
-  await ffmpeg(['-i', input, '-ac', '1', '-ar', '48000', '-c:a', 'libopus', '-b:a', '32k', '-application', 'voip', output])
+/** WAV → OGG/Opus 48 kHz mono, the format Telegram plays as a voice message; speed ≠ 1 changes the tempo, not the pitch. */
+export async function toOggOpus(input: string, output: string, speed = 1): Promise<void> {
+  const tempo = speed !== 1 ? ['-filter:a', `atempo=${speed}`] : []
+  await ffmpeg(['-i', input, ...tempo, '-ac', '1', '-ar', '48000', '-c:a', 'libopus', '-b:a', '32k', '-application', 'voip', output])
 }
 
 /** Several WAVs (sentence chunks) → one WAV. */

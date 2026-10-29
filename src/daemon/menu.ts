@@ -15,7 +15,8 @@ import { stopSession } from './inbound.ts'
 import { footer, passiveBlock, sessionCard, sessionChat, sessionLabel, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
-import { transcriptInfo } from './transcript.ts'
+import { projectRules, removeProjectRule } from './permrules.ts'
+import { listConversations, transcriptInfo } from './transcript.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -63,8 +64,12 @@ export async function sessionScreen(d: Daemon, s: Session): Promise<Screen> {
   if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) look.push(button('👁 Экран и клавиши', `tx:p${s.tmuxPane.slice(1)}`))
   if (s.branch) look.push(button('🌿 Git', `sm:git:${s.id}`))
   if (look.length) rows.push(look)
-  if (s.alwaysAllow.size) rows.push([button('♾ Снова спрашивать разрешения', `sm:aar:${s.id}`)])
+  const perms: Btn[] = []
+  if (s.alwaysAllow.size) perms.push(button('♾ Снова спрашивать', `sm:aar:${s.id}`))
+  if (projectRules(d, s.projectKey).length) perms.push(button('📌 Правила проекта', `sm:prm:${s.id}`))
+  if (perms.length) rows.push(perms)
   if (s.tmuxPane) rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button('🧠 Модель', `sm:mdl:${s.id}`)])
+  if (s.tmuxPane) rows.push([button('🕘 Прошлые разговоры', `sm:hist:${s.id}`), button('⚡ Быстрые команды', `mc:list:${s.id}`)])
   const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
   if (link) rows.push([InlineKeyboard.url(clip(`💬 Открыть топик «${s.topic!.name}»`, 40), link)])
 
@@ -97,11 +102,42 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
     return { screen: { text: `Очистить разговор сессии #${s.id} (${escapeHtml(s.projectName)})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.`, kb } }
   }
   if (s.turn || s.status !== 'idle') return { toast: 'Сессия работает — дождитесь конца хода или нажмите ⏹.' }
-  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
+  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
   if (line === '/model ') return { toast: 'Неизвестная модель.' }
   await d.tmuxType(s.tmuxPane, line)
   if (action === 'clrok') s.contextWarned = false
   return { toast: `➡️ ${line}`, sent: true }
+}
+
+const dashless = (id: string) => id.replace(/-/g, '')
+
+function when(ms: number): string {
+  return new Date(ms).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
+}
+
+/** 🕘 The project's conversations, newest first; the current one is marked. */
+async function historyScreen(s: Session): Promise<Screen> {
+  const list = await listConversations(s.cwd)
+  const lines = [`🕘 <b>Разговоры</b> · ${escapeHtml(s.projectName)}`, 'Выбранный продолжится в этой же сессии командой <code>/resume</code> — без перезапуска.', '']
+  const rows: Btn[][] = []
+  for (const c of list) {
+    const current = c.id === s.claude.sessionId
+    const prompt = c.prompt ? clip(c.prompt, 70) : '(без текста)'
+    lines.push(`${current ? '▶️' : '•'} ${when(c.mtime)} · ${Math.max(1, Math.round(c.size / 1024))} КБ${current ? ' · <b>сейчас</b>' : ''}\n   ${escapeHtml(prompt)}`)
+    if (!current) rows.push([button(clip(`${when(c.mtime)} ${c.prompt || '…'}`, 40), `sm:rs:${s.id}:${dashless(c.id)}`)])
+  }
+  if (!list.length) lines.push('Транскриптов этой папки нет.')
+  rows.push([button('« Назад', `sm:s:${s.id}`)])
+  return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
+}
+
+/** 📌 Tools allowed for the project for good, each with a button to ask again. */
+function rulesScreen(d: Daemon, s: Session): Screen {
+  const rules = projectRules(d, s.projectKey)
+  const lines = [`📌 <b>Без вопросов в проекте</b> ${escapeHtml(s.projectName)}`, rules.length ? 'Эти инструменты разрешаются сами в любой сессии проекта, и после перезапуска тоже. ❌ — снова спрашивать.' : 'Правил нет.']
+  const rows: Btn[][] = rules.slice(0, 20).map((t, i) => [button(clip(`❌ ${t}`, 40), `sm:prmd:${s.id}:${i}`)])
+  rows.push([button('« Назад', `sm:s:${s.id}`)])
+  return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }
 
 async function gitScreen(s: Session): Promise<Screen> {
@@ -124,7 +160,7 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl:<id>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -154,6 +190,33 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   if (action === 'git') {
     await answer()
     await show(ctx, await gitScreen(s))
+    return true
+  }
+  if (action === 'hist') {
+    await answer()
+    await show(ctx, await historyScreen(s))
+    return true
+  }
+  if (action === 'prm' || action === 'prmd') {
+    const rules = projectRules(d, s.projectKey)
+    const tool = action === 'prmd' ? rules[Number(value)] : undefined
+    if (tool) removeProjectRule(d, s.projectKey, tool)
+    await answer(tool ? `🔐 ${tool} снова спрашивается` : undefined)
+    await show(ctx, rulesScreen(d, s))
+    return true
+  }
+  if (action === 'rs' || action === 'rsok') {
+    const c = (await listConversations(s.cwd, 200)).find(x => dashless(x.id) === value)
+    if (!c) { await answer('Разговор не найден.'); return true }
+    if (action === 'rs') {
+      await answer()
+      const kb = new InlineKeyboard([[button('🕘 Да, продолжить его', `sm:rsok:${s.id}:${value}`, 'primary'), button('Отмена', `sm:hist:${s.id}`)]])
+      await show(ctx, { text: `Продолжить разговор от ${when(c.mtime)} в сессии #${s.id}?\n\n<i>${escapeHtml(clip(c.prompt || '(без текста)', 300))}</i>\n\nТекущий разговор сохранится — вернуться к нему можно так же.`, kb })
+      return true
+    }
+    const r = await controlAction(d, s, 'resume', c.id)
+    await answer(r.toast)
+    if (r.sent) await show(ctx, await sessionScreen(d, s))
     return true
   }
   if (action === 'gdf') {

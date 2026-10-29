@@ -20,6 +20,8 @@ import { startAllowlistWatch } from './invite.ts'
 import { voiceServices } from '../voice/service.ts'
 import { setLocalSttStarter } from '../voice/stt.ts'
 import { setSileroStarter } from '../voice/tts.ts'
+import { reportRestart } from './server.ts'
+import { startCiWatch } from './events.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
 
 function log(m: string): void {
@@ -113,6 +115,7 @@ startIdleCloser(d)
 startLimitWatch(d)
 startDigest(d)
 startReminders(d)
+startCiWatch(d)
 startReports(d)
 startAllowlistWatch(d)
 const voice = voiceServices(log)
@@ -134,6 +137,7 @@ void d.startPolling(bot => {
     { command: 'usage', description: 'Лимиты подписки и расход' },
     { command: 'help', description: 'Помощь' },
   ], { scope: { type: 'all_private_chats' } }).catch(() => {})
+  void reportRestart(d).catch(err => log(`restart report: ${err}`))
 }).catch(err => {
   log(`startup failed: ${err}`)
   shutdown(1)

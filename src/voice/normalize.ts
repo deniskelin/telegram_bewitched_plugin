@@ -62,6 +62,43 @@ function decimalWords(int: string, frac: string): string {
   return `${numberWords(i, true)} ${plural(i, 'целая', 'целых', 'целых')} ${frac.length > 3 ? frac.split('').map(c => ONES_M[Number(c)]).join(' ') : numberWords(Number(frac))}`
 }
 
+// Ordinals: the day of a date (neuter nominative) and the year (genitive).
+const ORD_ONES = ['', 'перв', 'втор', 'трет', 'четвёрт', 'пят', 'шест', 'седьм', 'восьм', 'девят']
+const ORD_TEENS = ['десят', 'одиннадцат', 'двенадцат', 'тринадцат', 'четырнадцат', 'пятнадцат', 'шестнадцат', 'семнадцат', 'восемнадцат', 'девятнадцат']
+const ORD_TENS = ['', '', 'двадцат', 'тридцат', 'сороков', 'пятидесят', 'шестидесят', 'семидесят', 'восьмидесят', 'девяност']
+const ORD_HUNDREDS = ['', 'сот', 'двухсот', 'трёхсот', 'четырёхсот', 'пятисот', 'шестисот', 'семисот', 'восьмисот', 'девятисот']
+const MONTHS = ['января', 'февраля', 'марта', 'апреля', 'мая', 'июня', 'июля', 'августа', 'сентября', 'октября', 'ноября', 'декабря']
+
+/** Ordinal of 1..999, neuter nominative ('е' → "первое") or genitive ('ого' → "первого"); "третье", "третьего". */
+function ordinal(n: number, ending: 'е' | 'ого'): string {
+  const h = Math.floor(n / 100), r = n % 100
+  const head: string[] = []
+  let stem: string
+  if (r === 0) stem = ORD_HUNDREDS[h]
+  else {
+    if (h) head.push(HUNDREDS[h])
+    if (r < 10) stem = ORD_ONES[r]
+    else if (r < 20) stem = ORD_TEENS[r - 10]
+    else if (r % 10 === 0) stem = ORD_TENS[r / 10]
+    else { head.push(TENS[Math.floor(r / 10)]); stem = ORD_ONES[r % 10] }
+  }
+  const end = stem === 'трет' ? (ending === 'е' ? 'ье' : 'ьего') : ending === 'е' ? 'ое' : ending
+  return [...head, stem + end].join(' ')
+}
+
+/** 2026 → "две тысячи двадцать шестого", 2000 → "двухтысячного" (years 1000–2999). */
+function yearWords(y: number): string {
+  const th = Math.floor(y / 1000), rest = y % 1000
+  if (!rest) return th === 1 ? 'тысячного' : 'двухтысячного'
+  return `${th === 1 ? 'тысяча' : 'две тысячи'} ${ordinal(rest, 'ого')}`
+}
+
+/** 29.10.2026 → "двадцать девятое октября две тысячи двадцать шестого года"; null if not a date. */
+export function dateWords(d: number, m: number, y?: number): string | null {
+  if (d < 1 || d > 31 || m < 1 || m > 12 || (y != null && (y < 1000 || y > 2999))) return null
+  return `${ordinal(d, 'е')} ${MONTHS[m - 1]}${y != null ? ` ${yearWords(y)} года` : ''}`
+}
+
 const LETTERS: Record<string, string> = {
   a: 'эй', b: 'би', c: 'си', d: 'ди', e: 'и', f: 'эф', g: 'джи', h: 'эйч', i: 'ай', j: 'джей', k: 'кей', l: 'эл', m: 'эм',
   n: 'эн', o: 'оу', p: 'пи', q: 'кью', r: 'ар', s: 'эс', t: 'ти', u: 'ю', v: 'ви', w: 'дабл-ю', x: 'экс', y: 'уай', z: 'зед',
@@ -121,6 +158,8 @@ export function normalizeForSpeech(text: string): string {
     .replace(/([A-Za-z])(\d)/g, '$1 $2').replace(/(\d)([A-Za-z])/g, '$1 $2')
     // 23:16 → двадцать три шестнадцать; 09:05 → девять ноль пять
     .replace(/\b(\d{1,2}):(\d{2})\b/g, (_, h: string, m: string) => `${numberWords(Number(h))} ${m === '00' ? 'ноль-ноль' : m.startsWith('0') ? `ноль ${numberWords(Number(m))}` : numberWords(Number(m))}`)
+    // 29.10.2026 / 29.10 → двадцать девятое октября (две тысячи двадцать шестого года)
+    .replace(/\b(\d{1,2})\.(\d{1,2})(?:\.(\d{4}))?\b(?!\.\d)/g, (all: string, dd: string, mm: string, yy?: string) => (yy || dd.length === 2 && mm.length === 2) ? dateWords(Number(dd), Number(mm), yy ? Number(yy) : undefined) ?? all : all)
     // 1.1.1 → один точка один точка один
     .replace(/\b\d+(?:\.\d+){2,}\b/g, v => v.split('.').map(x => numberWords(Number(x))).join(' точка '))
     // 41% / 3.5%

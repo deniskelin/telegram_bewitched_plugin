@@ -106,3 +106,47 @@ export function guessTranscript(argv: string[], cwd: string, configDir = CONFIG_
     return null
   }
 }
+
+export type Conversation = { id: string; path: string; mtime: number; size: number; prompt: string }
+
+/**
+ * The first thing the user said in a transcript, for a list of conversations:
+ * the text of a channel message without its tag; command wrappers and the
+ * session_resume digest are skipped.
+ */
+export async function firstPrompt(path: string): Promise<string> {
+  const fh = await open(path, 'r')
+  try {
+    const buf = Buffer.alloc(256 * 1024)
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
+    for (const line of buf.subarray(0, bytesRead).toString('utf8').split('\n')) {
+      if (!line.includes('"type":"user"')) continue
+      const m = parse(line) as { type?: string; isSidechain?: boolean; isMeta?: boolean; message?: { content?: unknown } } | null
+      if (m?.type !== 'user' || m.isSidechain || m.isMeta) continue
+      const c = m.message?.content
+      let text = typeof c === 'string' ? c : Array.isArray(c) ? c.map(p => (p && typeof p === 'object' && 'text' in p ? String(p.text) : '')).join(' ') : ''
+      if (/^<channel[^>]*event="session_resume"/.test(text) || /^<(command-|local-command)|^Caveat:/.test(text)) continue
+      text = text.replace(/^<channel[^>]*>\s*/, '').replace(/<\/channel>\s*$/, '').replace(/\s+/g, ' ').trim()
+      if (text) return text
+    }
+  } finally {
+    await fh.close()
+  }
+  return ''
+}
+
+/** Conversations of a project folder, newest first. */
+export async function listConversations(cwd: string, limit = 8, configDir = CONFIG_DIR): Promise<Conversation[]> {
+  const dir = projectTranscriptDir(cwd, configDir)
+  let files: string[]
+  try {
+    files = readdirSync(dir).filter(f => /^[\w-]+\.jsonl$/.test(f))
+  } catch {
+    return []
+  }
+  const all = files.map(f => ({ f, st: statSync(join(dir, f)) })).sort((a, b) => b.st.mtimeMs - a.st.mtimeMs).slice(0, limit)
+  return Promise.all(all.map(async ({ f, st }) => {
+    const path = join(dir, f)
+    return { id: f.slice(0, -'.jsonl'.length), path, mtime: st.mtimeMs, size: st.size, prompt: await firstPrompt(path).catch(() => '') }
+  }))
+}

@@ -16,6 +16,7 @@ import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from 
 import { cmdlineOf, isAlive } from '../proc.ts'
 import { createBot } from '../tg.ts'
 import { Streams } from './stream.ts'
+import { installQuietHours } from './quiet.ts'
 import { tmuxCapture, tmuxKeys, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 
 /** Queue for messages to the main session while it is not running. */
@@ -84,6 +85,7 @@ export class Daemon {
     this.bot = createBot(token, settings.apiRoot)
     this.store = new Store(dbFile)
     this.streams = new Streams(this)
+    installQuietHours(this, this.bot)
   }
 
   log(msg: string): void {

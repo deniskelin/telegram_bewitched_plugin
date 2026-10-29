@@ -14,6 +14,7 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
+import { isChannelsPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 
@@ -147,6 +148,38 @@ export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null }
 }
 
 // --------------------------------------------------------------------------
+// A launch nobody confirmed: remind the owner
+// --------------------------------------------------------------------------
+
+/**
+ * A launched session that hasn't connected after LAUNCH_REMIND_SEC (and again
+ * after 5× that) is most likely waiting on the development-channels prompt:
+ * the owner gets a reminder with «✅ Подтвердить запуск»; a user whose own
+ * session it is hears once that it is being confirmed. Nothing is pressed.
+ */
+export function watchLaunch(d: Daemon, dir: string, win: string): void {
+  const sec = settings.launchRemindSec
+  if (sec <= 0) return
+  for (const [i, after] of [sec, sec * 5].entries()) {
+    setTimeout(() => void remindLaunch(d, dir, win, i === 0).catch(err => d.log(`launch reminder failed: ${err}`)), after * 1000).unref?.()
+  }
+}
+
+export async function remindLaunch(d: Daemon, dir: string, win: string, first: boolean): Promise<void> {
+  if (d.activeSessions().some(s => s.cwd === dir)) return
+  const raw = await d.tmuxCapture(`${settings.tmuxSession}:${win}`)
+  const o = owner()
+  if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
+  const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
+  const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
+  const text = isChannelsPrompt(raw)
+    ? `⏳ Сессия <b>${escapeHtml(who)}</b> (окно ${escapeHtml(win)}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.`
+    : `⏳ Сессия <b>${escapeHtml(who)}</b> (окно ${escapeHtml(win)}) запущена, но так и не подключилась. Посмотрите, что на экране.`
+  await say(d, o, undefined, text, screenKb(win))
+  if (first && user && user !== o) await say(d, user, undefined, '⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')
+}
+
+// --------------------------------------------------------------------------
 // Sessions on demand: a user's DM session, a project topic without a session
 // --------------------------------------------------------------------------
 
@@ -160,7 +193,9 @@ async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Lau
   if (at && Date.now() - at < RELAUNCH_MS) return { ok: false, skipped: true, error: '' }
   d.launching.set(dir, Date.now())
   try {
-    return { ok: true, window: await d.launchSession(dir, o) }
+    const window = await d.launchSession(dir, o)
+    watchLaunch(d, dir, window)
+    return { ok: true, window }
   } catch (err) {
     d.launching.delete(dir)
     return { ok: false, skipped: false, error: String(err instanceof Error ? err.message : err) }
@@ -176,12 +211,12 @@ function hasTranscripts(dir: string): boolean {
 }
 
 function confirmHint(win: string): string {
-  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «👁 Экран» — прямо из Telegram.`
+  return `<pre>tmux attach -t ${escapeHtml(settings.tmuxSession)}:${escapeHtml(win)}</pre>и примите экран подтверждения каналов. Или кнопкой «✅ Подтвердить запуск» — прямо из Telegram.`
 }
 
 /** "👁 Экран" for a freshly launched window: its screen with keys to accept the channels prompt. */
 export function screenKb(win: string): InlineKeyboard {
-  return new InlineKeyboard([[button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
+  return new InlineKeyboard([[button('✅ Подтвердить запуск', `tx:w${win}:c`, 'success'), button('👁 Экран и клавиши', `tx:w${win}`, 'primary')]])
 }
 
 export function manualCmd(dir: string, o: LaunchOptions = {}): string {
@@ -278,6 +313,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   let win: string
   try {
     win = await d.launchSession(dir, { name: sessionName(d, dir) })
+    watchLaunch(d, dir, win)
   } catch (err) {
     await say(d, where.chatId, where.threadId, `❌ Не удалось запустить сессию в tmux: ${escapeHtml(String(err instanceof Error ? err.message : err))}`)
     return
@@ -288,7 +324,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
     '',
     'Подтвердите запуск каналов в терминале:',
     `<pre>tmux attach -t ${escapeHtml(sess)}</pre>`,
-    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «👁 Экран» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
+    `Затем <code>Ctrl+B</code>, <code>${escapeHtml(win)}</code> — и примите экран подтверждения. Или кнопкой «✅ Подтвердить запуск» — прямо отсюда. После этого сессия подключится к ${bindThread != null ? 'этому топику' : 'новому топику проекта'}.`,
   ].join('\n'), screenKb(win))
 }
 

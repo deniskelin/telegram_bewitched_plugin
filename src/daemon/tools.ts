@@ -14,7 +14,7 @@ import { isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { downloadToInbox } from './media.ts'
-import { forVoice, synthesize, ttsEnabled, type Voice } from '../voice/tts.ts'
+import { forVoice, synthesize, ttsEnabled, type Voice, type VoiceOptions } from '../voice/tts.ts'
 import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
@@ -127,7 +127,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const ids: number[] = []
 
   // By voice: asked for, or the chat's /voice mode (always / mirror on a spoken message).
-  const voice = wantsVoice(d, c, args.voice === true) ? await voiceFor(d, text) : null
+  const voice = wantsVoice(d, c, args.voice === true) ? await voiceFor(d, text, c) : null
   if (voice && settings.voiceWithText === 'caption' && format === 'text' && text.length <= 1024 && !/```/.test(text)) {
     const id = await sendVoiceMsg(d, s, c, voice, { caption: text, replyTo: replyMode !== 'off' ? replyTo : undefined })
     recordOut(d, c, id, text)
@@ -193,11 +193,16 @@ function wantsVoice(d: Daemon, c: ChatRef, asked: boolean): boolean {
 }
 
 /** Synthesized voice for a reply, or null (too long, empty, TTS failed — the text still goes). */
-async function voiceFor(d: Daemon, text: string): Promise<Voice | null> {
+function voiceOptions(c: ChatRef): VoiceOptions {
+  const p = prefsFor(c.chatId, c.threadId)
+  return { voice: p.ttsVoice, speed: p.ttsSpeed }
+}
+
+async function voiceFor(d: Daemon, text: string, c: ChatRef): Promise<Voice | null> {
   const spoken = forVoice(text)
   if (!spoken || spoken.length > settings.voiceMaxChars) return null
   try {
-    return await synthesize(spoken)
+    return await synthesize(spoken, voiceOptions(c))
   } catch (err) {
     d.log(`tts failed, sending text: ${err}`)
     return null
@@ -226,7 +231,7 @@ async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>):
   if (!ttsEnabled()) throw new Error('TTS is off (TTS_PROVIDER=off) — reply with text instead')
   const spoken = forVoice(text)
   if (spoken.length > settings.voiceMaxChars) throw new Error(`text is longer than VOICE_MAX_CHARS (${settings.voiceMaxChars}) — send it as text`)
-  const v = await synthesize(spoken)
+  const v = await synthesize(spoken, voiceOptions(c))
   const caption = str(args.caption)
   const id = await sendVoiceMsg(d, s, c, v, { caption: caption ? caption.slice(0, 1024) : undefined, replyTo: int(args.reply_to) })
   recordOut(d, c, id, caption ?? text)

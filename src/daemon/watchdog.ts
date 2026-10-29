@@ -16,7 +16,7 @@ import { isOwner, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { launchCommand, launchForTopic, manualCmd, screenKb, sessionName } from './launch.ts'
+import { launchCommand, launchForTopic, manualCmd, screenKb, sessionName, watchLaunch } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 
@@ -86,6 +86,7 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     const o = { resume: r.resume ?? undefined, continue: !r.resume, name: r.session }
     const win = await d.launchSession(r.dir, o)
     d.launching.set(r.dir, Date.now())
+    watchLaunch(d, r.dir, win)
     d.store.set(`wd:${m[2]}`, null)
     await answer('🚀 Запускаю')
     await ctx.editMessageText(

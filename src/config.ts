@@ -117,6 +117,8 @@ export const settings = {
   /** /usage: ask Anthropic's undocumented OAuth endpoint for the subscription limits (off = local data only). */
   /** Pause after a key press in 👁 Экран before capturing the screen again. */
   get screenRedrawMs() { return num('SCREEN_REDRAW_MS', 700) },
+  /** Remind the owner when a launched session hasn't connected after this many seconds (again after 5×; 0 = never). */
+  get launchRemindSec() { return num('LAUNCH_REMIND_SEC', 180) },
   get usageLimits() { return process.env.USAGE_LIMITS !== 'off' },
   /** Warn the owner when a limit crosses these percentages and when it resets ("off" = never). */
   get limitAlerts(): number[] {
@@ -126,6 +128,12 @@ export const settings = {
   /** Daily digest to the owner at this local time ("HH:MM"), or "off". */
   get digestAt() { const v = process.env.DIGEST_AT ?? '21:00'; return /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null },
   get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
+  /** Tell the owner when another user took this much of the 5-hour window (percent, 0 = never). */
+  get userShareAlert() { return num('USER_SHARE_ALERT', 40) },
+  /** Messages without sound in this local time range ("23:00-08:00"), or "off". /menu → ⚙️ overrides it. */
+  get quietHours() { return process.env.QUIET_HOURS || 'off' },
+  /** Check the latest GitHub Actions run of each project session's branch every N minutes (gh; 0 = never). */
+  get ciWatchMin() { return num('CI_WATCH_MIN', 5) },
   get usageApiUrl() { return process.env.USAGE_API_URL || 'https://api.anthropic.com/api/oauth/usage' },
   // --- voice: speech to text (incoming) ---
   /** "openai-compatible" (whisper.cpp, faster-whisper, OpenAI, Groq) or "off". */
