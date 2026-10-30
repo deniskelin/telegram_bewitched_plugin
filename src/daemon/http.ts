@@ -28,11 +28,17 @@ export type HookEvent = {
   data: Record<string, unknown>
 }
 
-/** Mark a turn as started on the first activity of an idle session (turns begun in the terminal). */
-function touchTurn(s: Session): void {
+/**
+ * Mark a turn as started on the first activity of an idle session (turns begun in the terminal).
+ * After ⏹ only a new prompt starts one: the stopped turn's late hooks (the tail of its text)
+ * would mark it working, and an Escape-interrupted turn sends no Stop hook to end it.
+ */
+function touchTurn(s: Session, prompt = false): void {
+  if (prompt) s.stoppedAt = null
+  s.lastActivity = Date.now()
+  if (s.stoppedAt) return
   if (!s.turn) s.turn = { start: Date.now(), replied: false }
   if (s.status === 'idle') s.status = 'working'
-  s.lastActivity = Date.now()
 }
 
 export function handleHook(d: Daemon, h: HookEvent): void {
@@ -52,7 +58,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
   switch (h.event) {
     case 'UserPromptSubmit':
-      touchTurn(s)
+      touchTurn(s, true)
       s.answer = ''
       break
     case 'PreToolUse': {

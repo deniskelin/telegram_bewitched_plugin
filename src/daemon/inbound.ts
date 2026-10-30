@@ -488,7 +488,9 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
 
 // --- stop button ---
 
-export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
+export type StopSource = 'button' | 'menu' | 'shortcut' | 'stopped_message_generation'
+
+export function stopSession(d: Daemon, s: Session, source: StopSource): 'interrupted' | 'noted' {
   s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram') // i18n-ignore: for the model
   d.streams.close(s, 'stopped')
   if (settings.stopMode === 'interrupt' && s.tmuxPane && s.status === 'working') {
@@ -497,9 +499,13 @@ export function stopSession(d: Daemon, s: Session): 'interrupted' | 'noted' {
     })
     s.status = 'idle'
     s.turn = null
+    s.stoppedAt = Date.now()
+    d.log(`stop #${s.id} via ${source}: Escape sent to ${s.tmuxPane}`)
     d.onSessionsChanged()
     return 'interrupted'
   }
+  const why = settings.stopMode !== 'interrupt' ? `STOP_MODE=${settings.stopMode}` : !s.tmuxPane ? 'not in tmux' : `status ${s.status}`
+  d.log(`stop #${s.id} via ${source}: no Escape (${why}), noted for the next message`)
   return 'noted'
 }
 
@@ -508,7 +514,7 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
   if (!can(ctx.from!.id, 'stop')) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
   if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
-  const r = stopSession(d, s)
+  const r = stopSession(d, s, 'button')
   await ctx.answerCallbackQuery({
     text: r === 'interrupted' ? tr('⏹ Остановлено') : s.tmuxPane ? tr('Сейчас нечего останавливать.') : tr('Прерывание недоступно: сессия запущена не в tmux.'),
     show_alert: r !== 'interrupted' && !s.tmuxPane,
@@ -616,12 +622,17 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   // Native draft stop button (Bot API 10.3): update.stopped_message_generation.
   bot.use(async (ctx, next) => {
-    const stopped = (ctx.update as { stopped_message_generation?: { chat: { id: number }; draft_id: number } }).stopped_message_generation
+    const stopped = (ctx.update as { stopped_message_generation?: { chat: { id: number }; draft_id: number; message_thread_id?: number } }).stopped_message_generation
     if (!stopped) return next()
     const chatId = String(stopped.chat.id)
     if (!can(chatId, 'stop')) return
-    const s = d.activeSessions().find(x => x.lastChat?.chatId === chatId && x.status === 'working')
-    if (s) stopSession(d, s)
+    // The draft names its session; else the thread, if the update has one; else the chat, when only one session works there.
+    const byDraft = d.streams.sessionByDraft(chatId, stopped.draft_id)
+    const working = d.activeSessions().filter(x => x.lastChat?.chatId === chatId && x.status === 'working')
+    const inThread = stopped.message_thread_id != null ? working.filter(x => x.lastChat?.threadId === stopped.message_thread_id) : working
+    const s = byDraft ? d.sessions.get(byDraft) : inThread.length === 1 ? inThread[0] : undefined
+    if (s) stopSession(d, s, 'stopped_message_generation')
+    else d.log(`stopped_message_generation in ${chatId}: draft ${stopped.draft_id} matches no single session (${inThread.length} working)`)
   })
 
   const download = async (fileId: string, uniqueId: string): Promise<string | undefined> => {

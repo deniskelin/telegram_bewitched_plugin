@@ -88,7 +88,7 @@ export async function withoutModel(d: Daemon, ctx: Context, text: string, s: Ses
 
   if (STOP_RE.test(text) && s.status === 'working') {
     if (!can(here.from, 'stop')) return false
-    stopSession(d, s)
+    stopSession(d, s, 'shortcut')
     await react('👌')
     saved(d, 'stop')
     return true
