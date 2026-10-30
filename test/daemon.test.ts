@@ -970,6 +970,38 @@ describe('topics', () => {
     await tg.waitFor('answerCallbackQuery', c => String(c.body.text).includes('tmux'))
     expect(d.sessions.get(sessionId)!.notes.length).toBe(1)
   })
+
+  test('after ⏹ the stopped turn\'s late hooks keep the session idle; the next message makes it working', async () => {
+    const s = d.sessions.get(sessionId)!
+    const thread = s.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    const pane = s.tmuxPane
+    s.tmuxPane = '%9'
+    tg.push(textMessage({ chat: Number(group), text: 'расскажи анекдот', thread }))
+    await client.inbound(x => x.content.endsWith('расскажи анекдот'))
+    await hook('MessageDisplay', { delta: 'Жена отправляет мужа' })
+    expect(s.status).toBe('working')
+    tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
+    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏹ Остановлено')
+    expect(s.status).toBe('idle')
+    // The tail of the streamed text arrives after the Escape; no Stop hook follows.
+    await hook('MessageDisplay', { delta: 'в магазин.' })
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
+    expect(s.status).toBe('idle')
+    expect(s.turn).toBeNull()
+    tg.push(textMessage({ chat: Number(group), text: 'ещё один', thread }))
+    const m = await client.inbound(x => x.content.includes('ещё один'))
+    expect(m.content).toContain('⏹')
+    expect(s.status).toBe('working')
+    await hook('MessageDisplay', { delta: 'Сколько программистов' })
+    expect(s.status).toBe('working')
+    await hook('Stop', {})
+    expect(s.status).toBe('idle')
+    s.tmuxPane = pane
+  })
 })
 
 describe('projects from topics', () => {

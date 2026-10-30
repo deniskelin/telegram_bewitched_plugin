@@ -254,6 +254,12 @@ export class Streams {
     }
   }
 
+  /** The session whose native draft this is (the draft's own stop button). */
+  sessionByDraft(chatId: string, draftId: number): string | null {
+    for (const [id, st] of this.map) if (st.chat.chatId === chatId && st.draftId === draftId) return id
+    return null
+  }
+
   startedAt(s: Session): number | null {
     return this.map.get(s.id)?.startedAt ?? null
   }

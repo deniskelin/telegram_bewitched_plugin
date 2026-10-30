@@ -294,7 +294,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     s.alwaysAllow.clear()
     toast = t('🔐 Разрешения снова спрашиваются')
   } else if (action === 'stop') {
-    toast = stopSession(d, s) === 'interrupted' ? t('⏹ Остановлено') : t('Сейчас нечего останавливать.')
+    toast = stopSession(d, s, 'menu') === 'interrupted' ? t('⏹ Остановлено') : t('Сейчас нечего останавливать.')
   } else if (action === 'main') {
     d.store.set('main_dir', s.projectKey)
     toast = t('👑 Главная → #{id}', { id: s.id })

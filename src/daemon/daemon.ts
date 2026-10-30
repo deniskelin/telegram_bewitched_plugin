@@ -58,6 +58,8 @@ export type Session = {
   /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
   lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string } | null
   turn: { start: number; replied: boolean } | null
+  /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
+  stoppedAt: number | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
   reconnect: boolean
@@ -282,6 +284,7 @@ export class Daemon {
     if (from && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     this.send(session, { t: 'inbound', content, meta })
     session.lastActivity = Date.now()
+    session.stoppedAt = null
     if (from) {
       session.answer = ''
       session.lastChat = from
@@ -340,6 +343,7 @@ export class Daemon {
       lastChat: null,
       lastAnswer: null,
       turn: null,
+      stoppedAt: null,
       notes: [],
       claude: { sessionId: null, transcript: null, permissionMode: null },
       lastTool: null,
