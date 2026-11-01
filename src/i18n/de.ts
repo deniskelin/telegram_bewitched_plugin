@@ -831,6 +831,19 @@ const dict: Dict = {
   "В ценах API": "Zu API-Preisen",
   "🔢 {took} · {v} ток. · кэш {cache}% · ${cost}": "🔢 {took} · {v} Tok. · Cache {cache}% · ${cost}",
   "🔢 Расход хода": "🔢 Kosten des Zugs",
+  "⚠️ Не смог приостановить сессию <b>{v}</b> (#{id}): она не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Она по-прежнему подключена; посмотрите окно в tmux.": "⚠️ Sitzung <b>{v}</b> (#{id}) konnte nicht pausiert werden: Sie wurde weder durch /exit noch durch Ctrl-C oder SIGTERM beendet. Sie ist weiterhin verbunden; prüfen Sie ihr tmux-Fenster.",
+  "⚠️ Сессия #{id} не берёт сообщение: {min} мин без признаков работы.": "⚠️ Sitzung #{id} nimmt die Nachricht nicht an: {min} Min. ohne Anzeichen von Arbeit.",
+  "Экран:": "Bildschirm:",
+  "♻️ Перезапустить": "♻️ Neu starten",
+  "Сессия уже отключилась.": "Die Sitzung ist bereits getrennt.",
+  "Сессия не в tmux — перезапустите её сами.": "Die Sitzung läuft nicht in tmux — starten Sie sie selbst neu.",
+  "♻️ Перезапускаю": "♻️ Starte neu",
+  "♻️ Закрываю сессию #{id}…": "♻️ Schließe Sitzung #{id}…",
+  "❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.": "❌ Sitzung #{id} wurde weder durch /exit noch durch Ctrl-C oder SIGTERM beendet. Prüfen Sie ihr tmux-Fenster.",
+  "⏳ Сессия уже запускается.": "⏳ Die Sitzung startet bereits.",
+  "❌ Не удалось запустить: {v}": "❌ Start fehlgeschlagen: {v}",
+  "🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.": "🚀 Starte die Sitzung in tmux neu: Fenster {v}. Bestätigen Sie:{v2}\nSenden Sie die nicht angenommene Nachricht nach dem Start erneut.",
+  "❓ Claude Code спрашивает — ответьте клавишами ниже. Пока вопрос открыт, сессия не берёт сообщения.": "❓ Claude Code fragt — antworten Sie mit den Tasten unten. Solange die Frage offen ist, nimmt die Sitzung keine Nachrichten an.",
 }
 
 export default dict

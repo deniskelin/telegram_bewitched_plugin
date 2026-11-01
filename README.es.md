@@ -224,6 +224,7 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `OWNER_IDLE_MIN` | `10080` | Cerrar la sesión propia del dueño tras N minutos inactiva (una semana; 0: nunca). `/menu → 💤` sustituye a las tres |
 | `TOPIC_NO_SESSION` | `launch` | Tema de proyecto sin sesión: `launch`: iniciarla, `main`: responde la principal, `queue`: solo cola |
 | `WATCHDOG_GRACE_SEC` | `60` | Cuántos segundos tras detenerse una sesión se avisa |
+| `TURN_STUCK_SEC` | `120` | Avisar si un mensaje entregado pasa N segundos sin señales de vida (ni hook ni escritura en el transcript); 0 — desactivado |
 | `MAIN_DIR` | `~` | Carpeta de la sesión principal (con `USER_SESSIONS=off`: privados y General) |
 | `CONTEXT_WINDOW` | `1000000` | Tamaño de la ventana de contexto para el porcentaje de llenado en las fichas |
 | `CONTEXT_WARN_PCT` | `80` | Con este llenado del contexto, ofrecer `/compact` en el chat de la sesión (0: nunca) |

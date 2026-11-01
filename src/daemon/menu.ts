@@ -18,6 +18,7 @@ import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
 import { listConversations, transcriptInfo } from './transcript.ts'
+import { questionAfterTyping } from './screen.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -144,7 +145,8 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
   await d.tmuxType(s.tmuxPane, line)
   if (action === 'clrok') s.contextWarned = false
-  return { toast: `➡️ ${line}`, sent: true }
+  const question = await questionAfterTyping(d, s.tmuxPane)
+  return { toast: `➡️ ${line}`, sent: true, ...(question ? { screen: question } : {}) }
 }
 
 const dashless = (id: string) => id.replace(/-/g, '')
@@ -259,7 +261,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     }
     const r = await controlAction(d, s, 'resume', c.id)
     await answer(r.toast)
-    if (r.sent) await show(ctx, await sessionScreen(d, s))
+    if (r.sent) await show(ctx, r.screen ?? await sessionScreen(d, s))
     return true
   }
   if (action === 'gdf') {
@@ -279,13 +281,14 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     // The button under a "context is filling up" notice: keep the notice, drop the button.
     const r = await controlAction(d, s, 'cmp', undefined)
     await answer(r.toast)
-    if (r.sent) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+    if (r.screen) await show(ctx, r.screen)
+    else if (r.sent) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
     return true
   }
   if (['cmp', 'clr', 'clrok', 'mdl', 'model'].includes(action)) {
     const r = await controlAction(d, s, action, value)
     if (r.screen) {
-      await answer()
+      await answer(r.toast)
       await show(ctx, r.screen)
       return true
     }

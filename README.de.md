@@ -224,6 +224,7 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `OWNER_IDLE_MIN` | `10080` | Eigene Sitzung des Besitzers nach N Minuten Leerlauf beenden (eine Woche; 0 – nie). `/menu → 💤` überschreibt alle drei |
 | `TOPIC_NO_SESSION` | `launch` | Projektthema ohne Sitzung: `launch` – starten, `main` – die Hauptsitzung antwortet, `queue` – nur Warteschlange |
 | `WATCHDOG_GRACE_SEC` | `60` | Wie viele Sekunden nach dem Ende einer Sitzung sie gemeldet wird |
+| `TURN_STUCK_SEC` | `120` | Warnen, wenn eine zugestellte Nachricht N Sekunden ohne Lebenszeichen bleibt (kein Hook, kein Transkript-Eintrag); 0 — aus |
 | `MAIN_DIR` | `~` | Ordner der Hauptsitzung (bei `USER_SESSIONS=off` – Privatchats und General) |
 | `CONTEXT_WINDOW` | `1000000` | Größe des Kontextfensters für die Füllanzeige auf den Sitzungskarten |
 | `CONTEXT_WARN_PCT` | `80` | Bei dieser Kontextfüllung `/compact` im Chat der Sitzung anbieten (0 – nie) |

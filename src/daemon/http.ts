@@ -53,6 +53,7 @@ export function handleHook(d: Daemon, h: HookEvent): void {
 
 function onHook(d: Daemon, s: Session, h: HookEvent): void {
   const data = h.data
+  s.lastHookAt = Date.now()
   if (typeof data.session_id === 'string') s.claude.sessionId = data.session_id
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode

@@ -57,7 +57,10 @@ export type Session = {
   lastChat: ChatRef | null
   /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
   lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string } | null
-  turn: { start: number; replied: boolean } | null
+  /** stuck: «не берёт сообщение» went out for this turn (watchdog.ts checkTurns). */
+  turn: { start: number; replied: boolean; stuck?: boolean } | null
+  /** The last hook event of this session: a sign of life. */
+  lastHookAt: number
   /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
   stoppedAt: number | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
@@ -283,6 +286,7 @@ export class Daemon {
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     this.send(session, { t: 'inbound', content, meta })
+    if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
     session.stoppedAt = null
     if (from) {
@@ -336,6 +340,7 @@ export class Daemon {
       passive: h.passive,
       connectedAt: Date.now(),
       lastActivity: Date.now(),
+      lastHookAt: 0,
       status: 'idle',
       topic: null,
       group: null,
