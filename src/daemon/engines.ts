@@ -154,6 +154,8 @@ export function writeCodexProfile(bun = process.execPath): string | null {
     `args = ${JSON.stringify(['run', '--cwd', PLUGIN_ROOT, '--shell=bun', '--silent', 'start'])}`,
     'startup_timeout_sec = 60',
     'tool_timeout_sec = 600',
+    // Our own tools (reply, ask_user…) run without «Allow the MCP server to run tool?» — as on Claude's channel.
+    'default_tools_approval_mode = "approve"',
     '',
     ...events.flatMap(e => [`[[hooks.${e}]]`, ...(e === 'PreToolUse' || e === 'PostToolUse' ? ['matcher = "*"'] : []), `[[hooks.${e}.hooks]]`, 'type = "command"', `command = ${tomlString(hook)}`, 'timeout = 3', '']),
   ]
