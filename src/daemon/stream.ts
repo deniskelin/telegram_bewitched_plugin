@@ -45,6 +45,16 @@ type Stream = {
   rich: boolean
 }
 
+/**
+ * Telegram refused an edit because of timing, not because of the content:
+ * a newer edit of the same message won (the answer took the progress message
+ * over), the message is gone, or too many edits. Nothing to downgrade or log.
+ */
+function isEditRace(err: unknown): boolean {
+  const d = err instanceof Error ? err.message : String(err)
+  return /canceled by new edit message request|message to edit not found|Too Many Requests/i.test(d)
+}
+
 export function stopKeyboard(sessionId: string): InlineKeyboard | undefined {
   return settings.stopMode === 'off' ? undefined : new InlineKeyboard([[button(t('⏹ Стоп'), `stop:${sessionId}`, 'danger')]])
 }
@@ -190,22 +200,27 @@ export class Streams {
         await sendDraft(this.d.bot, Number(chatId), st.draftId, { thinking, body, canStop: settings.stopMode !== 'off' },
           threadId != null ? { message_thread_id: threadId } : {})
       } else if (st.progressMsgId != null) {
+        const id = st.progressMsgId
         if (st.rich) {
           try {
-            await editRich(this.d.bot, chatId, st.progressMsgId, this.richProgress(st, thinking, body), { reply_markup: stopKeyboard(s.id) })
+            await editRich(this.d.bot, chatId, id, this.richProgress(st, thinking, body), { reply_markup: stopKeyboard(s.id) })
             return
           } catch (err) {
             if (isMessageNotModified(err)) return
+            // The message was handed to the answer meanwhile (takeProgress), or the edit merely lost a race:
+            // nothing to fall back to — a plain edit would put the progress over the answer.
+            if (st.closed || st.progressMsgId !== id || isEditRace(err)) return
             st.rich = false
             this.d.log(`rich progress failed, plain text from now on: ${err}`)
           }
         }
         const head = t('⏳ Работаю… · {v} ({v2})', { v: verboseBadge(prefsFor(chatId, threadId).verbose), v2: fmtDuration(Date.now() - st.startedAt) })
         const text = [head, thinking, body].filter(Boolean).join('\n\n').slice(0, 4000)
-        await this.d.bot.api.editMessageText(chatId, st.progressMsgId, text, { reply_markup: stopKeyboard(s.id) })
+        if (st.closed || st.progressMsgId !== id) return
+        await this.d.bot.api.editMessageText(chatId, id, text, { reply_markup: stopKeyboard(s.id) })
       }
     } catch (err) {
-      if (!isMessageNotModified(err)) this.d.log(`stream flush failed: ${err}`)
+      if (!isMessageNotModified(err) && !isEditRace(err)) this.d.log(`stream flush failed: ${err}`)
     }
   }
 

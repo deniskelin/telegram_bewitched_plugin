@@ -219,6 +219,22 @@ describe('topics', () => {
     const edit = await tg.waitFor('editMessageText', c => JSON.stringify(c.body.rich_message ?? '').includes('💻 Run tests'))
     expect(String((edit.body.rich_message as { markdown: string }).markdown)).toContain('<blockquote expandable>')
 
+    // An edit that only lost a race (a newer edit of the same message won) keeps the progress rich, with no plain re-edit.
+    const hook = (cmd: string) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event: 'PreToolUse', claudePid: 424242, data: { tool_name: 'Bash', tool_input: { command: cmd, description: cmd } } }),
+    })
+    const plain = () => tg.callsOf('editMessageText').filter(c => String(c.body.text ?? '').startsWith('⏳ Работаю')).length
+    const before = plain()
+    tg.failures.set('editMessageText', { code: 400, description: 'Bad Request: canceled by new edit message request' })
+    await hook('lint')
+    await Bun.sleep(settings.groupEditIntervalMs + 300)
+    tg.failures.delete('editMessageText')
+    expect(plain()).toBe(before)
+    await hook('typecheck')
+    await tg.waitFor('editMessageText', c => JSON.stringify(c.body.rich_message ?? '').includes('typecheck'), 5000)
+
     // The chat ends an answer by editing (the default): the progress message becomes it, no second message.
     const r = await client.call('reply', { chat_id: group, text: 'готово' })
     expect(r.ok).toBe(true)
