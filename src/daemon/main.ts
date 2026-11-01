@@ -23,8 +23,9 @@ import { setLocalSttStarter } from '../voice/stt.ts'
 import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
-import { renotifyStopped, startTurnWatch } from './watchdog.ts'
+import { renotifyStopped, startQuestionWatch, startTurnWatch } from './watchdog.ts'
 import { writeCodexProfile } from './engines.ts'
+import { startHealthWatch } from './health.ts'
 import { inSession } from './lang.ts'
 import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
@@ -127,6 +128,8 @@ try {
   log(`codex profile failed: ${err}`)
 }
 startTurnWatch(d)
+startQuestionWatch(d)
+startHealthWatch(d)
 startLimitWatch(d)
 startTokensWatch(d)
 startDigest(d)

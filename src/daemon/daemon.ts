@@ -262,6 +262,8 @@ export class Daemon {
 
   /** Launches not yet connected, by dir: no second tmux window while the first waits for confirmation. */
   readonly launching = new Map<string, number>()
+  /** dir → the tmux window of its pending launch (launch.ts noteLaunch). */
+  readonly launchWindows = new Map<string, string>()
 
   /** Session for DMs, General and topics without a session of their own. */
   mainSession(): Session | null {

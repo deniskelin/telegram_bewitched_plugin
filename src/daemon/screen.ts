@@ -109,10 +109,21 @@ export function isQuestion(raw: string | null): boolean {
 export async function questionAfterTyping(d: Daemon, pane: string): Promise<{ text: string; kb: InlineKeyboard } | null> {
   if (!/^%\d+$/.test(pane)) return null
   await Bun.sleep(settings.screenRedrawMs + 500)
-  if (!isQuestion(await d.tmuxCapture(pane))) return null
+  const raw = await d.tmuxCapture(pane)
+  if (!raw || !isQuestion(raw)) return null
+  // Shown here already: the question watch (watchdog.ts) does not send it again.
+  shownQuestions.set(pane, questionSig(raw))
   const v = await screenView(d, `p${pane.slice(1)}`, false, t('❓ Claude Code спрашивает — ответьте клавишами ниже. Пока вопрос открыт, сессия не берёт сообщения.'))
   return { text: v.text, kb: v.kb }
 }
+
+/** What identifies a question on a screen: its last lines (the screen above it may scroll). */
+export function questionSig(raw: string): string {
+  return raw.split('\n').map(l => l.trimEnd()).filter(l => l.trim()).slice(-10).join('\n')
+}
+
+/** pane → the question last shown to the chat with keys; the question watch skips it. */
+export const shownQuestions = new Map<string, string>()
 
 /** A command the session did not take (FR-14): its screen with keys, to answer what is open and try again. Null without a pane id. */
 export async function blockedScreen(d: Daemon, pane: string): Promise<{ text: string; kb: InlineKeyboard } | null> {

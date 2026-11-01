@@ -860,6 +860,10 @@ const dict: Dict = {
   "Этот движок не установлен.": "This engine is not installed.",
   "🧠 Проект → {engine}": "🧠 Project → {engine}",
   "🧠 {model} — со следующего запуска": "🧠 {model} — from the next launch",
+  "❓ Сессия #{id} ждёт ответа на экране. Пока вопрос открыт, она не берёт сообщения — ответьте клавишами.": "❓ Session #{id} is waiting for an answer on its screen. While the question is open it takes no messages — answer with the keys.",
+  "🚀 Перезапускаю сессию в tmux с тем же разговором: окно {v}. Подтвердите:{v2}": "🚀 Restarting the session in tmux with the same conversation: window {v}. Confirm:{v2}",
+  "🧨 tmux-сервер перезапустился (pid {from} → {to}): все сессии в нём остановились разом. Частая причина — нехватка памяти. Сессии запустятся снова по сообщениям или кнопками 🚀.": "🧨 The tmux server restarted (pid {from} → {to}): every session in it stopped at once. A common cause is running out of memory. Sessions start again on messages or with the 🚀 buttons.",
+  "🧨 Ядро убило процесс(ы) из-за нехватки памяти: {n} за последние 30 с. Если сессия остановилась без причины — дело в этом. Помогает меньше параллельных сессий и субагентов.": "🧨 The kernel killed process(es) for lack of memory: {n} in the last 30 s. If a session stopped for no reason, this is why. Fewer parallel sessions and subagents help.",
 }
 
 export default dict

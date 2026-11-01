@@ -28,6 +28,7 @@ import { inChat, inSession } from './lang.ts'
 import { projectTitle } from './report.ts'
 import { sendNotice } from './journal.ts'
 import { sessionTarget } from './topics.ts'
+import { isQuestion, questionSig, screenView, shownQuestions } from './screen.ts'
 
 /**
  * session: -n <name> and the tmux name; user: whose session it was; sent: the
@@ -217,8 +218,60 @@ async function warnStuck(d: Daemon, s: Session, min: number): Promise<void> {
   }).catch(err => d.log(`stuck notice failed: ${err}`))
 }
 
-/** wd:re:<session> — close a session that does not answer (with the /exit checks) and start it again with its conversation. */
-async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: string) => Promise<unknown>): Promise<void> {
+// --------------------------------------------------------------------------
+// A question nobody answers (FR-19)
+// --------------------------------------------------------------------------
+
+/** pane → the question seen at the last check: a question must survive two checks (not a redraw). */
+const pendingQuestions = new Map<string, string>()
+
+/**
+ * A question on a session's screen that nobody answers — Codex's «Trust this
+ * folder?» / «Hooks need review», an update prompt, a menu left open. Until
+ * it is answered the session takes no messages. Seen on two checks in a row,
+ * the session's chat gets its screen with keys, once per question. Claude's
+ * permission requests are skipped: they come with buttons already.
+ */
+export function startQuestionWatch(d: Daemon): void {
+  setInterval(() => void checkQuestions(d).catch(err => d.log(`question watch failed: ${err}`)), 20_000).unref?.()
+}
+
+export async function checkQuestions(d: Daemon): Promise<void> {
+  for (const s of d.activeSessions()) {
+    const pane = s.tmuxPane
+    if (!pane || !/^%\d+$/.test(pane)) continue
+    if ([...d.permissions.values()].some(p => p.sessionId === s.id)) continue
+    const raw = await d.tmuxCapture(pane)
+    const sig = raw && isQuestion(raw) ? questionSig(raw) : null
+    if (!sig) {
+      pendingQuestions.delete(pane)
+      shownQuestions.delete(pane)
+      continue
+    }
+    if (shownQuestions.get(pane) === sig) continue
+    if (pendingQuestions.get(pane) !== sig) {
+      pendingQuestions.set(pane, sig)
+      continue
+    }
+    shownQuestions.set(pane, sig)
+    d.log(`session ${s.id}: a question on the screen, sent to its chat`)
+    await warnQuestion(d, s, pane)
+  }
+}
+
+async function warnQuestion(d: Daemon, s: Session, pane: string): Promise<void> {
+  const c = s.lastChat ?? sessionTarget(d, s)
+  if (!c) return
+  await inChat(d, c.chatId, c.threadId, async () => {
+    // The point first: a chat reader sees the question, then the screen.
+    const v = await screenView(d, `p${pane.slice(1)}`)
+    const text = `${tr('❓ Сессия #{id} ждёт ответа на экране. Пока вопрос открыт, она не берёт сообщения — ответьте клавишами.', { id: s.id })}\n\n${v.text}`
+    await d.bot.api.sendMessage(c.chatId, text, { parse_mode: 'HTML', reply_markup: v.kb, ...(c.threadId ? { message_thread_id: c.threadId } : {}) })
+  }).catch(err => d.log(`question notice failed: ${err}`))
+}
+
+/** wd:re / wd:rs:<session> — close a session (with the /exit checks) and start it again with its conversation; stuck — it did not take a message. */
+async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: string) => Promise<unknown>, stuck = true): Promise<void> {
   const s = d.sessions.get(id)
   if (!s) { await answer(tr('Сессия уже отключилась.')); return }
   if (!endSession(d, s)) { await answer(tr('Сессия не в tmux — перезапустите её сами.')); return }
@@ -236,25 +289,28 @@ async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: st
     await edit(l.skipped ? tr('⏳ Сессия уже запускается.') : tr('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }))
     return
   }
-  await edit(tr('🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) }), screenKb(l.window))
+  await edit(stuck
+    ? tr('🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) })
+    : tr('🚀 Перезапускаю сессию в tmux с тем же разговором: окно {v}. Подтвердите:{v2}', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) }), screenKb(l.window))
 }
 
 /**
  * wd:run:<id> — restart a stopped session; wd:topic:<thread> — start a waiting
- * topic's session; wd:re:<session> — restart a session that does not answer
+ * topic's session; wd:re:<session> — restart a session that does not answer,
+ * wd:rs:<session> — the same from its card («♻️ Перезапустить»)
  * (all owner only); wd:ask:<id> — a member asks the owner to restart their
  * own session.
  */
 export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^wd:(run|topic|ask|re):([0-9a-f]+|\d+)$/.exec(data)
+  const m = /^wd:(run|topic|ask|re|rs):([0-9a-f]+|\d+)$/.exec(data)
   if (!m) return false
   const answer = (t?: string) => ctx.answerCallbackQuery(t ? { text: t } : undefined).catch(() => {})
   if (!ctx.from || !can(ctx.from.id, m[1] === 'ask' ? 'write' : 'control')) {
     await answer(tr('Нет доступа.'))
     return true
   }
-  if (m[1] === 're') {
-    await restartStuck(d, ctx, m[2], answer)
+  if (m[1] === 're' || m[1] === 'rs') {
+    await restartStuck(d, ctx, m[2], answer, m[1] === 're')
     return true
   }
   if (m[1] === 'topic') {

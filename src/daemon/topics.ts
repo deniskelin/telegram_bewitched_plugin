@@ -161,8 +161,10 @@ function fmtTime(sec: number): string {
 /** On connect: topic, welcome card, and a resume event with memory, recent history and queued messages. */
 export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> {
   if (s.passive) return
-  d.launching.delete(s.projectKey)
-  d.launching.delete(s.cwd)
+  for (const dir of [s.projectKey, s.cwd]) {
+    d.launching.delete(dir)
+    d.launchWindows.delete(dir)
+  }
   onSessionBack(d, s.cwd)
   onLaunchConnected(d, s.cwd)
   try {

@@ -348,21 +348,38 @@ async function handleRemindCallback(d: Daemon, ctx: Context, m: RegExpExecArray)
 
 const RELAUNCH_MS = 10 * 60_000
 
-type Launch = { ok: true; window: string } | { ok: false; skipped: boolean; error: string }
+type Launch = { ok: true; window: string } | { ok: false; skipped: boolean; error: string; window?: string }
 
-/** Launch once per dir until that session connects (or RELAUNCH_MS passes). */
+/**
+ * Launch once per dir until that session connects: while RELAUNCH_MS has not
+ * passed, or for as long as the launched window lives (FR-19 — it may wait on
+ * a question for an hour; a second launch only left a second window waiting).
+ */
 export async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Launch> {
   const at = d.launching.get(dir)
-  if (at && Date.now() - at < RELAUNCH_MS) return { ok: false, skipped: true, error: '' }
+  if (at && (Date.now() - at < RELAUNCH_MS || await launchAlive(d, dir))) return { ok: false, skipped: true, error: '', window: d.launchWindows.get(dir) }
   d.launching.set(dir, Date.now())
   try {
     const window = await d.launchSession(dir, o)
-    watchLaunch(d, dir, window)
+    noteLaunch(d, dir, window)
     return { ok: true, window }
   } catch (err) {
     d.launching.delete(dir)
     return { ok: false, skipped: false, error: String(err instanceof Error ? err.message : err) }
   }
+}
+
+/** A launch of dir is under way in this window: the lock, and the reminders. */
+export function noteLaunch(d: Daemon, dir: string, window: string): void {
+  d.launching.set(dir, Date.now())
+  d.launchWindows.set(dir, window)
+  watchLaunch(d, dir, window)
+}
+
+/** The window of dir's pending launch is still there. */
+async function launchAlive(d: Daemon, dir: string): Promise<boolean> {
+  const win = d.launchWindows.get(dir)
+  return win != null && (await d.tmuxPaneId(windowTarget(win))) != null
 }
 
 function hasTranscripts(dir: string): boolean {
@@ -443,7 +460,7 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
   const launchable = !projectKey.includes('#') && existsSync(projectKey)
   const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: tr('папки проекта нет') }
   if (!r.ok && r.skipped) {
-    await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'))
+    await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'), r.window ? screenKb(r.window) : undefined)
     return
   }
   if (r.ok) {
@@ -512,7 +529,7 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   let win: string
   try {
     win = await d.launchSession(dir, { name: sessionName(d, dir) })
-    watchLaunch(d, dir, win)
+    noteLaunch(d, dir, win)
   } catch (err) {
     await say(d, where.chatId, where.threadId, tr('❌ Не удалось запустить сессию в tmux: {v}', { v: escapeHtml(String(err instanceof Error ? err.message : err)) }))
     return
