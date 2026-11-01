@@ -1028,6 +1028,34 @@ describe('topics', () => {
     s.tmuxPane = pane
   })
 
+  test('FR-16: a Codex session gets messages with codex queue (typed on one line before its thread is known), no stream_answer', async () => {
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/cx', projectRoot: '/tmp/cx', claudePid: 616161, tmuxPane: '%61', engine: 'codex' } as never)
+    const s = [...d.sessions.values()].find(x => x.claudePid === 616161)!
+    expect(s.engine).toBe('codex')
+    for (let i = 0; i < 100 && !s.topic; i++) await Bun.sleep(20)
+    const saved = { type: d.tmuxType, queue: d.codexQueue }
+    const typed: string[] = []
+    const queued: [string, string][] = []
+    d.tmuxType = async (_pane, text) => { typed.push(text) }
+    d.codexQueue = async (thread, text) => { queued.push([thread, text]) }
+    try {
+      tg.push(textMessage({ chat: Number(group), text: 'первое\nсообщение', thread: s.topic!.threadId }))
+      for (let i = 0; i < 100 && !typed.length; i++) await Bun.sleep(20)
+      expect(typed[0]).toMatch(/^<channel source="telegram-bewitched" .*> первое сообщение <\/channel>$/)
+      expect(typed[0]).not.toContain('stream_answer')
+      expect(c.msgs.some(m => m.t === 'inbound')).toBe(false)
+      s.claude.sessionId = '01a19724-efea'
+      tg.push(textMessage({ chat: Number(group), text: 'второе', thread: s.topic!.threadId }))
+      for (let i = 0; i < 100 && !queued.length; i++) await Bun.sleep(20)
+      expect(queued[0][0]).toBe('01a19724-efea')
+      expect(queued[0][1]).toContain('\nвторое\n</channel>')
+    } finally {
+      Object.assign(d, { tmuxType: saved.type, codexQueue: saved.queue })
+      c.close()
+    }
+  })
+
   test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
     const { checkTurns } = await import('../src/daemon/watchdog.ts')
     const { endTiming } = await import('../src/daemon/launch.ts')

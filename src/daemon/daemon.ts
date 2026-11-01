@@ -20,7 +20,7 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
-import { withProjectEngine, type EngineId } from './engines.ts'
+import { channelText, codexDeliver, codexQueue, withProjectEngine, type EngineId } from './engines.ts'
 import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 import { sendNotice } from './journal.ts'
 
@@ -287,8 +287,10 @@ export class Daemon {
     // Out of tokens: the message waits for the reset (outoftokens.ts).
     if (from && holdIfPaused(this, session, content, meta, from)) return
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
-    if (from && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
-    this.send(session, { t: 'inbound', content, meta })
+    if (from && session.engine === 'claude' && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
+    // Codex has no channel: the message goes into its thread with codex queue (FR-16).
+    if (session.engine === 'codex') void codexDeliver(this, session, channelText(content, meta)).catch(err => this.log(`deliver to codex session ${session.id} failed: ${err}`))
+    else this.send(session, { t: 'inbound', content, meta })
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
     session.stoppedAt = null
@@ -323,6 +325,8 @@ export class Daemon {
   /** Type a line (e.g. "/compact") into a pane and press Enter. Replaced in tests. */
   tmuxType: (target: string, text: string) => Promise<void> = tmuxType
   tmuxKillWindow: (target: string) => Promise<void> = tmuxKillWindow
+  /** A message into a Codex thread (FR-16). Replaced in tests. */
+  codexQueue: (thread: string, text: string) => Promise<void> = codexQueue
   /** Pane id (%N) of a tmux window. Replaced in tests. */
   tmuxPaneId: (target: string) => Promise<string | null> = tmuxPaneId
 
@@ -344,7 +348,7 @@ export class Daemon {
       connectedAt: Date.now(),
       lastActivity: Date.now(),
       lastHookAt: 0,
-      engine: 'claude',
+      engine: h.engine === 'codex' ? 'codex' : 'claude',
       status: 'idle',
       topic: null,
       group: null,

@@ -24,6 +24,7 @@ import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
 import { renotifyStopped, startTurnWatch } from './watchdog.ts'
+import { writeCodexProfile } from './engines.ts'
 import { inSession } from './lang.ts'
 import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
@@ -118,6 +119,13 @@ startHttp(d)
 startQuestionExpiry(d)
 d.startIdleWatch(() => shutdown())
 startIdleCloser(d)
+// FR-16: Codex sessions start with this profile (our MCP server, hooks, instructions).
+try {
+  const profile = writeCodexProfile()
+  if (profile) log(`codex profile: ${profile}`)
+} catch (err) {
+  log(`codex profile failed: ${err}`)
+}
 startTurnWatch(d)
 startLimitWatch(d)
 startTokensWatch(d)

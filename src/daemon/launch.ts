@@ -203,7 +203,7 @@ export const endTiming = { checkMs: 20_000 }
  * The end is checked: a session still connected after endTiming.checkMs gets
  * Ctrl-C twice, then SIGTERM (ensureEnded).
  */
-export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null; claudePid?: number | null }): boolean {
+export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null; claudePid?: number | null; engine?: EngineId }): boolean {
   if (!s.tmuxPane) return false
   d.ending.add(s.id) // planned: the watchdog stays quiet
   const pane = s.tmuxPane
@@ -211,10 +211,10 @@ export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null; 
     await d.tmuxKeys(pane, ['Escape'])
     await Bun.sleep(700)
     try {
-      await d.tmuxType(pane, '/exit')
+      await d.tmuxType(pane, engineOf(s.engine).exitCommand)
     } catch (err) {
       if (!(err instanceof InputBlocked)) throw err
-      // A question took the input: /exit was not typed into it; Ctrl-C closes it and exits.
+      // A question took the input: /exit was not typed into it; Ctrl-C closes it and exits (Claude Code and Codex alike).
       d.log(`end session ${s.id}: /exit not taken (a question on the screen?), pressing Ctrl-C`)
       await d.tmuxKeys(pane, ['C-c'])
       await Bun.sleep(500)

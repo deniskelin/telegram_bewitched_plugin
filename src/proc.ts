@@ -28,19 +28,22 @@ export function cmdlineOf(pid: number): string[] {
   }
 }
 
-function isClaude(pid: number): boolean {
+/** The agent CLI a process is: Claude Code or Codex (FR-16), by its name or argv[0]. */
+export function agentOf(pid: number): 'claude' | 'codex' | null {
+  let comm = ''
   try {
-    if (readFileSync(`/proc/${pid}/comm`, 'utf8').trim() === 'claude') return true
+    comm = readFileSync(`/proc/${pid}/comm`, 'utf8').trim()
   } catch {}
-  const argv0 = cmdlineOf(pid)[0]
-  return argv0 != null && basename(argv0) === 'claude'
+  const argv0 = basename(cmdlineOf(pid)[0] ?? '')
+  for (const name of ['claude', 'codex'] as const) if (comm === name || argv0 === name) return name
+  return null
 }
 
-/** Nearest ancestor that is the Claude Code CLI, or null. */
+/** Nearest ancestor that is an agent CLI (Claude Code or Codex), or null. */
 export function findClaudePid(start = process.pid): number | null {
   let pid: number | null = start
   for (let i = 0; i < 16 && pid != null && pid > 1; i++) {
-    if (isClaude(pid)) return pid
+    if (agentOf(pid)) return pid
     pid = ppidOf(pid)
   }
   return null
@@ -70,6 +73,8 @@ export function isAlive(pid: number): boolean {
  * messages — this is what stops `claude -p` children from stealing them.
  */
 export function isPassiveLaunch(argv: string[]): boolean {
+  // Codex: ours only when started with the bewitched profile (-p is --profile there).
+  if (basename(argv[0] ?? '') === 'codex') return !argv.some((a, i) => (a === '-p' || a === '--profile') && argv[i + 1] === 'bewitched')
   if (argv.includes('-p') || argv.includes('--print')) return true
   const flagIdx = argv.findIndex(a =>
     a === '--channels' || a === '--dangerously-load-development-channels'
