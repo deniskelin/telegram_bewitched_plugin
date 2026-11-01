@@ -20,6 +20,7 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
+import { withProjectEngine, type EngineId } from './engines.ts'
 import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
 import { sendNotice } from './journal.ts'
 
@@ -61,6 +62,8 @@ export type Session = {
   turn: { start: number; replied: boolean; stuck?: boolean } | null
   /** The last hook event of this session: a sign of life. */
   lastHookAt: number
+  /** The agent CLI behind it (FR-15); everything connecting over the channel is Claude Code. */
+  engine: EngineId
   /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
   stoppedAt: number | null
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
@@ -310,8 +313,8 @@ export class Daemon {
 
   /** Hand text to whichever session serves the chat, as a message from fromId (queue/launch if needed). Set by inbound. */
   routeText: (chat: ChatRef, fromId: string, text: string, meta: Record<string, string>) => Promise<void> = async () => {}
-  /** Start a Claude Code session in dir; returns the tmux window. Replaced in tests. */
-  launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = tmuxLaunch
+  /** Start a session in dir with the project's engine and model; returns the tmux window. Replaced in tests. */
+  launchSession: (dir: string, o?: LaunchOptions) => Promise<string> = (dir, o) => tmuxLaunch(dir, withProjectEngine(this, dir, o))
   /** Where a tmux pane lives. Replaced in tests. */
   tmuxLocation: (pane: string) => Promise<TmuxLocation | null> = tmuxLocation
   /** Screen of a pane/window and key presses into it. Replaced in tests. */
@@ -341,6 +344,7 @@ export class Daemon {
       connectedAt: Date.now(),
       lastActivity: Date.now(),
       lastHookAt: 0,
+      engine: 'claude',
       status: 'idle',
       topic: null,
       group: null,

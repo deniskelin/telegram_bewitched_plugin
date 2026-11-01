@@ -18,6 +18,7 @@ import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { inChat, inSession } from './lang.ts'
 import { isQuestion, isStartupPrompt } from './screen.ts'
+import { engineOf, type EngineId } from './engines.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { sendNotice } from './journal.ts'
@@ -60,13 +61,12 @@ function run(args: string[]): Promise<string> {
  * comes from settings, never from chat input; the dir is passed as an
  * argument, not through a shell.
  */
-export type LaunchOptions = { continue?: boolean; resume?: string; name?: string }
+/** engine and model: the project's choice (engines.ts), filled in by Daemon.launchSession. */
+export type LaunchOptions = { continue?: boolean; resume?: string; name?: string; engine?: EngineId; model?: string }
 
-/** CLAUDE_LAUNCH_CMD plus -n <name> (a slug) and --resume <id> (ids are checked) or --continue. */
+/** The engine's command line: for Claude Code, CLAUDE_LAUNCH_CMD plus -n, --model, --resume / --continue. */
 export function launchCommand(o: LaunchOptions = {}): string {
-  const base = o.name && /^[\p{L}\p{N}._-]+$/u.test(o.name) ? `${settings.launchCmd} -n ${o.name}` : settings.launchCmd
-  if (o.resume && /^[\w-]+$/.test(o.resume)) return `${base} --resume ${o.resume}`
-  return o.continue ? `${base} --continue` : base
+  return engineOf(o.engine).launchCommand(o)
 }
 
 /**

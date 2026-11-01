@@ -9,6 +9,7 @@ import { settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
+import { engineOf, projectEngine } from './engines.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
 import { projectRules } from './permrules.ts'
@@ -109,6 +110,17 @@ function transcriptOf(s: Session, argv: string[]): string | null {
  * topic), the essentials in a quote (how to attach, mode/stop/RC, model and
  * context, current action) and the rest in a collapsed quote.
  */
+/** «Codex · » before the model for engines other than Claude Code (FR-15). */
+function engineLabel(s: Session): string {
+  return s.engine === 'claude' ? '' : `${escapeHtml(engineOf(s.engine).name)} · `
+}
+
+/** « · для проекта: sonnet-5-5» when the project starts on another model than the one running. */
+function projectModelNote(d: Daemon, s: Session, running: string | null): string {
+  const want = projectEngine(d, s.projectKey).model
+  return want && want !== running ? t(' · для проекта: {m}', { m: escapeHtml(want.replace(/^claude-/, '')) }) : ''
+}
+
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   const isMain = s === d.mainSession()
   const now = Date.now()
@@ -152,7 +164,10 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     // Over the configured window means the real one is bigger: show the size only.
     const win = settings.contextWindow
     const fill = tr.tokens <= win ? t(' из {v} ({v2}%)', { v: fmtTokens(win), v2: Math.round((tr.tokens / win) * 100) }) : ''
-    main.push(`🧠 ${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}`)
+    main.push(`🧠 ${engineLabel(s)}${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}${projectModelNote(d, s, tr.model)}`)
+  } else {
+    const note = projectModelNote(d, s, null)
+    if (note || s.engine !== 'claude') main.push(`🧠 ${engineLabel(s)}${note.replace(/^ · /, '')}`.replace(/ · $/, ''))
   }
   if (s.alwaysAllow.size) main.push(t('♾ без вопросов: {v}', { v: [...s.alwaysAllow].map(escapeHtml).join(', ') }))
   const rules = projectRules(d, s.projectKey)

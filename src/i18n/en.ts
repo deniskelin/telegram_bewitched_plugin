@@ -847,6 +847,12 @@ const dict: Dict = {
   "⛔ {line} не набрана: сессия ждёт ответа на экране": "⛔ {line} not typed: the session is waiting for an answer on its screen",
   "⛔ Не набрал: сессия ждёт ответа на экране": "⛔ Not typed: the session is waiting for an answer on its screen",
   "⛔ Не набрал: сессия не приняла ввод — на экране вопрос или меню. Ответьте клавишами ниже и повторите команду.": "⛔ Not typed: the session did not take the input — a question or menu is on its screen. Answer with the keys below and repeat the command.",
+  " · для проекта: {m}": " · for the project: {m}",
+  "↩️ Модель по умолчанию CLI": "↩️ CLI default model",
+  "Движок: <b>{engine}</b> · для проекта: <b>{model}</b>": "Engine: <b>{engine}</b> · for the project: <b>{model}</b>",
+  "по умолчанию CLI": "CLI default",
+  "<i>Выбранная модель запоминается для проекта: следующие запуски сессии — сразу на ней.</i>": "<i>The chosen model is remembered for the project: the session's next launches start on it.</i>",
+  "↩️ Следующие запуски — на модели по умолчанию CLI": "↩️ Next launches use the CLI default model",
 }
 
 export default dict

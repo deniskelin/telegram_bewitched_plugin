@@ -527,3 +527,32 @@ describe('typing into a session (FR-14)', () => {
     expect(swallowed.runs.some(r => r.includes('Enter'))).toBe(false)
   })
 })
+
+describe('engines (FR-15)', () => {
+  test('Claude Code command: -n, --model (checked), --resume / --continue; unknown engines fall back to it', async () => {
+    const { claude, engineOf } = await import('../src/daemon/engines.ts')
+    const { settings } = await import('../src/config.ts')
+    const base = settings.launchCmd
+    expect(claude.launchCommand({})).toBe(base)
+    expect(claude.launchCommand({ name: 'claude-project-x', model: 'claude-sonnet-5-5', continue: true })).toBe(`${base} -n claude-project-x --model claude-sonnet-5-5 --continue`)
+    expect(claude.launchCommand({ model: 'x; rm -rf /', resume: 'abc-123' })).toBe(`${base} --resume abc-123`)
+    expect(engineOf('nope')).toBe(claude)
+    expect(claude.isModal('   Switch model?\n   ❯ 1. Yes')).toBe(true)
+    expect(claude.isPromptReady('────\n❯ \n────')).toBe(true)
+  })
+
+  test('a project remembers its engine and model; launches take them unless the caller chose', async () => {
+    const { projectEngine, setProjectEngine, withProjectEngine } = await import('../src/daemon/engines.ts')
+    const d = { store: new Store(':memory:') } as never
+    expect(projectEngine(d, '/p')).toEqual({ engine: 'claude' })
+    expect(withProjectEngine(d, '/p', { name: 'n' })).toEqual({ engine: 'claude', name: 'n' })
+    setProjectEngine(d, '/p', { engine: 'claude', model: 'claude-haiku-5-5' })
+    expect(withProjectEngine(d, '/p', { continue: true })).toEqual({ engine: 'claude', model: 'claude-haiku-5-5', continue: true })
+    expect(withProjectEngine(d, '/p', { model: 'claude-opus-5-5' }).model).toBe('claude-opus-5-5')
+    // A model the engine does not offer (an old record) is dropped.
+    ;(d as { store: Store }).store.set('engine:/p', JSON.stringify({ engine: 'claude', model: 'gpt-9' }))
+    expect(projectEngine(d, '/p')).toEqual({ engine: 'claude' })
+    setProjectEngine(d, '/p', { engine: 'claude' })
+    expect(projectEngine(d, '/p')).toEqual({ engine: 'claude' })
+  })
+})
