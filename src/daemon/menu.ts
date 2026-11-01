@@ -86,6 +86,7 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     const actions: Btn[] = []
     if (s !== d.mainSession() && !user) actions.push(button(t('👑 Сделать главной'), `sm:main:${s.id}`))
     if (s.topic) actions.push(button(t('🗄 В архив'), `sm:ar:${s.id}`))
+    if (s.tmuxPane) actions.push(button(t('♻️ Перезапустить'), `wd:rs:${s.id}`))
     if (actions.length) rows.push(actions)
     if (s.group) rows.push([button(t('👥 Отвязать группу'), `gp:unbind:${s.group.chatId}`, 'danger')])
     if (user && user !== owner()) rows.push([button(t('🚫 Удалить пользователя'), `ur:ask:${user}`, 'danger')])

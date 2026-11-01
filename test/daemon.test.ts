@@ -1072,6 +1072,57 @@ describe('topics', () => {
     }
   })
 
+  test('FR-19: a question on a screen goes to the chat once (after two checks); the launch lock holds while the launch window lives; a replaced tmux server is reported', async () => {
+    const { checkQuestions } = await import('../src/daemon/watchdog.ts')
+    const { launchOnce } = await import('../src/daemon/launch.ts')
+    const { checkHealth } = await import('../src/daemon/health.ts')
+    const s = d.sessions.get(sessionId)!
+    const saved = { pane: s.tmuxPane, capture: d.tmuxCapture, paneId: d.tmuxPaneId }
+    s.tmuxPane = '%71'
+    let screen = '  Hooks need review\n› 1. Review hooks\n  2. Trust all and continue\n  enter confirm · esc skip'
+    d.tmuxCapture = async () => screen
+    const asked = (x: { body: Record<string, unknown> }) => String(x.body.text).includes(`❓ Сессия #${sessionId} ждёт ответа на экране`)
+    try {
+      await checkQuestions(d)
+      expect(tg.callsOf('sendMessage').filter(asked).length).toBe(0)
+      await checkQuestions(d)
+      const q = await tg.waitFor('sendMessage', asked)
+      expect(JSON.stringify(q.body.reply_markup)).toContain('tx:p71:2')
+      await checkQuestions(d)
+      expect(tg.callsOf('sendMessage').filter(asked).length).toBe(1)
+      screen = '› Ask Codex to do anything'
+      await checkQuestions(d)
+      screen = '  Trust this folder?\n› 1. Trust and continue\n  enter continue · esc quit'
+      await checkQuestions(d)
+      await checkQuestions(d)
+      expect(tg.callsOf('sendMessage').filter(asked).length).toBe(2)
+
+      // A launch that waits on a question keeps the lock past RELAUNCH_MS while its window lives.
+      d.launching.set('/tmp/lock', Date.now() - 3600_000)
+      d.launchWindows.set('/tmp/lock', '7')
+      d.tmuxPaneId = async () => '%7'
+      expect(await launchOnce(d, '/tmp/lock', {})).toEqual({ ok: false, skipped: true, error: '', window: '7' })
+      d.tmuxPaneId = async () => null
+      expect((await launchOnce(d, '/tmp/lock', {})).ok).toBe(true)
+
+      const state = { tmuxPid: null as number | null, oomKills: null as number | null }
+      let pid = 100
+      let oom = 3
+      const reads = { tmuxPid: async () => pid, oomKills: () => oom }
+      await checkHealth(d, state, reads)
+      pid = 200
+      oom = 5
+      await checkHealth(d, state, reads)
+      await tg.waitFor('sendMessage', x => String(x.body.text).includes('tmux-сервер перезапустился (pid 100 → 200)'))
+      await tg.waitFor('sendMessage', x => String(x.body.text).includes('нехватки памяти: 2 за последние 30 с'))
+    } finally {
+      s.tmuxPane = saved.pane
+      Object.assign(d, { tmuxCapture: saved.capture, tmuxPaneId: saved.paneId })
+      d.launching.delete('/tmp/lock')
+      d.launchWindows.delete('/tmp/lock')
+    }
+  })
+
   test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
     const { checkTurns } = await import('../src/daemon/watchdog.ts')
     const { endTiming } = await import('../src/daemon/launch.ts')
