@@ -1123,6 +1123,28 @@ describe('topics', () => {
     }
   })
 
+  test('/usage counts Codex too: its plan, windows, tokens by model and by session', async () => {
+    const { mkdirSync, writeFileSync } = await import('fs')
+    const { join } = await import('path')
+    const { usageReport } = await import('../src/daemon/usage.ts')
+    const now = Date.now()
+    const dir = join(process.env.CODEX_HOME!, 'sessions', '2026', '11', '02')
+    mkdirSync(dir, { recursive: true })
+    const at = (ms: number) => new Date(now - ms).toISOString()
+    const rl = { primary: { used_percent: 12, window_minutes: 300, resets_at: Math.round(now / 1000) + 3600 }, secondary: { used_percent: 4, window_minutes: 10080, resets_at: Math.round(now / 1000) + 86_400 }, plan_type: 'plus' }
+    writeFileSync(join(dir, 'rollout-test.jsonl'), [
+      { timestamp: at(60_000), type: 'session_meta', payload: { cwd: '/tmp/cxusage' } },
+      { timestamp: at(59_000), type: 'turn_context', payload: { model: 'gpt-6.1-sol' } },
+      { timestamp: at(50_000), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 30_000, cached_input_tokens: 20_000, output_tokens: 500 } }, rate_limits: rl } },
+    ].map(x => JSON.stringify(x)).join('\n'))
+    const text = await usageReport(d, now, 'd')
+    expect(text).toContain(' · Codex: plus')
+    expect(text).toContain('Codex: 5 часов: <b>12%</b>')
+    expect(text).toContain('Codex — 5 часов: 31 тыс. ток.')
+    expect(text).toContain('gpt-6.1-sol: 31 тыс. ток.')
+    expect(text).toContain('cxusage: 31 тыс. ток.')
+  })
+
   test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
     const { checkTurns } = await import('../src/daemon/watchdog.ts')
     const { endTiming } = await import('../src/daemon/launch.ts')
