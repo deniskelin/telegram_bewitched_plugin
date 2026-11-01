@@ -493,3 +493,37 @@ describe('screen questions', () => {
     expect(isQuestion(null)).toBe(false)
   })
 })
+
+describe('typing into a session (FR-14)', () => {
+  const idle = (input: string) => `✻ Cooked for 18s\n${'─'.repeat(40)}\n❯ ${input}\n${'─'.repeat(40)}\n  ⏵⏵ auto mode on`
+  const fake = (screens: string[]) => {
+    const runs: string[][] = []
+    let i = 0
+    return { runs, io: { run: async (a: string[]) => { runs.push(a); return '' }, capture: async () => screens[Math.min(i++, screens.length - 1)], sleep: async () => {} } }
+  }
+
+  test('the input line: after ❯ or ›, wrapped lines joined, spaces ignored', async () => {
+    const { inputShows } = await import('../src/daemon/launch.ts')
+    expect(inputShows(idle('/model claude-sonnet-5-5'), '/model claude-sonnet-5-5')).toBe(true)
+    expect(inputShows(`❯ /model claude-son\n  net-5-5\n${'─'.repeat(9)}`, '/model claude-sonnet-5-5')).toBe(true)
+    expect(inputShows('› /exit', '/exit')).toBe(true)
+    expect(inputShows(idle(''), '/exit')).toBe(false)
+    // A menu below the input: its ❯ is the last one, the text is not there.
+    expect(inputShows(`${idle('/exit')}\n   Switch model?\n   ❯ 1. Yes`, '/exit')).toBe(false)
+  })
+
+  test('Enter goes only after the text shows up; nothing is typed while a question is open', async () => {
+    const { tmuxType, InputBlocked } = await import('../src/daemon/launch.ts')
+    const ok = fake([idle(''), idle(''), idle('/compact')])
+    await tmuxType('%1', '/compact', ok.io)
+    expect(ok.runs).toEqual([['send-keys', '-t', '%1', '-l', '/compact'], ['send-keys', '-t', '%1', 'Enter']])
+
+    const asked = fake(['   Switch model?\n   ❯ 1. Yes, switch to Sonnet 5.5\n     2. No, go back'])
+    await expect(tmuxType('%1', '/exit', asked.io)).rejects.toBeInstanceOf(InputBlocked)
+    expect(asked.runs).toEqual([])
+
+    const swallowed = fake([idle('')])
+    await expect(tmuxType('%1', '/exit', swallowed.io)).rejects.toBeInstanceOf(InputBlocked)
+    expect(swallowed.runs.some(r => r.includes('Enter'))).toBe(false)
+  })
+})

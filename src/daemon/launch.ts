@@ -17,7 +17,7 @@ import { escapeHtml } from '../format.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { inChat, inSession } from './lang.ts'
-import { isStartupPrompt } from './screen.ts'
+import { isQuestion, isStartupPrompt } from './screen.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { sendNotice } from './journal.ts'
@@ -131,10 +131,52 @@ export function tmuxCapture(target: string): Promise<string | null> {
   return run(['capture-pane', '-p', '-t', target]).catch(() => null)
 }
 
-/** Type text literally into a pane, then Enter. */
-export async function tmuxType(target: string, text: string): Promise<void> {
-  await run(['send-keys', '-t', target, '-l', text])
-  await run(['send-keys', '-t', target, 'Enter'])
+/** The TUI did not take a typed line (a question was open, or the text never showed up); nothing was confirmed. */
+export class InputBlocked extends Error {
+  constructor(readonly screen: string) {
+    super('the session did not take the input')
+  }
+}
+
+/** The text in the input line — after ❯ (Claude Code) or › (Codex), wrapped lines included; spaces are ignored. */
+export function inputShows(screen: string, text: string): boolean {
+  const lines = screen.split('\n')
+  const at = lines.findLastIndex(l => /^\s*[❯›]/.test(l))
+  if (at < 0) return false
+  const box: string[] = []
+  for (const l of lines.slice(at, at + 4)) {
+    if (box.length && /^[\s─━]*$/.test(l)) break
+    box.push(l)
+  }
+  const squash = (s: string) => s.replace(/\s+/g, '')
+  return squash(box.join('')).includes(squash(text).slice(0, 40))
+}
+
+type TypeIo = { run: (args: string[]) => Promise<string>; capture: (target: string) => Promise<string | null>; sleep: (ms: number) => Promise<void> }
+const typeIo: TypeIo = { run, capture: target => tmuxCapture(target), sleep: ms => Bun.sleep(ms) }
+
+/**
+ * Type a line into a session and press Enter — only once it is seen in the
+ * input line (FR-14). An open question (a menu, a confirmation) takes keys as
+ * answers: Enter approves whatever is selected (a command, a model switch),
+ * digits pick options. So nothing is typed while one is on the screen, and
+ * Enter goes only after the text shows up after ❯; otherwise InputBlocked
+ * with the screen.
+ */
+export async function tmuxType(target: string, text: string, io: TypeIo = typeIo): Promise<void> {
+  const before = (await io.capture(target)) ?? ''
+  if (isQuestion(before)) throw new InputBlocked(before)
+  await io.run(['send-keys', '-t', target, '-l', text])
+  let screen = ''
+  for (let i = 0; i < 4; i++) {
+    await io.sleep(250)
+    screen = (await io.capture(target)) ?? ''
+    if (inputShows(screen, text)) {
+      await io.run(['send-keys', '-t', target, 'Enter'])
+      return
+    }
+  }
+  throw new InputBlocked(screen)
 }
 
 /** The pane id (%N) of a window; null when it is gone. Replaced in tests via Daemon. */
@@ -168,7 +210,16 @@ export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null; 
   void (async () => {
     await d.tmuxKeys(pane, ['Escape'])
     await Bun.sleep(700)
-    await d.tmuxType(pane, '/exit')
+    try {
+      await d.tmuxType(pane, '/exit')
+    } catch (err) {
+      if (!(err instanceof InputBlocked)) throw err
+      // A question took the input: /exit was not typed into it; Ctrl-C closes it and exits.
+      d.log(`end session ${s.id}: /exit not taken (a question on the screen?), pressing Ctrl-C`)
+      await d.tmuxKeys(pane, ['C-c'])
+      await Bun.sleep(500)
+      await d.tmuxKeys(pane, ['C-c'])
+    }
   })().catch(err => d.log(`end session ${s.id}: ${err instanceof Error ? err.message : err}`))
   setTimeout(() => void ensureEnded(d, s.id, pane, s.claudePid ?? null).catch(err => d.log(`end session ${s.id}: ${err}`)), endTiming.checkMs).unref?.()
   return true

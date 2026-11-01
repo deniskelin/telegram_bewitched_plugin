@@ -18,7 +18,8 @@ import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
 import { listConversations, transcriptInfo } from './transcript.ts'
-import { questionAfterTyping } from './screen.ts'
+import { blockedScreen, questionAfterTyping } from './screen.ts'
+import { InputBlocked } from './launch.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -143,7 +144,13 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   if (s.turn || s.status !== 'idle') return { toast: t('Сессия работает — дождитесь конца хода или нажмите ⏹.') }
   const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
-  await d.tmuxType(s.tmuxPane, line)
+  try {
+    await d.tmuxType(s.tmuxPane, line)
+  } catch (err) {
+    if (!(err instanceof InputBlocked)) throw err
+    const screen = await blockedScreen(d, s.tmuxPane)
+    return { toast: t('⛔ {line} не набрана: сессия ждёт ответа на экране', { line }), ...(screen ? { screen } : {}) }
+  }
   if (action === 'clrok') s.contextWarned = false
   const question = await questionAfterTyping(d, s.tmuxPane)
   return { toast: `➡️ ${line}`, sent: true, ...(question ? { screen: question } : {}) }
