@@ -14,6 +14,7 @@ import { basename, isAbsolute, join, relative, resolve } from 'path'
 import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
+import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { inChat, inSession } from './lang.ts'
 import { isStartupPrompt } from './screen.ts'
@@ -151,22 +152,61 @@ export async function tmuxKeys(target: string, keys: string[]): Promise<void> {
   for (const k of keys) await run(['send-keys', '-t', target, k])
 }
 
+/** How long a session gets to disconnect after /exit, and again after Ctrl-C. Replaced in tests. */
+export const endTiming = { checkMs: 20_000 }
+
 /**
  * End a Claude Code session from outside: interrupt the current turn, then
  * type /exit into its tmux pane. Returns false when the session isn't in tmux.
+ * The end is checked: a session still connected after endTiming.checkMs gets
+ * Ctrl-C twice, then SIGTERM (ensureEnded).
  */
-export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null }): boolean {
+export function endSession(d: Daemon, s: { id: string; tmuxPane: string | null; claudePid?: number | null }): boolean {
   if (!s.tmuxPane) return false
   d.ending.add(s.id) // planned: the watchdog stays quiet
   const pane = s.tmuxPane
-  execFile('tmux', ['send-keys', '-t', pane, 'Escape'], () => {
-    setTimeout(() => {
-      execFile('tmux', ['send-keys', '-t', pane, '-l', '/exit'], () => {
-        execFile('tmux', ['send-keys', '-t', pane, 'Enter'], err => { if (err) d.log(`end session ${s.id}: ${err.message}`) })
-      })
-    }, 700)
-  })
+  void (async () => {
+    await d.tmuxKeys(pane, ['Escape'])
+    await Bun.sleep(700)
+    await d.tmuxType(pane, '/exit')
+  })().catch(err => d.log(`end session ${s.id}: ${err instanceof Error ? err.message : err}`))
+  setTimeout(() => void ensureEnded(d, s.id, pane, s.claudePid ?? null).catch(err => d.log(`end session ${s.id}: ${err}`)), endTiming.checkMs).unref?.()
   return true
+}
+
+/**
+ * /exit did not close the session — an Escape opened a menu, a dialog was up
+ * (2026-10-31: a project session stayed connected for a day after it was
+ * "suspended"). Its screen goes to the log; Ctrl-C twice closes what is open
+ * and exits Claude Code; if it is still connected, SIGTERM — only to a
+ * process that is Claude's.
+ */
+async function ensureEnded(d: Daemon, id: string, pane: string, pid: number | null): Promise<void> {
+  if (!d.sessions.has(id)) return
+  const screen = (await d.tmuxCapture(pane)) ?? ''
+  d.log(`end session ${id}: still connected after /exit, pressing Ctrl-C; screen:\n${screen.split('\n').filter(l => l.trim()).slice(-12).join('\n')}`)
+  await d.tmuxKeys(pane, ['C-c'])
+  await Bun.sleep(500)
+  await d.tmuxKeys(pane, ['C-c'])
+  await Bun.sleep(endTiming.checkMs)
+  if (!d.sessions.has(id)) return
+  if (pid == null || !cmdlineOf(pid).some(a => basename(a) === 'claude' || a.includes('claude-code'))) {
+    d.log(`end session ${id}: still connected after Ctrl-C, no Claude process to stop (pid ${pid})`)
+    return
+  }
+  d.log(`end session ${id}: still connected after Ctrl-C, SIGTERM ${pid}`)
+  try {
+    process.kill(pid, 'SIGTERM')
+  } catch (err) {
+    d.log(`end session ${id}: SIGTERM ${pid} failed: ${err}`)
+  }
+}
+
+/** Wait until a session disconnects; false if it is still there after ms. */
+export async function waitGone(d: Daemon, id: string, ms: number): Promise<boolean> {
+  const until = Date.now() + ms
+  while (d.sessions.has(id) && Date.now() < until) await Bun.sleep(250)
+  return !d.sessions.has(id)
 }
 
 // --------------------------------------------------------------------------
@@ -383,10 +423,22 @@ export function startIdleCloser(d: Daemon): void {
       if (endSession(d, s)) {
         closing.add(s)
         d.log(`${kind} session ${s.id} idle ${min} min, suspending`)
-        void inSession(d, s, () => announceSuspended(d, s, idleName(min))).catch(err => d.log(`suspend notice failed: ${err}`))
+        void suspended(d, s, idleName(min)).catch(err => d.log(`suspend notice failed: ${err}`))
       }
     }
   }, 60_000).unref?.()
+}
+
+/**
+ * «💤 приостановлена» only once the session is really gone. If it outlives
+ * /exit, Ctrl-C and SIGTERM, it is a live session again (messages keep going
+ * to it) and the owner hears that it could not be suspended.
+ */
+async function suspended(d: Daemon, s: Session, period: string): Promise<void> {
+  if (await waitGone(d, s.id, endTiming.checkMs * 2 + 10_000)) return inSession(d, s, () => announceSuspended(d, s, period))
+  d.ending.delete(s.id)
+  d.log(`session ${s.id}: could not suspend, still connected`)
+  await sendNotice(d, 'sessions', () => tr('⚠️ Не смог приостановить сессию <b>{v}</b> (#{id}): она не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Она по-прежнему подключена; посмотрите окно в tmux.', { v: escapeHtml(s.projectName), id: s.id }))
 }
 
 /** Create the dir (if needed), bind it to the topic, start the session, tell the user where to confirm. */

@@ -831,6 +831,19 @@ const dict: Dict = {
   "В ценах API": "Aux prix de l'API",
   "🔢 {took} · {v} ток. · кэш {cache}% · ${cost}": "🔢 {took} · {v} jet. · cache {cache}% · ${cost}",
   "🔢 Расход хода": "🔢 Coût du tour",
+  "⚠️ Не смог приостановить сессию <b>{v}</b> (#{id}): она не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Она по-прежнему подключена; посмотрите окно в tmux.": "⚠️ Impossible de suspendre la session <b>{v}</b> (#{id}) : elle ne s'est fermée ni avec /exit, ni avec Ctrl-C, ni avec SIGTERM. Elle est toujours connectée ; vérifiez sa fenêtre tmux.",
+  "⚠️ Сессия #{id} не берёт сообщение: {min} мин без признаков работы.": "⚠️ La session #{id} ne prend pas le message : {min} min sans signe d'activité.",
+  "Экран:": "Écran :",
+  "♻️ Перезапустить": "♻️ Redémarrer",
+  "Сессия уже отключилась.": "La session est déjà déconnectée.",
+  "Сессия не в tmux — перезапустите её сами.": "La session n'est pas dans tmux — redémarrez-la vous-même.",
+  "♻️ Перезапускаю": "♻️ Redémarrage",
+  "♻️ Закрываю сессию #{id}…": "♻️ Fermeture de la session #{id}…",
+  "❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.": "❌ La session #{id} ne s'est fermée ni avec /exit, ni avec Ctrl-C, ni avec SIGTERM. Vérifiez sa fenêtre tmux.",
+  "⏳ Сессия уже запускается.": "⏳ La session démarre déjà.",
+  "❌ Не удалось запустить: {v}": "❌ Échec du démarrage : {v}",
+  "🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.": "🚀 Redémarrage de la session dans tmux : fenêtre {v}. Confirmez :{v2}\nRenvoyez le message qu'elle n'a pas pris une fois démarrée.",
+  "❓ Claude Code спрашивает — ответьте клавишами ниже. Пока вопрос открыт, сессия не берёт сообщения.": "❓ Claude Code pose une question — répondez avec les touches ci-dessous. Tant qu'elle reste ouverte, la session ne prend aucun message.",
 }
 
 export default dict

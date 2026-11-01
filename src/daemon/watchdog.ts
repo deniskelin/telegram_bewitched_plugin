@@ -14,18 +14,20 @@
 
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
+import { statSync } from 'fs'
 import { basename, relative } from 'path'
 import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { attachTarget, confirmHint, launchCommand, launchForTopic, manualCmd, screenKb, sessionName, watchLaunch } from './launch.ts'
+import { attachTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
 import { inChat, inSession } from './lang.ts'
 import { projectTitle } from './report.ts'
 import { sendNotice } from './journal.ts'
+import { sessionTarget } from './topics.ts'
 
 /**
  * session: -n <name> and the tmux name; user: whose session it was; sent: the
@@ -163,17 +165,96 @@ function ownerNotice(r: Restart, head: string): string {
   ].join('\n')
 }
 
+// --------------------------------------------------------------------------
+// A turn nobody took
+// --------------------------------------------------------------------------
+
+/**
+ * A message was delivered, the chat shows «⏳ Работаю…», but the session gives
+ * no sign of life: no hook and no transcript write since the turn began
+ * (2026-11-01: a session broken by a failed /exit «worked» for 31 min). After
+ * TURN_STUCK_SEC (120 by default, 0 — off) the chat gets its screen and
+ * «♻️ Перезапустить» / «⏹ Стоп», once per turn.
+ */
+export function startTurnWatch(d: Daemon): void {
+  setInterval(() => void checkTurns(d).catch(err => d.log(`turn watch failed: ${err}`)), 15_000).unref?.()
+}
+
+export async function checkTurns(d: Daemon, now = Date.now()): Promise<void> {
+  const sec = Number(process.env.TURN_STUCK_SEC ?? 120)
+  if (!(sec > 0)) return
+  for (const s of d.activeSessions()) {
+    const turn = s.turn
+    if (!turn || turn.stuck || now - turn.start < sec * 1000) continue
+    if (s.lastHookAt >= turn.start || transcriptSince(s, turn.start)) continue
+    turn.stuck = true
+    d.log(`session ${s.id}: no sign of life ${Math.round((now - turn.start) / 1000)} s after a message`)
+    await warnStuck(d, s, Math.round((now - turn.start) / 60_000))
+  }
+}
+
+function transcriptSince(s: Session, since: number): boolean {
+  const path = s.claude.transcript ?? guessTranscript(s.argv, s.cwd)
+  try {
+    return !!path && statSync(path).mtimeMs >= since
+  } catch {
+    return false
+  }
+}
+
+async function warnStuck(d: Daemon, s: Session, min: number): Promise<void> {
+  const c = s.lastChat ?? sessionTarget(d, s)
+  if (!c) return
+  const screen = s.tmuxPane ? ((await d.tmuxCapture(s.tmuxPane)) ?? '').split('\n').filter(l => l.trim()).slice(-12).join('\n') : ''
+  await inChat(d, c.chatId, c.threadId, async () => {
+    const text = tr('⚠️ Сессия #{id} не берёт сообщение: {min} мин без признаков работы.', { id: s.id, min: Math.max(min, 1) })
+      + (screen ? `\n${tr('Экран:')}\n<pre>${escapeHtml(screen)}</pre>` : '')
+    const rows = [[button(tr('♻️ Перезапустить'), `wd:re:${s.id}`, 'primary'), button(tr('⏹ Стоп'), `stop:${s.id}`, 'danger')]]
+    // Often it is a question on the screen (a menu, a confirmation): answering it is enough.
+    if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) rows.unshift([button(tr('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`)])
+    const kb = new InlineKeyboard(rows)
+    await d.bot.api.sendMessage(c.chatId, text, { parse_mode: 'HTML', reply_markup: kb, ...(c.threadId ? { message_thread_id: c.threadId } : {}) })
+  }).catch(err => d.log(`stuck notice failed: ${err}`))
+}
+
+/** wd:re:<session> — close a session that does not answer (with the /exit checks) and start it again with its conversation. */
+async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: string) => Promise<unknown>): Promise<void> {
+  const s = d.sessions.get(id)
+  if (!s) { await answer(tr('Сессия уже отключилась.')); return }
+  if (!endSession(d, s)) { await answer(tr('Сессия не в tmux — перезапустите её сами.')); return }
+  await answer(tr('♻️ Перезапускаю'))
+  const edit = (text: string, kb?: InlineKeyboard) => ctx.editMessageText(text, { parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}) }).catch(() => {})
+  await edit(tr('♻️ Закрываю сессию #{id}…', { id }))
+  if (!(await waitGone(d, id, endTiming.checkMs * 2 + 10_000))) {
+    d.ending.delete(id)
+    await edit(tr('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id }))
+    return
+  }
+  const o = { resume: s.claude.sessionId ?? undefined, continue: !s.claude.sessionId, name: sessionName(d, s.projectKey) }
+  const l = await launchOnce(d, s.cwd, o)
+  if (!l.ok) {
+    await edit(l.skipped ? tr('⏳ Сессия уже запускается.') : tr('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }))
+    return
+  }
+  await edit(tr('🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) }), screenKb(l.window))
+}
+
 /**
  * wd:run:<id> — restart a stopped session; wd:topic:<thread> — start a waiting
- * topic's session (both owner only); wd:ask:<id> — a member asks the owner to
- * restart their own session.
+ * topic's session; wd:re:<session> — restart a session that does not answer
+ * (all owner only); wd:ask:<id> — a member asks the owner to restart their
+ * own session.
  */
 export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const m = /^wd:(run|topic|ask):([0-9a-f]+|\d+)$/.exec(data)
+  const m = /^wd:(run|topic|ask|re):([0-9a-f]+|\d+)$/.exec(data)
   if (!m) return false
   const answer = (t?: string) => ctx.answerCallbackQuery(t ? { text: t } : undefined).catch(() => {})
   if (!ctx.from || !can(ctx.from.id, m[1] === 'ask' ? 'write' : 'control')) {
     await answer(tr('Нет доступа.'))
+    return true
+  }
+  if (m[1] === 're') {
+    await restartStuck(d, ctx, m[2], answer)
     return true
   }
   if (m[1] === 'topic') {
@@ -201,9 +282,11 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
   }
   try {
     const o = { resume: r.resume ?? undefined, continue: !r.resume, name: sessionName(d, r.dir) ?? r.session }
-    const win = await d.launchSession(r.dir, o)
-    d.launching.set(r.dir, Date.now())
-    watchLaunch(d, r.dir, win)
+    // The same lock as a message in the project topic: two launches at once left a second window waiting on the prompt.
+    const l = await launchOnce(d, r.dir, o)
+    if (!l.ok && l.skipped) { await answer(tr('⏳ Сессия уже запускается.')); return true }
+    if (!l.ok) throw new Error(l.error)
+    const win = l.window
     // The other notices about it (the member's, a request) go; this one turns into the launch message.
     const here = ctx.callbackQuery?.message
     await dropStale(d, r.dir, here ? { chat: String(here.chat.id), id: here.message_id } : undefined)

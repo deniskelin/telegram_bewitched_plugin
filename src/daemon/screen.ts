@@ -95,7 +95,25 @@ export function confirmKey(raw: string | null): string | null {
   return focus === confirm ? 'Enter' : confirm > focus ? 'Down' : 'Up'
 }
 
-export type ConfirmResult = { result: 'connected'; sessionId: string } | { result: 'no_prompt' | 'stuck' | 'gone' | 'timeout' }
+/** A Claude Code question waiting for a key: a numbered menu with the focus (❯ 1.) or «Enter to confirm». */
+export function isQuestion(raw: string | null): boolean {
+  return !!raw && (/^\s*❯\s*\d+\./m.test(raw) || /Enter to (confirm|select)/.test(raw))
+}
+
+/**
+ * After a command was typed into a session's pane (/model, /clear, ⌨️): if
+ * Claude Code asked something, its screen with keys — unanswered, it holds
+ * every message (2026-11-01: «Switch model?» after /model). Else null.
+ */
+export async function questionAfterTyping(d: Daemon, pane: string): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  if (!/^%\d+$/.test(pane)) return null
+  await Bun.sleep(settings.screenRedrawMs + 500)
+  if (!isQuestion(await d.tmuxCapture(pane))) return null
+  const v = await screenView(d, `p${pane.slice(1)}`, false, t('❓ Claude Code спрашивает — ответьте клавишами ниже. Пока вопрос открыт, сессия не берёт сообщения.'))
+  return { text: v.text, kb: v.kb }
+}
+
+export type ConfirmResult ={ result: 'connected'; sessionId: string } | { result: 'no_prompt' | 'stuck' | 'gone' | 'timeout' }
 
 /**
  * Answer the startup questions of the session in target one by one until it

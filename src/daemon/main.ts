@@ -23,7 +23,7 @@ import { setLocalSttStarter } from '../voice/stt.ts'
 import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
-import { renotifyStopped } from './watchdog.ts'
+import { renotifyStopped, startTurnWatch } from './watchdog.ts'
 import { inSession } from './lang.ts'
 import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
@@ -118,6 +118,7 @@ startHttp(d)
 startQuestionExpiry(d)
 d.startIdleWatch(() => shutdown())
 startIdleCloser(d)
+startTurnWatch(d)
 startLimitWatch(d)
 startTokensWatch(d)
 startDigest(d)

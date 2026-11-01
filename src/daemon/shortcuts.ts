@@ -23,6 +23,7 @@ import type { Daemon, Session } from './daemon.ts'
 import { stopSession } from './inbound.ts'
 import { show } from './menu.ts'
 import { statusLabel } from './report.ts'
+import { questionAfterTyping } from './screen.ts'
 import { button } from './stream.ts'
 import { usageReport, usageKeyboard } from './usage.ts'
 
@@ -151,6 +152,8 @@ export async function handleShortcutCallback(d: Daemon, ctx: Context, data: stri
   if (s.turn || s.status !== 'idle') { await answer(t('Сессия работает — дождитесь конца хода или нажмите ⏹.')); return true }
   await d.tmuxType(s.tmuxPane, r.text)
   await answer(`➡️ ${r.text.slice(0, 150)}`)
+  const question = await questionAfterTyping(d, s.tmuxPane)
+  if (question) { await show(ctx, question); return true }
   const pane = /^%\d+$/.test(s.tmuxPane) ? `tx:p${s.tmuxPane.slice(1)}` : null
   await show(ctx, { text: t('⌨️ Набрал в окне сессии #{id}: <code>{cmd}</code>', { id: s.id, cmd: escapeHtml(r.text.slice(0, 200)) }), kb: new InlineKeyboard(pane ? [[button(t('👁 Экран и клавиши'), pane, 'primary')]] : []) })
   return true

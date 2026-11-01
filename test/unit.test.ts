@@ -483,3 +483,13 @@ describe('rich (FR-11)', async () => {
     expect(richToMarkdown(rm)).toBe('## Demo\n\n---\n\na **b** `c`\n\n- x\n- [x] y\n\n```php\necho 1\n```\n\n| h | v |\n|---|---|\n| 1 | 2 |\n\n<details><summary>More</summary>\n\ninside\n\n</details>')
   })
 })
+
+describe('screen questions', () => {
+  test('a numbered menu with the focus or «Enter to confirm» is a question; the plain prompt is not', async () => {
+    const { isQuestion } = await import('../src/daemon/screen.ts')
+    expect(isQuestion('   Switch model?\n   ❯ 1. Yes, switch to Sonnet 5.5\n     2. No, go back')).toBe(true)
+    expect(isQuestion('Rewind\n Enter to confirm · Esc to cancel')).toBe(true)
+    expect(isQuestion('✻ Cooked for 18s\n────\n❯ \n────')).toBe(false)
+    expect(isQuestion(null)).toBe(false)
+  })
+})

@@ -224,6 +224,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 | `OWNER_IDLE_MIN` | `10080` | Close the owner's own session after N idle minutes (a week; 0 — never). `/menu → 💤` overrides all three |
 | `TOPIC_NO_SESSION` | `launch` | A project topic without a session: `launch` — start it, `main` — the main session answers, `queue` — only queue |
 | `WATCHDOG_GRACE_SEC` | `60` | How many seconds after a session stops to report it |
+| `TURN_STUCK_SEC` | `120` | Warn when a delivered message gets no sign of life (no hook, no transcript write) for N seconds; 0 — off |
 | `MAIN_DIR` | `~` | The main session's folder (with `USER_SESSIONS=off` — DMs and General) |
 | `CONTEXT_WINDOW` | `1000000` | Context window size for the fill percentage on session cards |
 | `CONTEXT_WARN_PCT` | `80` | Offer `/compact` in the session's chat at this context fill (0 — never) |

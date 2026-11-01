@@ -224,6 +224,7 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 | `OWNER_IDLE_MIN` | `10080` | Fermer la session personnelle du propriétaire après N minutes d'inactivité (une semaine ; 0 — jamais). `/menu → 💤` remplace les trois |
 | `TOPIC_NO_SESSION` | `launch` | Sujet de projet sans session : `launch` — la lancer, `main` — la principale répond, `queue` — file d'attente seulement |
 | `WATCHDOG_GRACE_SEC` | `60` | Combien de secondes après l'arrêt d'une session la signaler |
+| `TURN_STUCK_SEC` | `120` | Avertir si un message livré reste N secondes sans signe de vie (ni hook, ni écriture dans le transcript) ; 0 — désactivé |
 | `MAIN_DIR` | `~` | Dossier de la session principale (avec `USER_SESSIONS=off` — messages privés et General) |
 | `CONTEXT_WINDOW` | `1000000` | Taille de la fenêtre de contexte pour le pourcentage de remplissage sur les fiches |
 | `CONTEXT_WARN_PCT` | `80` | À ce remplissage du contexte, proposer `/compact` dans le chat de la session (0 — jamais) |

@@ -492,8 +492,15 @@ describe('topics', () => {
     tg.push(callbackQuery(`sm:mdl:${s.id}`))
     const models = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🧠 Модель'))
     expect(JSON.stringify(models.body.reply_markup)).toContain(`sm:model:${s.id}:sonnet`)
+    // Claude Code asks «Switch model?»: unanswered it holds every message, so its screen comes with keys.
+    const capture = d.tmuxCapture
+    d.tmuxCapture = async () => '   Switch model?\n   ❯ 1. Yes, switch to Sonnet 5.5\n     2. No, go back'
     tg.push(callbackQuery(`sm:model:${s.id}:sonnet`))
     await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /model claude-sonnet-5-5')
+    const asked = await tg.waitFor('editMessageText', x => String(x.body.text).includes('❓ Claude Code спрашивает'))
+    expect(String(asked.body.text)).toContain('No, go back')
+    expect(JSON.stringify(asked.body.reply_markup)).toContain('tx:p11:2')
+    d.tmuxCapture = capture
     s.status = 'working'
     tg.push(callbackQuery(`sm:cmp:${s.id}`))
     await tg.waitFor('answerCallbackQuery', x => String(x.body.text).startsWith('Сессия работает'))
@@ -1001,6 +1008,49 @@ describe('topics', () => {
     await hook('Stop', {})
     expect(s.status).toBe('idle')
     s.tmuxPane = pane
+  })
+
+  test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
+    const { checkTurns } = await import('../src/daemon/watchdog.ts')
+    const { endTiming } = await import('../src/daemon/launch.ts')
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/stuck', projectRoot: '/tmp/stuck', claudePid: 515151, tmuxPane: '%77' })
+    const s = [...d.sessions.values()].find(x => x.claudePid === 515151)!
+    for (let i = 0; i < 100 && !s.topic; i++) await Bun.sleep(20)
+    const saved = { keys: d.tmuxKeys, type: d.tmuxType, capture: d.tmuxCapture, ms: endTiming.checkMs }
+    const keys: string[] = []
+    // /exit lands in a menu and does nothing; the second Ctrl-C closes Claude.
+    d.tmuxKeys = async (_pane, k) => {
+      keys.push(...k)
+      if (keys.filter(x => x === 'C-c').length === 2) c.close()
+    }
+    d.tmuxType = async (_pane, text) => { keys.push(text) }
+    d.tmuxCapture = async () => '❯ /exit\n  Rewind to a message'
+    endTiming.checkMs = 1000
+    try {
+      tg.push(textMessage({ chat: Number(group), text: 'привет, запускаемся', thread: s.topic!.threadId }))
+      await c.inbound(x => x.content.endsWith('привет, запускаемся'))
+      const stuck = (x: { body: Record<string, unknown> }) => String(x.body.text).startsWith(`⚠️ Сессия #${s.id} не берёт сообщение`)
+      await checkTurns(d)
+      expect(tg.callsOf('sendMessage').some(stuck)).toBe(false)
+      await checkTurns(d, Date.now() + 121_000)
+      const warn = await tg.waitFor('sendMessage', stuck)
+      expect(String(warn.body.text)).toContain('Rewind to a message')
+      expect(warn.body.message_thread_id).toBe(s.topic!.threadId)
+      expect(JSON.stringify(warn.body.reply_markup)).toContain(`wd:re:${s.id}`)
+      await checkTurns(d, Date.now() + 300_000)
+      expect(tg.callsOf('sendMessage').filter(stuck).length).toBe(1)
+
+      const before = launched.length
+      tg.push(callbackQuery(`wd:re:${s.id}`, { chat: Number(group) }))
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚀 Перезапускаю сессию'), 5000)
+      expect(keys).toEqual(['Escape', '/exit', 'C-c', 'C-c'])
+      expect(launched.slice(before)).toEqual(['/tmp/stuck'])
+    } finally {
+      Object.assign(d, { tmuxKeys: saved.keys, tmuxType: saved.type, tmuxCapture: saved.capture })
+      endTiming.checkMs = saved.ms
+      d.launching.delete('/tmp/stuck')
+    }
   })
 })
 

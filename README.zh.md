@@ -224,6 +224,7 @@ claude plugin update telegram-bewitched@bewitched
 | `OWNER_IDLE_MIN` | `10080` | 所有者个人会话空闲 N 分钟后关闭（一周；0——从不）。`/menu → 💤` 覆盖这三项 |
 | `TOPIC_NO_SESSION` | `launch` | 没有会话的项目话题：`launch`——启动会话，`main`——由主会话回答，`queue`——只排队 |
 | `WATCHDOG_GRACE_SEC` | `60` | 会话停止后多少秒发出通知 |
+| `TURN_STUCK_SEC` | `120` | 已投递的消息 N 秒没有任何活动迹象（没有 hook，也没有写入 transcript）时发出提醒；0 — 关闭 |
 | `MAIN_DIR` | `~` | 主会话的文件夹（`USER_SESSIONS=off` 时负责私聊和 General） |
 | `CONTEXT_WINDOW` | `1000000` | 会话卡片中计算上下文占用百分比的窗口大小 |
 | `CONTEXT_WARN_PCT` | `80` | 上下文占用达到此值时，在会话聊天中建议 `/compact`（0——从不） |
