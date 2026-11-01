@@ -572,6 +572,11 @@ describe('Codex engine (FR-16)', () => {
     const { isQuestion } = await import('../src/daemon/screen.ts')
     expect(isPassiveLaunch(['/root/.local/bin/codex', '--no-alt-screen', '-p', 'bewitched'])).toBe(false)
     expect(isPassiveLaunch(['codex'])).toBe(true)
+    expect(isPassiveLaunch(['codex', 'resume', 'abc', '--no-alt-screen', '-p', 'bewitched'])).toBe(false)
+    // Checks with the profile start our MCP server too: not a session.
+    expect(isPassiveLaunch(['codex', '-p', 'bewitched', 'debug', 'prompt-input'])).toBe(true)
+    expect(isPassiveLaunch(['codex', '-p', 'bewitched', 'mcp', 'list'])).toBe(true)
+    expect(isPassiveLaunch(['codex', '--no-alt-screen', '-p', 'bewitched', 'exec', 'hi'])).toBe(true)
     expect(isPassiveLaunch(['claude', '-p', 'hi'])).toBe(true)
     expect(isQuestion('  Trust this folder?\n› 1. Trust and continue\n  2. Quit\n  enter continue · esc quit')).toBe(true)
     expect(isQuestion('  Hooks need review\n› 1. Review hooks\n  enter confirm · esc skip')).toBe(true)

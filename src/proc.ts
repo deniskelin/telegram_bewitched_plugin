@@ -73,8 +73,14 @@ export function isAlive(pid: number): boolean {
  * messages — this is what stops `claude -p` children from stealing them.
  */
 export function isPassiveLaunch(argv: string[]): boolean {
-  // Codex: ours only when started with the bewitched profile (-p is --profile there).
-  if (basename(argv[0] ?? '') === 'codex') return !argv.some((a, i) => (a === '-p' || a === '--profile') && argv[i + 1] === 'bewitched')
+  // Codex: ours only as the TUI the daemon starts — the bewitched profile (-p is --profile there) and
+  // --no-alt-screen. `codex -p bewitched debug …` / `mcp list` / `exec` start our MCP server too, but
+  // must not become sessions (2026-11-01: a check in /tmp opened a «tmp» topic).
+  if (basename(argv[0] ?? '') === 'codex') {
+    const profile = argv.some((a, i) => (a === '-p' || a === '--profile') && argv[i + 1] === 'bewitched')
+    const sub = argv.slice(1).find(a => ['exec', 'e', 'debug', 'mcp', 'review', 'login', 'logout', 'queue', 'apply', 'a', 'cloud', 'features', 'doctor', 'sandbox', 'app-server', 'exec-server'].includes(a))
+    return !(profile && argv.includes('--no-alt-screen') && !sub)
+  }
   if (argv.includes('-p') || argv.includes('--print')) return true
   const flagIdx = argv.findIndex(a =>
     a === '--channels' || a === '--dangerously-load-development-channels'
