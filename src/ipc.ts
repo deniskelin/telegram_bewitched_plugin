@@ -14,6 +14,8 @@ export type Hello = {
   passive: boolean
   /** Same Claude session reconnecting (daemon restart): skip the welcome card and resume summary. */
   reconnect?: boolean
+  /** The agent CLI the client runs under (FR-16); absent from older clients — Claude Code. */
+  engine?: 'claude' | 'codex'
 }
 
 export type ClientMsg =

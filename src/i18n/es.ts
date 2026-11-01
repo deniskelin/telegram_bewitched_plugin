@@ -853,6 +853,13 @@ const dict: Dict = {
   "по умолчанию CLI": "predeterminado de la CLI",
   "<i>Выбранная модель запоминается для проекта: следующие запуски сессии — сразу на ней.</i>": "<i>El modelo elegido se recuerda para el proyecto: los próximos inicios de la sesión lo usan directamente.</i>",
   "↩️ Следующие запуски — на модели по умолчанию CLI": "↩️ Los próximos inicios usan el modelo predeterminado de la CLI",
+  "♻️ Перезапустить на {engine}": "♻️ Reiniciar con {engine}",
+  "<i>Сейчас работает {running}; проект переключён на {engine} — со следующего запуска. Разговор на новый движок не переносится.</i>": "<i>Ahora funciona {running}; el proyecto pasa a {engine} desde el próximo inicio. La conversación no se traslada al nuevo motor.</i>",
+  "« Сессии": "« Sesiones",
+  "🚀 Запускаю {engine} в tmux: окно {v}. Подтвердите:{v2}": "🚀 Iniciando {engine} en tmux: ventana {v}. Confirme:{v2}",
+  "Этот движок не установлен.": "Este motor no está instalado.",
+  "🧠 Проект → {engine}": "🧠 Proyecto → {engine}",
+  "🧠 {model} — со следующего запуска": "🧠 {model}: desde el próximo inicio",
 }
 
 export default dict

@@ -556,3 +556,31 @@ describe('engines (FR-15)', () => {
     expect(projectEngine(d, '/p')).toEqual({ engine: 'claude' })
   })
 })
+
+describe('Codex engine (FR-16)', () => {
+  test('launch command with the bewitched profile, -m, resume / resume --last', async () => {
+    const { codex } = await import('../src/daemon/engines.ts')
+    const cmd = codex.launchCommand({ model: 'gpt-6.1-sol', name: 'ignored' })
+    expect(cmd).toMatch(/codex --no-alt-screen -p bewitched -m gpt-6\.1-sol$/)
+    expect(codex.launchCommand({ resume: '01a1-x' })).toMatch(/codex resume 01a1-x --no-alt-screen -p bewitched$/)
+    expect(codex.launchCommand({ continue: true })).toMatch(/codex resume --last --no-alt-screen -p bewitched$/)
+    expect(codex.launchCommand({ model: 'bad model' })).toMatch(/-p bewitched$/)
+  })
+
+  test('only a Codex started with the bewitched profile is ours; its questions use ›', async () => {
+    const { isPassiveLaunch } = await import('../src/proc.ts')
+    const { isQuestion } = await import('../src/daemon/screen.ts')
+    expect(isPassiveLaunch(['/root/.local/bin/codex', '--no-alt-screen', '-p', 'bewitched'])).toBe(false)
+    expect(isPassiveLaunch(['codex'])).toBe(true)
+    expect(isPassiveLaunch(['claude', '-p', 'hi'])).toBe(true)
+    expect(isQuestion('  Trust this folder?\n› 1. Trust and continue\n  2. Quit\n  enter continue · esc quit')).toBe(true)
+    expect(isQuestion('  Hooks need review\n› 1. Review hooks\n  enter confirm · esc skip')).toBe(true)
+    expect(isQuestion('› Ask Codex to do anything\n  GPT-6.1-Sol default · /work')).toBe(false)
+  })
+
+  test('a Telegram message as a <channel> block, without stream_answer', async () => {
+    const { channelText } = await import('../src/daemon/engines.ts')
+    expect(channelText('привет\nмир', { chat_id: '-100', user: 'a "b"', stream_answer: 'true' }))
+      .toBe('<channel source="telegram-bewitched" chat_id="-100" user="a &quot;b&quot;">\nпривет\nмир\n</channel>')
+  })
+})

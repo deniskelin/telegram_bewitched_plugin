@@ -15,7 +15,7 @@ import { z } from 'zod'
 import type { Socket } from 'bun'
 import { PROTOCOL_VERSION, SOCK_FILE, loadEnv, migrateLegacy } from './src/config.ts'
 import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from './src/ipc.ts'
-import { cmdlineOf, cwdOf, findClaudePid, gitInfo, isPassiveLaunch, tmuxPaneOf } from './src/proc.ts'
+import { agentOf, cmdlineOf, cwdOf, findClaudePid, gitInfo, isPassiveLaunch, tmuxPaneOf } from './src/proc.ts'
 import { ensureDaemon } from './src/spawn.ts'
 import { TOOLS } from './src/client/tools.ts'
 import { INSTRUCTIONS } from './src/client/instructions.ts'
@@ -40,6 +40,7 @@ const hello: Hello = {
   branch: git.branch,
   tmuxPane: tmuxPaneOf(claudePid),
   passive,
+  engine: (claudePid && agentOf(claudePid)) || 'claude',
 }
 
 process.on('unhandledRejection', err => log(`unhandled rejection: ${err}`))

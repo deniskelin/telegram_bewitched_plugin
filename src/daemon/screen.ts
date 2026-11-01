@@ -97,7 +97,8 @@ export function confirmKey(raw: string | null): string | null {
 
 /** A Claude Code question waiting for a key: a numbered menu with the focus (❯ 1.) or «Enter to confirm». */
 export function isQuestion(raw: string | null): boolean {
-  return !!raw && (/^\s*❯\s*\d+\./m.test(raw) || /Enter to (confirm|select)/.test(raw))
+  // Claude Code marks the choice with ❯, Codex with ›; Codex footers: «enter confirm · esc skip», «enter continue».
+  return !!raw && (/^\s*[❯›]\s*\d+\./m.test(raw) || /Enter to (confirm|select)/.test(raw) || /\benter (to )?(confirm|continue|submit answer)\b/.test(raw))
 }
 
 /**
