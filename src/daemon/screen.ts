@@ -113,7 +113,14 @@ export async function questionAfterTyping(d: Daemon, pane: string): Promise<{ te
   return { text: v.text, kb: v.kb }
 }
 
-export type ConfirmResult ={ result: 'connected'; sessionId: string } | { result: 'no_prompt' | 'stuck' | 'gone' | 'timeout' }
+/** A command the session did not take (FR-14): its screen with keys, to answer what is open and try again. Null without a pane id. */
+export async function blockedScreen(d: Daemon, pane: string): Promise<{ text: string; kb: InlineKeyboard } | null> {
+  if (!/^%\d+$/.test(pane)) return null
+  const v = await screenView(d, `p${pane.slice(1)}`, false, t('⛔ Не набрал: сессия не приняла ввод — на экране вопрос или меню. Ответьте клавишами ниже и повторите команду.'))
+  return { text: v.text, kb: v.kb }
+}
+
+export type ConfirmResult = { result: 'connected'; sessionId: string } | { result: 'no_prompt' | 'stuck' | 'gone' | 'timeout' }
 
 /**
  * Answer the startup questions of the session in target one by one until it

@@ -23,7 +23,8 @@ import type { Daemon, Session } from './daemon.ts'
 import { stopSession } from './inbound.ts'
 import { show } from './menu.ts'
 import { statusLabel } from './report.ts'
-import { questionAfterTyping } from './screen.ts'
+import { blockedScreen, questionAfterTyping } from './screen.ts'
+import { InputBlocked } from './launch.ts'
 import { button } from './stream.ts'
 import { usageReport, usageKeyboard } from './usage.ts'
 
@@ -150,7 +151,15 @@ export async function handleShortcutCallback(d: Daemon, ctx: Context, data: stri
   }
   if (!s.tmuxPane) { await answer(t('Сессия не в tmux — команды не отправить.')); return true }
   if (s.turn || s.status !== 'idle') { await answer(t('Сессия работает — дождитесь конца хода или нажмите ⏹.')); return true }
-  await d.tmuxType(s.tmuxPane, r.text)
+  try {
+    await d.tmuxType(s.tmuxPane, r.text)
+  } catch (err) {
+    if (!(err instanceof InputBlocked)) throw err
+    await answer(t('⛔ Не набрал: сессия ждёт ответа на экране'))
+    const screen = await blockedScreen(d, s.tmuxPane)
+    if (screen) await show(ctx, screen)
+    return true
+  }
   await answer(`➡️ ${r.text.slice(0, 150)}`)
   const question = await questionAfterTyping(d, s.tmuxPane)
   if (question) { await show(ctx, question); return true }

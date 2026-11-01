@@ -501,6 +501,15 @@ describe('topics', () => {
     expect(String(asked.body.text)).toContain('No, go back')
     expect(JSON.stringify(asked.body.reply_markup)).toContain('tx:p11:2')
     d.tmuxCapture = capture
+
+    // FR-14: the session did not take the line — nothing confirmed, its screen with keys instead.
+    const { InputBlocked } = await import('../src/daemon/launch.ts')
+    const typing = d.tmuxType
+    d.tmuxType = async () => { throw new InputBlocked('') }
+    tg.push(callbackQuery(`sm:cmp:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '⛔ /compact не набрана: сессия ждёт ответа на экране')
+    await tg.waitFor('editMessageText', x => String(x.body.text).includes('⛔ Не набрал'))
+    d.tmuxType = typing
     s.status = 'working'
     tg.push(callbackQuery(`sm:cmp:${s.id}`))
     await tg.waitFor('answerCallbackQuery', x => String(x.body.text).startsWith('Сессия работает'))

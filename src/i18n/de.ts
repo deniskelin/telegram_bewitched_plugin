@@ -844,6 +844,9 @@ const dict: Dict = {
   "❌ Не удалось запустить: {v}": "❌ Start fehlgeschlagen: {v}",
   "🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.": "🚀 Starte die Sitzung in tmux neu: Fenster {v}. Bestätigen Sie:{v2}\nSenden Sie die nicht angenommene Nachricht nach dem Start erneut.",
   "❓ Claude Code спрашивает — ответьте клавишами ниже. Пока вопрос открыт, сессия не берёт сообщения.": "❓ Claude Code fragt — antworten Sie mit den Tasten unten. Solange die Frage offen ist, nimmt die Sitzung keine Nachrichten an.",
+  "⛔ {line} не набрана: сессия ждёт ответа на экране": "⛔ {line} nicht eingegeben: Die Sitzung wartet auf eine Antwort auf dem Bildschirm",
+  "⛔ Не набрал: сессия ждёт ответа на экране": "⛔ Nicht eingegeben: Die Sitzung wartet auf eine Antwort auf dem Bildschirm",
+  "⛔ Не набрал: сессия не приняла ввод — на экране вопрос или меню. Ответьте клавишами ниже и повторите команду.": "⛔ Nicht eingegeben: Die Sitzung hat die Eingabe nicht angenommen — auf dem Bildschirm ist eine Frage oder ein Menü. Antworten Sie mit den Tasten unten und wiederholen Sie den Befehl.",
 }
 
 export default dict
