@@ -501,6 +501,15 @@ describe('topics', () => {
     expect(String(asked.body.text)).toContain('No, go back')
     expect(JSON.stringify(asked.body.reply_markup)).toContain('tx:p11:2')
     d.tmuxCapture = capture
+    // FR-15: the chosen model stays the project's — the next launch starts on it; ↩️ forgets it.
+    const { projectEngine } = await import('../src/daemon/engines.ts')
+    expect(projectEngine(d, '/tmp/ctl')).toEqual({ engine: 'claude', model: 'claude-sonnet-5-5' })
+    tg.push(callbackQuery(`sm:mdl:${s.id}`))
+    const marked = await tg.waitFor('editMessageText', x => String(x.body.text).includes('для проекта: <b>claude-sonnet-5-5</b>'))
+    expect(JSON.stringify(marked.body.reply_markup)).toContain('• 🧠 sonnet-5-5')
+    tg.push(callbackQuery(`sm:mdldef:${s.id}`))
+    await tg.waitFor('answerCallbackQuery', x => x.body.text === '↩️ Следующие запуски — на модели по умолчанию CLI')
+    expect(projectEngine(d, '/tmp/ctl')).toEqual({ engine: 'claude' })
 
     // FR-14: the session did not take the line — nothing confirmed, its screen with keys instead.
     const { InputBlocked } = await import('../src/daemon/launch.ts')

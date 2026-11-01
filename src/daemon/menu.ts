@@ -20,6 +20,7 @@ import { projectRules, removeProjectRule } from './permrules.ts'
 import { listConversations, transcriptInfo } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { InputBlocked } from './launch.ts'
+import { engineOf, projectEngine, setProjectEngine } from './engines.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -123,8 +124,20 @@ export async function sessionCommandScreen(d: Daemon, s: Session, cmd: 'clear' |
   return { text: t('Сжать разговор сессии #{id} ({v})? Claude перескажет его коротко, место в контексте освободится.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb }
 }
 
-/** Claude Code models offered in 🧠 Модель: /model takes the id. */
-const MODELS: [string, string][] = [['opus', 'claude-opus-5-5'], ['sonnet', 'claude-sonnet-5-5'], ['haiku', 'claude-haiku-5-5'], ['fable', 'claude-fable-5-1']]
+/** 🧠: the session's engine and its models; the chosen one goes in now (/model) and stays the project's (FR-15). */
+function modelScreen(d: Daemon, s: Session): Screen {
+  const engine = engineOf(s.engine)
+  const cur = projectEngine(d, s.projectKey).model
+  const rows = engine.models.map(m => [button(`${cur === m.id ? '• ' : ''}🧠 ${m.id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${m.alias}`, cur === m.id ? 'primary' : undefined)])
+  if (cur) rows.push([button(t('↩️ Модель по умолчанию CLI'), `sm:mdldef:${s.id}`)])
+  rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
+  const text = [
+    t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(projectTitle(s)) }),
+    t('Движок: <b>{engine}</b> · для проекта: <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
+    t('<i>Выбранная модель запоминается для проекта: следующие запуски сессии — сразу на ней.</i>'),
+  ].join('\n')
+  return { text, kb: new InlineKeyboard(rows) }
+}
 
 /**
  * /compact, /clear (asked first) and /model typed into the session's pane.
@@ -132,17 +145,18 @@ const MODELS: [string, string][] = [['opus', 'claude-opus-5-5'], ['sonnet', 'cla
  */
 async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
   if (!s.tmuxPane) return { toast: t('Сессия не в tmux — команды не отправить.') }
-  if (action === 'mdl') {
-    const rows = MODELS.map(([alias, id]) => [button(`🧠 ${id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${alias}`)])
-    rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
-    return { screen: { text: t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb: new InlineKeyboard(rows) } }
+  if (action === 'mdl') return { screen: modelScreen(d, s) }
+  if (action === 'mdldef') {
+    setProjectEngine(d, s.projectKey, { engine: s.engine })
+    return { toast: t('↩️ Следующие запуски — на модели по умолчанию CLI'), screen: modelScreen(d, s) }
   }
   if (action === 'clr') {
     const kb = new InlineKeyboard([[button(t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
     return { screen: { text: t('Очистить разговор сессии #{id} ({v})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb } }
   }
   if (s.turn || s.status !== 'idle') return { toast: t('Сессия работает — дождитесь конца хода или нажмите ⏹.') }
-  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${MODELS.find(([a]) => a === value)?.[1] ?? ''}`
+  const model = action === 'model' ? engineOf(s.engine).models.find(m => m.alias === value)?.id ?? '' : ''
+  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${model}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
   try {
     await d.tmuxType(s.tmuxPane, line)
@@ -152,6 +166,7 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
     return { toast: t('⛔ {line} не набрана: сессия ждёт ответа на экране', { line }), ...(screen ? { screen } : {}) }
   }
   if (action === 'clrok') s.contextWarned = false
+  if (model) setProjectEngine(d, s.projectKey, { engine: s.engine, model })
   const question = await questionAfterTyping(d, s.tmuxPane)
   return { toast: `➡️ ${line}`, sent: true, ...(question ? { screen: question } : {}) }
 }
@@ -207,7 +222,7 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -292,7 +307,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     else if (r.sent) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
     return true
   }
-  if (['cmp', 'clr', 'clrok', 'mdl', 'model'].includes(action)) {
+  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model'].includes(action)) {
     const r = await controlAction(d, s, action, value)
     if (r.screen) {
       await answer(r.toast)
