@@ -7,10 +7,10 @@
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { execFile } from 'child_process'
-import { mkdirSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { can, dmCommandGate, gate, loadAccess, owner, prefsFor, roleOf } from '../access.ts'
-import { APPROVED_DIR, INBOX_DIR, settings } from '../config.ts'
+import { APPROVED_DIR, settings } from '../config.ts'
 import { clip, safeMeta } from '../format.ts'
 import { richToMarkdown } from '../rich.ts'
 import { toWav16k } from '../voice/audio.ts'
@@ -173,6 +173,18 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
   }
 }
 
+/** The folder of the session a message is for: its files are saved there, readable without a prompt (media.ts). */
+function targetDir(d: Daemon, t: Target): string | undefined {
+  switch (t.kind) {
+    case 'session': return t.session.cwd
+    case 'launch': case 'offline': case 'waiting': case 'group_launch': return t.projectKey
+    case 'archived': return t.projectKey ?? undefined
+    case 'user_offline': return join(settings.usersDir, t.userId)
+    case 'main_offline': return d.mainKey()
+    default: return undefined
+  }
+}
+
 function userTarget(d: Daemon, userId: string): Target {
   const s = d.userSession(userId)
   return s ? { kind: 'session', session: s } : { kind: 'user_offline', userId }
@@ -210,7 +222,7 @@ async function handleInbound(
   d: Daemon,
   ctx: Context,
   original: string,
-  downloadImage: (() => Promise<string | undefined>) | undefined,
+  downloadImage: ((dir: string | undefined) => Promise<string | undefined>) | undefined,
   attachment?: AttachmentMeta,
 ): Promise<void> {
   let text = original
@@ -286,7 +298,7 @@ async function handleInbound(
     void d.bot.api.setMessageReaction(chatId, msg.message_id, [{ type: 'emoji', emoji: access.ackReaction as ReactionTypeEmoji['emoji'] }]).catch(() => {})
   }
 
-  const imagePath = downloadImage ? await downloadImage() : undefined
+  const imagePath = downloadImage ? await downloadImage(targetDir(d, target)) : undefined
   // Speech → text before Claude sees it (after the access check, like photos).
   let sttMeta: Record<string, string> = {}
   if (attachment && isSpeech(attachment.kind) && sttEnabled()) {
@@ -638,17 +650,9 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     else d.log(`stopped_message_generation in ${chatId}: draft ${stopped.draft_id} matches no single session (${inThread.length} working)`)
   })
 
-  const download = async (fileId: string, uniqueId: string): Promise<string | undefined> => {
+  const download = async (fileId: string, dir: string | undefined): Promise<string | undefined> => {
     try {
-      const file = await bot.api.getFile(fileId)
-      if (!file.file_path) return undefined
-      const res = await fetch(`${settings.apiRoot ?? 'https://api.telegram.org'}/file/bot${token}/${file.file_path}`)
-      const buf = Buffer.from(await res.arrayBuffer())
-      const ext = (file.file_path.split('.').pop() ?? 'jpg').replace(/[^a-zA-Z0-9]/g, '') || 'jpg'
-      const path = join(INBOX_DIR, `${Date.now()}-${uniqueId.replace(/[^a-zA-Z0-9_-]/g, '')}.${ext}`)
-      mkdirSync(INBOX_DIR, { recursive: true })
-      writeFileSync(path, buf)
-      return path
+      return await downloadToInbox(d, fileId, dir)
     } catch (err) {
       d.log(`photo download failed: ${err}`)
       return undefined
@@ -659,7 +663,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   bot.on('message:photo', ctx => {
     const best = ctx.message.photo[ctx.message.photo.length - 1]
-    return handleInbound(d, ctx, ctx.message.caption ?? '(photo)', () => download(best.file_id, best.file_unique_id))
+    return handleInbound(d, ctx, ctx.message.caption ?? '(photo)', dir => download(best.file_id, dir))
   })
 
   bot.on('message:document', ctx => {

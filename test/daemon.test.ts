@@ -2520,3 +2520,27 @@ describe('session types', () => {
     expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).includes('остановилась')).length).toBe(before)
   })
 })
+
+describe('attachments land in the session folder', () => {
+  test('a photo to a project topic is saved to <cwd>/.telegram/inbox, git-ignored; download_attachment too', async () => {
+    const { readFileSync } = await import('fs')
+    const s = d.sessions.get(sessionId)!
+    mkdirSync(s.cwd, { recursive: true })
+    tg.files.set('photo1', Buffer.from('fake-jpeg'))
+    tg.files.set('doc1', Buffer.from('%PDF-fake'))
+    tg.push({ message: { message_id: 92001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+      chat: { id: -100500, type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: s.topic!.threadId, is_topic_message: true,
+      photo: [{ file_id: 'photo1', file_unique_id: 'ph1', width: 10, height: 10 }] } })
+    const m = await client.inbound(x => x.meta.message_id === '92001')
+    const inbox = join(s.cwd, '.telegram', 'inbox')
+    expect(m.meta.image_path.startsWith(inbox + '/')).toBe(true)
+    expect(readFileSync(m.meta.image_path, 'utf8')).toBe('fake-jpeg')
+    expect(readFileSync(join(s.cwd, '.telegram', '.gitignore'), 'utf8')).toBe('*\n')
+
+    const r = await client.call('download_attachment', { file_id: 'doc1' })
+    expect(r.ok).toBe(true)
+    const path = r.text
+    expect(path.startsWith(inbox + '/')).toBe(true)
+    expect(existsSync(path)).toBe(true)
+  })
+})
