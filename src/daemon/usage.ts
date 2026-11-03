@@ -21,6 +21,7 @@ import { locale, k, t as tr } from '../i18n/index.ts'
 import { noticeTarget, sendNotice } from './journal.ts'
 import { inChat } from './lang.ts'
 import { savedLine } from './shortcuts.ts'
+import { collectCodex, type CodexLimits } from './codexusage.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -292,6 +293,16 @@ export function fmtTok(n: number): string {
   return String(n)
 }
 
+/** Tokens only: for Codex, which has no API price here. */
+function fmtTokens(s: Sum): string {
+  return tr('{v} ток.', { v: fmtTok(s.tokens) })
+}
+
+/** A sum of mixed engines: tokens only when nothing in it has a price (Codex models). */
+function fmtAny(s: Sum): string {
+  return s.cost === 0 && s.unpriced > 0 ? fmtTokens(s) : fmtSum(s)
+}
+
 export function fmtSum(s: Sum): string {
   return tr('{v} ток. · ${v2}{v3}', { v: fmtTok(s.tokens), v2: s.cost.toFixed(2), v3: s.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: s.unpriced }) : '' })
 }
@@ -371,23 +382,35 @@ export function usagePeriod(d: Daemon): Period {
 export async function usageReport(d: Daemon, now = Date.now(), period: Period = usagePeriod(d)): Promise<string> {
   const oauth = readOAuth()
   const plan = planName(oauth)
-  const out: string[] = [tr('📊 <b>Подписка</b>: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })]
+  // Codex (FR-16): from its own session logs; nothing when it was never used here.
+  const cx = collectCodex(now, 31)
+  const out: string[] = [tr('📊 <b>Подписка</b>: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })
+    + (cx.limits ? tr(' · Codex: {v}', { v: escapeHtml(cx.limits.plan ?? '?') }) : '')]
+  const limitLine = (l: Limit) => `${escapeHtml(tr(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`
 
   const limits = await fetchLimits(oauth)
+  const limitLines: string[] = []
   if (typeof limits === 'string') out.push(tr('Лимиты: {v}', { v: escapeHtml(limits) }))
   else {
-    const lines = limits.items.map(l => `${escapeHtml(tr(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`)
-    if (limits.breakdown) lines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
-    out.push(`<blockquote>${lines.join('\n')}</blockquote>`)
+    limitLines.push(...limits.items.map(limitLine))
+    if (limits.breakdown) limitLines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
   }
+  if (cx.limits?.items.length) {
+    const at = new Date(cx.limits.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+    limitLines.push(...freshCodexLimits(cx.limits, now).map(limitLine), tr('<i>Codex — по последнему запросу, {at}</i>', { at }))
+  }
+  if (limitLines.length) out.push(`<blockquote>${limitLines.join('\n')}</blockquote>`)
 
-  const entries = collectEntries(now, 31)
+  const claudeEntries = collectEntries(now, 31)
+  const entries = [...claudeEntries, ...cx.entries]
   const windows: [string, number][] = [[tr('5 часов'), 5 * 3600_000], [tr('Сутки'), 86_400_000], [tr('7 дней'), 7 * 86_400_000]]
-  const sums = windows.map(([label, ms]) => {
+  const sumOf = (list: Entry[], ms: number) => {
     const s: Sum = { tokens: 0, cost: 0, unpriced: 0 }
-    for (const e of entries) if (e.ts >= now - ms) add(s, e)
-    return `${label}: ${fmtSum(s)}`
-  })
+    for (const e of list) if (e.ts >= now - ms) add(s, e)
+    return s
+  }
+  const sums = windows.map(([label, ms]) => `${label}: ${fmtSum(sumOf(claudeEntries, ms))}`)
+  if (cx.entries.length) sums.push(tr('Codex — {v}', { v: windows.map(([label, ms]) => `${label.toLowerCase()}: ${fmtTokens(sumOf(cx.entries, ms))}`).join(', ') }))
   out.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: sums.join('\n') }))
   if (!entries.length) return out.join('\n\n')
   const since = now - PERIOD_MS[period]
@@ -395,7 +418,8 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
   // For 5 hours and a week the share is of the subscription window (its own start), otherwise of the spending.
   const window = typeof limits === 'string' ? null : limits.items.find(l => l.label === (period === 'h5' ? LIMIT_LABELS.session : period === 'w' ? LIMIT_LABELS.weekly_all : ''))
   const windowStart = window?.resetsAt ? window.resetsAt.getTime() - PERIOD_MS[period] : since
-  const shares = window ? sharesSince(d, entries, windowStart, window.percent) : sharesSince(d, entries, since)
+  // Shares are of Claude's spending and window: Codex has no API price to compare by.
+  const shares = window ? sharesSince(d, claudeEntries, windowStart, window.percent) : sharesSince(d, claudeEntries, since)
   if (shares.length) {
     const head = window
       ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(tr(window.label)), v2: Math.round(window.percent) })
@@ -419,8 +443,8 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
   const models = group(e => e.model.replace(/^claude-/, ''))
   const owners = group(e => ownerOf(d, e.cwd))
   const none = tr('ничего')
-  out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
-  out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtSum(s)}`).join('\n') || none }))
+  out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }))
+  out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }))
   const noModel = savedLine(d)
   if (noModel) out.push(noModel)
   if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>'))
@@ -717,18 +741,26 @@ export function startLimitWatch(d: Daemon): void {
  * The limits as in /usage, plain text for the status message: per limit the
  * percent, a bar and when it resets. null before the first fetch.
  */
+/** Codex's windows as of its last request; one that has reset since is empty until the next request brings numbers. */
+export function freshCodexLimits(l: CodexLimits | null, now = Date.now()): Limit[] {
+  return (l?.items ?? []).map(i => i.resetsAt && i.resetsAt.getTime() <= now ? { ...i, percent: 0, resetsAt: null } : i)
+}
+
 export function limitsBlock(now = Date.now()): string | null {
   const l = lastLimits()
-  if (!l || !l.limits.items.length) return null
-  const lines = l.limits.items.map(i => `${tr(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`)
-  if (l.limits.breakdown) lines.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
+  const codex = freshCodexLimits(collectCodex(now, 31).limits, now)
+  if (!l?.limits.items.length && !codex.length) return null
+  const items = [...(l?.limits.items ?? []), ...codex]
+  const lines = items.map(i => `${tr(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`)
+  if (l?.limits.breakdown) lines.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
   return [tr('📊 Лимиты'), ...lines].join('\n')
 }
 
-export function limitsLine(): string | null {
+export function limitsLine(now = Date.now()): string | null {
   const l = lastLimits()
-  if (!l || !l.limits.items.length) return null
-  return '📊 ' + l.limits.items.map(i => `${tr(i.label)} ${Math.round(i.percent)}%`).join(' · ')
+  const items = [...(l?.limits.items ?? []), ...freshCodexLimits(collectCodex(now, 31).limits, now)]
+  if (!items.length) return null
+  return '📊 ' + items.map(i => `${tr(i.label)} ${Math.round(i.percent)}%`).join(' · ')
 }
 
 // --------------------------------------------------------------------------

@@ -864,6 +864,11 @@ const dict: Dict = {
   "🚀 Перезапускаю сессию в tmux с тем же разговором: окно {v}. Подтвердите:{v2}": "🚀 Restarting the session in tmux with the same conversation: window {v}. Confirm:{v2}",
   "🧨 tmux-сервер перезапустился (pid {from} → {to}): все сессии в нём остановились разом. Частая причина — нехватка памяти. Сессии запустятся снова по сообщениям или кнопками 🚀.": "🧨 The tmux server restarted (pid {from} → {to}): every session in it stopped at once. A common cause is running out of memory. Sessions start again on messages or with the 🚀 buttons.",
   "🧨 Ядро убило процесс(ы) из-за нехватки памяти: {n} за последние 30 с. Если сессия остановилась без причины — дело в этом. Помогает меньше параллельных сессий и субагентов.": "🧨 The kernel killed process(es) for lack of memory: {n} in the last 30 s. If a session stopped for no reason, this is why. Fewer parallel sessions and subagents help.",
+  "Codex: 5 часов": "Codex: 5 hours",
+  "Codex: неделя": "Codex: week",
+  " · Codex: {v}": " · Codex: {v}",
+  "<i>Codex — по последнему запросу, {at}</i>": "<i>Codex — as of its last request, {at}</i>",
+  "Codex — {v}": "Codex — {v}",
 }
 
 export default dict

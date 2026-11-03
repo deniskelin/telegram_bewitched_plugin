@@ -589,3 +589,35 @@ describe('Codex engine (FR-16)', () => {
       .toBe('<channel source="telegram-bewitched" chat_id="-100" user="a &quot;b&quot;">\nпривет\nмир\n</channel>')
   })
 })
+
+describe('Codex usage', () => {
+  const line = (o: unknown) => JSON.stringify(o)
+  const tc = (ts: string, input: number, cached: number, output: number, used = 2) => line({
+    timestamp: ts, type: 'event_msg',
+    payload: { type: 'token_count', info: { total_token_usage: { input_tokens: input, cached_input_tokens: cached, output_tokens: output } },
+      rate_limits: { primary: { used_percent: used, window_minutes: 300, resets_at: 1793555158 }, secondary: { used_percent: 0, window_minutes: 10080, resets_at: 1794107405 }, plan_type: 'plus' } },
+  })
+
+  test('requests are the growth of the totals (repeats ignored); limits are the newest', async () => {
+    const { parseRollout } = await import('../src/daemon/codexusage.ts')
+    const text = [
+      line({ timestamp: '2026-11-01T14:02:20Z', type: 'session_meta', payload: { cwd: '/p' } }),
+      line({ timestamp: '2026-11-01T14:02:21Z', type: 'turn_context', payload: { model: 'gpt-6.1-sol' } }),
+      tc('2026-11-01T14:02:29Z', 16_000, 12_000, 100),
+      tc('2026-11-01T14:02:30Z', 16_000, 12_000, 100),
+      tc('2026-11-01T14:02:33Z', 40_000, 30_000, 150, 3),
+    ].join('\n')
+    const { entries, limits } = parseRollout(text, 'f', 0)
+    expect(entries.map(e => [e.model, e.cwd, e.input, e.read, e.output])).toEqual([['gpt-6.1-sol', '/p', 4_000, 12_000, 100], ['gpt-6.1-sol', '/p', 6_000, 18_000, 50]])
+    expect(limits?.plan).toBe('plus')
+    expect(limits?.items.map(i => [i.label, i.percent])).toEqual([['Codex: 5 часов', 3], ['Codex: неделя', 0]])
+  })
+
+  test('a window that has reset since the last request shows empty', async () => {
+    const { freshCodexLimits } = await import('../src/daemon/usage.ts')
+    const at = new Date('2026-11-01T17:45:58Z')
+    const l = { at: 0, plan: 'plus', items: [{ label: 'Codex: 5 часов', percent: 40, resetsAt: at }] }
+    expect(freshCodexLimits(l, at.getTime() - 1)[0].percent).toBe(40)
+    expect(freshCodexLimits(l, at.getTime() + 1)[0]).toEqual({ label: 'Codex: 5 часов', percent: 0, resetsAt: null })
+  })
+})

@@ -11,6 +11,7 @@ const root = mkdtempSync(join(tmpdir(), 'bewitched-test-'))
 const stateDir = join(root, 'state')
 mkdirSync(stateDir, { recursive: true })
 process.env.CLAUDE_CONFIG_DIR = join(root, 'claude')
+process.env.CODEX_HOME = join(root, 'codex')
 process.env.TELEGRAM_BEWITCHED_STATE_DIR = stateDir
 process.env.TELEGRAM_BOT_TOKEN = '123:TEST'
 process.env.BEWITCHED_HTTP_PORT = String(20000 + Math.floor(Math.random() * 20000))
