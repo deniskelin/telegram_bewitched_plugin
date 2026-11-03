@@ -8,7 +8,7 @@ import type { ReactionTypeEmoji } from 'grammy/types'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
 import { extname, join } from 'path'
 import { assertAllowedChat, assertSendable, can, loadAccess, owner, prefsFor, setPref } from '../access.ts'
-import { INBOX_DIR, MEMORY_DIR, settings } from '../config.ts'
+import { MEMORY_DIR, settings } from '../config.ts'
 import { chunk, escapeHtml } from '../format.ts'
 import { editRich, isThreadNotFound, sendRich, topicLink } from '../tg.ts'
 import { parseOptions, postQuestion } from './buttons.ts'
@@ -448,7 +448,7 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
     }
 
     case 'download_attachment':
-      return downloadToInbox(d, String(args.file_id))
+      return downloadToInbox(d, String(args.file_id), s.cwd)
 
     case 'get_history': {
       const c = historyChat(d, s, args)

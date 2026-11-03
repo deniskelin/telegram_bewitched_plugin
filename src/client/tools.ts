@@ -114,7 +114,7 @@ export const TOOLS = [
   },
   {
     name: 'download_attachment',
-    description: 'Download a file attachment from a Telegram message to the local inbox. Use when the inbound <channel> meta shows attachment_file_id. Returns the local file path ready to Read. Telegram caps bot downloads at 20MB.',
+    description: 'Download a file attachment from a Telegram message into the session folder (.telegram/inbox/), readable without a permission prompt. Use when the inbound <channel> meta shows attachment_file_id. Returns the local file path ready to Read. Telegram caps bot downloads at 20MB.',
     inputSchema: {
       type: 'object',
       properties: { file_id: { type: 'string', description: 'The attachment_file_id from inbound meta' } },
