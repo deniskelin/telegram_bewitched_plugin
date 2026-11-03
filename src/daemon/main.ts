@@ -13,7 +13,7 @@ import { startHttp } from './http.ts'
 import { handlePermissionRequest, registerInbound } from './inbound.ts'
 import { handleCall } from './tools.ts'
 import { registerLaunchCommands, startIdleCloser } from './launch.ts'
-import { startDigest, startLimitWatch } from './usage.ts'
+import { startLimitWatch } from './usage.ts'
 import { startTokensWatch } from './outoftokens.ts'
 import { startReminders } from './reminders.ts'
 import { startReports } from './reports.ts'
@@ -133,7 +133,6 @@ startQuestionWatch(d)
 startHealthWatch(d)
 startLimitWatch(d)
 startTokensWatch(d)
-startDigest(d)
 startReminders(d)
 startCiWatch(d)
 startReports(d)

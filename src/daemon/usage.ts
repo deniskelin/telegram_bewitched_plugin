@@ -16,7 +16,6 @@ import { owner } from '../access.ts'
 import { button } from './stream.ts'
 import { isMessageNotModified } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { commitsSince } from './git.ts'
 import { locale, k, t as tr } from '../i18n/index.ts'
 import { noticeTarget, sendNotice } from './journal.ts'
 import { inChat } from './lang.ts'
@@ -879,52 +878,3 @@ export function sessionCostLine(s: Session, now = Date.now()): string | null {
   return sum.tokens ? tr('💸 сегодня ${v} · {v2} ток.', { v: sum.cost.toFixed(2), v2: fmtTok(sum.tokens) }) : null
 }
 
-/** What happened today: spend by session and commits per project folder. */
-export async function digestReport(d: Daemon, now = Date.now()): Promise<string> {
-  const since = startOfDay(now)
-  const entries = collectEntries(now, 1).filter(e => e.ts >= since)
-  const total: Sum = { tokens: 0, cost: 0, unpriced: 0 }
-  const byFolder = new Map<string, Sum>()
-  for (const e of entries) {
-    add(total, e)
-    const sum = byFolder.get(e.cwd) ?? { tokens: 0, cost: 0, unpriced: 0 }
-    add(sum, e)
-    byFolder.set(e.cwd, sum)
-  }
-  const folders = new Set([...byFolder.keys(), ...d.activeSessions().map(s => s.projectKey)].filter(Boolean))
-  const date = new Date(now).toLocaleDateString(locale(), { day: 'numeric', month: 'long' })
-  const out = [tr('🌙 <b>Итоги дня</b> · {date}', { date }), tr('💸 {v} в ценах API', { v: fmtSum(total) })]
-  const rows: { cost: number; text: string }[] = []
-  for (const dir of folders) {
-    const sum = byFolder.get(dir)
-    const commits = await commitsSince(dir, new Date(since))
-    if (!sum && !commits?.length) continue
-    const lines = [`${ownerOf(d, dir)}${sum ? ` · $${sum.cost.toFixed(2)}` : ''}${commits?.length ? tr(' · коммитов {length}', { length: commits.length }) : ''}`]
-    for (const c of (commits ?? []).slice(0, 3)) lines.push(`   • ${escapeHtml(c.length > 80 ? c.slice(0, 79) + '…' : c)}`)
-    if ((commits?.length ?? 0) > 3) lines.push(tr('   … ещё {v}', { v: commits!.length - 3 }))
-    rows.push({ cost: sum?.cost ?? 0, text: lines.join('\n') })
-  }
-  rows.sort((a, b) => b.cost - a.cost)
-  out.push(rows.length ? rows.map(r => r.text).join('\n') : tr('Сегодня сессии ничего не делали.'))
-  const limits = limitsLine()
-  if (limits) out.push(limits)
-  return out.join('\n\n')
-}
-
-/** Send the digest once a day at DIGEST_AT (checked every minute). */
-export function startDigest(d: Daemon): void {
-  setInterval(() => {
-    const at = settings.digestAt
-    if (!at || !owner()) return
-    const now = new Date()
-    const hm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
-    const key = `digest:${now.toDateString()}`
-    if (hm < at || d.store.get(key)) return
-    d.store.set(key, '1')
-    void (async () => {
-      const to = await noticeTarget(d, 'reports')
-      if (!to) return
-      await inChat(d, to.chat, to.thread, async () => d.bot.api.sendMessage(to.chat, await digestReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, ...(to.thread != null ? { message_thread_id: to.thread } : {}) }))
-    })().catch(err => d.log(`digest failed: ${err}`))
-  }, 60_000).unref?.()
-}
