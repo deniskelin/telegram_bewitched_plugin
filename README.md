@@ -78,6 +78,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 | **External events** | `bewitched event --topic <name> "text"` or `POST /event` — a «📡» message in the project's topic and to its session. Every 5 minutes the bot looks at the latest GitHub Actions run of each project session's branch: failed — «❌ CI failed» with «🛠 Fix it», green again — «✅». |
 | **Voice** | Voice messages and video notes are transcribed locally; a voice message gets a spoken reply. Numbers, times, dates and Latin words are read out in Russian by the Russian voice. Voice and speed are per-chat settings. |
 | **Statistics** | `/usage` — limit percentages with reset time and a bar, spending by model and session; notices at 80/95% and at the moment of reset (🔔/🔕); «🌙 Daily summary»; `/reports` — day, week, month with a chart; the session's cost on its card; `/server` — machine load, the daemon log and a restart button; 👥 who used how much of the 5-hour window, with a notice when someone takes more than `USER_SHARE_ALERT`. 🌙 Quiet hours — silent at night. |
+| **Two engines** | A session runs on **Claude Code** or **Codex CLI**, chosen per project in 🧠 and switched with one tap. On a switch the work is handed over (`.telegram/handoff.md`: recent turns and git state), so the other engine goes on where the first stopped. Codex's permission requests come as the same «✅ Allow / ❌ Deny» cards, its usage is in `/usage` and the daily summary, and when Claude runs out of tokens «🔀 Continue on Codex until the reset» moves the work over and back. See [Engines](#engines-claude-code-and-codex). |
 | **Out of tokens** | When a turn fails on the subscription limit, an API rate limit or an empty API balance, the bot answers by itself in the chat's language (“⏸ The Claude subscription is out of tokens… I'll answer right after the limit resets at 14:20”), saves new messages and, at the reset, hands them to the session in one batch and asks it to finish the cut-off turn. API rate limits retry after 2, 4, 8… min; an empty balance waits for «▶️ Continue now» (also in `/menu` while paused). Other failures (not logged in, server error, answer too long, request too large) get a plain hint instead of bare English. |
 | **Reminders** | `/remind 2h check CI`, «tomorrow 9:00», «every day 9:00»; when due, the text arrives in the chat and to its session; a session that isn't running is started. |
 | **People** | `/invite` — pick a contact, the bot grants access, starts their session and gives a group link; `/users` and 🚫 — remove a person with their session, folder, transcripts and history. People added through `/telegram-bewitched:access` are picked up by the daemon automatically. |
@@ -90,7 +91,7 @@ Claude Code sessions in tmux: 👤 one per person (~/user/<id>) · 📂 one per 
 - [Bun](https://bun.sh) ≥ 1.2.
 - Claude Code with channels and the `MessageDisplay` hook.
 - tmux — for starting sessions automatically, the «⏹ Stop» button, «👁 Screen and keys» and commands in the session window (without tmux «Stop» only tells the model about the stop).
-- Optional: `gh` (PRs in «🌿 Git», CI watch), ffmpeg and Python 3 (voice, installed with `bewitched voice install`).
+- Optional: `gh` (PRs in «🌿 Git», CI watch), ffmpeg and Python 3 (voice, installed with `bewitched voice install`), [Codex CLI](https://github.com/openai/codex) (the second engine; found in `~/.local/bin/codex`, `CODEX_BIN` or `PATH`).
 
 ## Installation
 
@@ -182,7 +183,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 - **A user session starts by itself.** A user's first message → the daemon creates `~/user/<id>`, starts Claude in its own tmux session `claude-user-<id>` ( with `--continue` if there were conversations already); the message waits in the queue and arrives after the session connects.
 - **A project topic without a session** (`TOPIC_NO_SESSION=launch`): a message starts the project session. If the start fails, the bot posts a command for a manual start and closes the topic until the session connects.
 - **Watchdog.** A session went away by itself (not archive, not timeout) → a minute later the owner gets «⚠️ Session … has stopped» in DM, with restart commands and a «🚀 Start» button. The project topic gets the notice without commands or buttons and is closed until the session reconnects; a member whose own session stopped gets a «🙋 Ask for a restart» button, which forwards the request to the owner.
-- **💤 Suspending idle sessions** (`/menu → 💤`): a row per kind — users' own sessions, the owner's own session, project sessions — «never · 12 h · a day · 3 days · a week». A suspended session starts again with the next message. The member gets «💤 Your session is suspended» with «🙋 Ask to start» (the request goes to the owner); the owner (journal «🖥 Sessions») gets the commands and 🚀; a project topic gets one line. The notices go once the session is back. Defaults: the owner's own session a week, others from `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0` — never). An idle session spends no tokens, only memory.
+- **💤 Suspending idle sessions** (`/menu → 💤`): a row per kind — users' own sessions, the owner's own session, project sessions — «never · 12 h · a day · 3 days · a week». Nobody is told in the chats: the journal («🖥 Sessions», the botlog) gets one line. The next message wakes the session up by itself, with its conversation, the startup screen confirmed automatically; the journal gets «🔄 waking up» and «✅ back at work». Only a wake-up that fails is told in the chat. Defaults: the owner's own session a week, others from `USER_IDLE_MIN` / `PROJECT_IDLE_MIN` (`0` — never). An idle session spends no tokens, only memory.
 
 ### What you do by hand
 
@@ -200,6 +201,18 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 - `--continue` continues the latest conversation in the folder, including one started there by hand.
 
 `USER_SESSIONS=off` brings back the 1.0 behaviour: everyone's DMs and General go to the main session in `MAIN_DIR`; `/main <id>`, `/main reset` and «👑 Make main» on the `/sessions` card reassign it.
+
+## Engines: Claude Code and Codex
+
+A session runs on one of two agent CLIs. Claude Code talks to the daemon over the channel; Codex CLI is started with the daemon's own profile (`$CODEX_HOME/bewitched.config.toml`: the same MCP server, the same hooks, the channel instructions) and gets messages through `codex queue` or one bracketed paste into its window.
+
+- **Choosing.** 🧠 on the session card: the engine row and its models. The choice is remembered for the project; every start (a topic, 🚀, a user's DM, a wake-up) uses it. «♻️ Switch to Codex now» closes the session and starts it on the other engine — no terminal needed. tmux windows are named by engine: `claude-project-<folder>`, `codex-user-<id>`.
+- **Handoff.** Each engine keeps its own conversations, so a switch hands the work over: the daemon reads the outgoing conversation (Claude's transcript or Codex's rollout: what the user wrote, what was answered), adds the branch, uncommitted changes and recent commits, writes `<folder>/.telegram/handoff.md` and gives the new engine a first message pointing to it. The new engine starts a fresh conversation with that; no model is used for the handoff.
+- **One project memory.** Codex reads the project's `CLAUDE.md` when there is no `AGENTS.md` (`project_doc_fallback_filenames`); the handoff names whichever of them the project has.
+- **Permissions.** Codex asks in its own window («Would you like to run the following command?»). The daemon reads the request off the screen right after the tool hook and sends a card: «✅ Allow», «❌ Deny», «♾ Don't ask again this session». A tap selects that option in Codex's window — only if the same request is still open.
+- **Usage.** `/usage` has a section per subscription; Codex is counted from its rollouts (`~/.codex/sessions`): its 5-hour and weekly windows, tokens, «who spends» in tokens, models and sessions. Its windows cross the same `LIMIT_ALERTS` thresholds. A Codex turn's footer shows its tokens and cache share (there is no API price for Codex).
+- **Out of Claude tokens.** The pause notice has «🔀 Continue on Codex until the reset»: the session switches to Codex with the handoff and the saved messages go to it. When Claude's limit is back, the chat gets «↩️ Back to Claude» / «Stay on Codex».
+- **Session commands.** `/compact` works on both; `/clear` is typed as `/new` for Codex; 🕘 conversations lists Codex's own and continues the chosen one by restarting the session with it (`codex resume <id>`).
 
 ## Settings (`~/.claude/channels/telegram-bewitched/.env`)
 

@@ -4,7 +4,8 @@
  *   bun scripts/i18n-keys.ts            — every key
  *   bun scripts/i18n-keys.ts missing en — keys the en dictionary lacks
  *   bun scripts/i18n-keys.ts raw        — Cyrillic still outside t()/tr()/k() ("i18n-ignore" skips a line
- *                                         and the next: text for the model, Russian on purpose)
+ *                                         and the next, "i18n-ignore-start"…"-end" a block: text for the
+ *                                         model, Russian on purpose)
  */
 
 import { readdirSync, readFileSync, statSync } from 'fs'
@@ -42,9 +43,13 @@ export function rawCyrillic(): string[] {
   for (const f of sourceFiles()) {
     if (/normalize\.ts$/.test(f)) continue
     const lines = readFileSync(f, 'utf8').split('\n')
+    let block = false
     lines.forEach((line, i) => {
-      // Text for the model, not the interface: marked "i18n-ignore" on the line or the one above.
-      if (line.includes('i18n-ignore') || lines[i - 1]?.includes('i18n-ignore')) return
+      // Text for the model, not the interface: marked "i18n-ignore" on the line or the one above,
+      // or a whole block between "i18n-ignore-start" and "i18n-ignore-end".
+      if (line.includes('i18n-ignore-start')) block = true
+      if (line.includes('i18n-ignore-end')) { block = false; return }
+      if (block || line.includes('i18n-ignore') || lines[i - 1]?.includes('i18n-ignore')) return
       const code = line.replace(CALL, "t('')").replace(/\/\/.*$/, '').replace(/^\s*\*.*$/, '').replace(/\/\*.*?\*\//g, '')
       if (/[А-Яа-яЁё]/.test(code)) out.push(`${f.slice(ROOT.length + 1)}:${i + 1}: ${line.trim().slice(0, 160)}`)
     })

@@ -14,6 +14,7 @@ import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { inChat } from './lang.ts'
 import { button } from './stream.ts'
 import { fetchLimits, resetLimitsCache } from './usage.ts'
+import { codex, projectEngine, setProjectEngine, type EngineId } from './engines.ts'
 import { locale, t as tr } from '../i18n/index.ts'
 
 export type PauseKind = 'subscription' | 'rate' | 'billing'
@@ -112,7 +113,7 @@ export async function onLimitFailure(d: Daemon, s: Session, error: string, text:
   d.log(`out of tokens (${kind}), until ${until ? new Date(until).toISOString() : '?'}`)
   schedule(d)
   const chat = s.lastChat
-  if (chat) await say(d, chat, pause, undefined, true)
+  if (chat) await say(d, chat, pause, undefined, true, undefined, canFallBack(s) ? s : undefined)
   return true
 }
 
@@ -164,18 +165,26 @@ export function pauseText(p: Pause, first: boolean): string {
     : tr('{lead} Сообщение записал. {after}', { lead, after })
 }
 
-function resumeKb(): InlineKeyboard {
-  return new InlineKeyboard([[button(tr('▶️ Продолжить сейчас'), 'tok:go')]])
+function resumeKb(fallback?: Session): InlineKeyboard {
+  const rows = [[button(tr('▶️ Продолжить сейчас'), 'tok:go')]]
+  // FR-18: the work goes on on Codex until the reset, with the handoff; only the owner can press it.
+  if (fallback) rows.unshift([button(tr('🔀 Продолжить на Codex до сброса'), `tok:cx:${fallback.id}`, 'primary')])
+  return new InlineKeyboard(rows)
 }
 
-async function say(d: Daemon, chat: ChatRef, p: Pause, replyTo: number | undefined, first: boolean, heard?: string): Promise<void> {
+/** A Claude session that may fall back to Codex: Codex is installed. */
+function canFallBack(s: Session): boolean {
+  return s.engine === 'claude' && codex.available()
+}
+
+async function say(d: Daemon, chat: ChatRef, p: Pause, replyTo: number | undefined, first: boolean, heard?: string, fallback?: Session): Promise<void> {
   await inChat(d, chat.chatId, chat.threadId, async () => {
     const text = heard ? `${pauseText(p, first)}\n\n${heard.length > 3000 ? heard.slice(0, 2999) + '…' : heard}` : pauseText(p, first)
     await d.bot.api.sendMessage(chat.chatId, text, {
       ...(chat.threadId != null ? { message_thread_id: chat.threadId } : {}),
       ...(replyTo ? { reply_parameters: { message_id: replyTo, allow_sending_without_reply: true } } : {}),
       // Only the owner may lift the pause by hand; others see the same button but get "no access".
-      reply_markup: resumeKb(),
+      reply_markup: resumeKb(fallback),
     }).catch(err => d.log(`out-of-tokens notice failed: ${err}`))
   })
 }
@@ -219,34 +228,123 @@ export async function release(d: Daemon): Promise<void> {
       for (const h of items) await d.routeText(h.from, h.meta.user_id ?? '', h.content, h.meta).catch(err => d.log(`held route failed: ${err}`))
       continue
     }
-    if (!items.length) {
-      if (s.lastChat) d.deliver(s, note, { event: 'tokens_back', chat_id: s.lastChat.chatId }, s.lastChat)
-      continue
-    }
-    const last = items.at(-1)!
-    const content = items.length === 1
-      ? `[${note} Пока токенов не было, пришло это сообщение — ответь на него.]\n\n${last.content}` // i18n-ignore
-      : `[${note} Пока токенов не было, пришло сообщений: ${items.length}. Ответь на каждое (chat_id и message_id в скобках).]\n\n` // i18n-ignore
-        + items.map(h => `(${h.meta.user ?? ''}; chat_id=${h.from.chatId}${h.from.threadId != null ? `, message_thread_id=${h.from.threadId}` : ''}; message_id=${h.meta.message_id ?? ''}) ${h.content}`).join('\n\n')
-    for (const h of items) {
-      const k = `${h.from.chatId}:${h.from.threadId ?? ''}`
-      if (told.has(k)) continue
-      told.add(k)
-      const n = items.filter(x => x.from.chatId === h.from.chatId && x.from.threadId === h.from.threadId).length
-      await inChat(d, h.from.chatId, h.from.threadId, () => d.bot.api.sendMessage(h.from.chatId, tr('▶️ Лимит восстановился — отвечаю на записанное ({n}).', { n }), {
-        ...(h.from.threadId != null ? { message_thread_id: h.from.threadId } : {}),
-        disable_notification: true,
-      })).catch(() => {})
-    }
-    d.deliver(s, content, items.length === 1 ? last.meta : { ...last.meta, held_count: String(items.length) }, last.from)
+    await handOver(d, s, items, note, told)
+  }
+  await offerReturn(d)
+}
+
+/** Messages held for a project, or the note about its broken turn, to its session now; each chat is told once. */
+async function handOver(d: Daemon, s: Session, items: Held[], note: string, told: Set<string>, chatNote = (n: number) => tr('▶️ Лимит восстановился — отвечаю на записанное ({n}).', { n })): Promise<void> {
+  if (!items.length) {
+    if (s.lastChat) d.deliver(s, note, { event: 'tokens_back', chat_id: s.lastChat.chatId }, s.lastChat)
+    return
+  }
+  const last = items.at(-1)!
+  const content = items.length === 1
+    ? `[${note} Пока токенов не было, пришло это сообщение — ответь на него.]\n\n${last.content}` // i18n-ignore
+    : `[${note} Пока токенов не было, пришло сообщений: ${items.length}. Ответь на каждое (chat_id и message_id в скобках).]\n\n` // i18n-ignore
+      + items.map(h => `(${h.meta.user ?? ''}; chat_id=${h.from.chatId}${h.from.threadId != null ? `, message_thread_id=${h.from.threadId}` : ''}; message_id=${h.meta.message_id ?? ''}) ${h.content}`).join('\n\n')
+  for (const h of items) {
+    const k = `${h.from.chatId}:${h.from.threadId ?? ''}`
+    if (told.has(k)) continue
+    told.add(k)
+    const n = items.filter(x => x.from.chatId === h.from.chatId && x.from.threadId === h.from.threadId).length
+    await inChat(d, h.from.chatId, h.from.threadId, () => d.bot.api.sendMessage(h.from.chatId, chatNote(n), {
+      ...(h.from.threadId != null ? { message_thread_id: h.from.threadId } : {}),
+      disable_notification: true,
+    })).catch(() => {})
+  }
+  d.deliver(s, content, items.length === 1 ? last.meta : { ...last.meta, held_count: String(items.length) }, last.from)
+}
+
+// --------------------------------------------------------------------------
+// FR-18: on Codex until the reset
+// --------------------------------------------------------------------------
+
+/** A project moved to Codex for the pause: the engine and model to go back to. */
+type Fallback = { engine: EngineId; model?: string; at: number }
+const fallbackKey = (project: string) => `fallback:${project}`
+
+export function fallbackOf(d: Daemon, project: string): Fallback | null {
+  return read<Fallback | null>(d, fallbackKey(project), null)
+}
+
+/** The held messages and the broken turn of one project: taken out of the pause, for its new session. */
+function takeHeld(d: Daemon, project: string): { items: Held[]; broken: boolean } {
+  const held = read<Held[]>(d, HELD, [])
+  const broken = read<string[]>(d, BROKEN, [])
+  d.store.set(HELD, JSON.stringify(held.filter(h => h.projectKey !== project)))
+  d.store.set(BROKEN, JSON.stringify(broken.filter(k => k !== project)))
+  return { items: held.filter(h => h.projectKey === project), broken: broken.includes(project) }
+}
+
+/** tok:cx:<session> — the session goes on on Codex with the handoff; the held messages follow it. */
+async function fallBackToCodex(d: Daemon, ctx: Context, s: Session): Promise<void> {
+  const prev = projectEngine(d, s.projectKey)
+  d.store.set(fallbackKey(s.projectKey), JSON.stringify({ engine: prev.engine, model: prev.model ?? undefined, at: Date.now() } satisfies Fallback))
+  setProjectEngine(d, s.projectKey, { engine: 'codex' })
+  const p = pauseOf(d)
+  // i18n-ignore-start: for the model
+  const note = `У Claude закончился лимит${p?.until ? ` (сброс в ${when(p.until)})` : ''}, работа переходит к тебе до сброса. Если прежний ход прервался на середине — доведи его до конца.`
+  // i18n-ignore-end
+  const { switchSession } = await import('./menu.ts')
+  const edit = (sc: { text: string; kb: InlineKeyboard }) => ctx.editMessageText(sc.text, { parse_mode: 'HTML', reply_markup: sc.kb }).then(() => {}).catch(() => {})
+  d.log(`FR-18: session ${s.id} (${s.projectKey}) falls back to Codex until the reset`)
+  await switchSession(d, s, edit, {
+    note,
+    after: async n => {
+      const { items } = takeHeld(d, s.projectKey)
+      if (items.length) await handOver(d, n, items, 'Лимит Claude кончился, отвечает Codex.', new Set(), k => tr('🔀 Отвечает Codex — записанное ({n}).', { n: k })) // i18n-ignore
+    },
+  })
+}
+
+/** The pause is over: projects moved to Codex for it are offered the way back (not forced: a turn may be running). */
+async function offerReturn(d: Daemon): Promise<void> {
+  for (const s of d.activeSessions()) {
+    const f = fallbackOf(d, s.projectKey)
+    if (!f || s.engine !== 'codex') continue
+    const c = s.lastChat
+    if (!c) continue
+    await inChat(d, c.chatId, c.threadId, () => d.bot.api.sendMessage(c.chatId, tr('▶️ Лимит Claude восстановился. Сессия #{id} пока на Codex — вернуть работу на Claude? Дела передам так же.', { id: s.id }), {
+      ...(c.threadId != null ? { message_thread_id: c.threadId } : {}),
+      reply_markup: new InlineKeyboard([[button(tr('↩️ Вернуть на Claude'), `tok:back:${s.id}`, 'primary'), button(tr('Остаться на Codex'), `tok:stay:${s.id}`)]]),
+    })).catch(err => d.log(`fallback return offer failed: ${err}`))
   }
 }
 
-/** tok:go — the owner lifts the pause now (balance topped up, or the time was guessed wrong). */
+/** tok:back:<session> — back to the engine (and model) the project had before the pause, with the handoff. */
+async function returnFromCodex(d: Daemon, ctx: Context, s: Session): Promise<void> {
+  const f = fallbackOf(d, s.projectKey)
+  d.store.set(fallbackKey(s.projectKey), null)
+  setProjectEngine(d, s.projectKey, { engine: f?.engine ?? 'claude', ...(f?.model ? { model: f.model } : {}) })
+  const { switchSession } = await import('./menu.ts')
+  const edit = (sc: { text: string; kb: InlineKeyboard }) => ctx.editMessageText(sc.text, { parse_mode: 'HTML', reply_markup: sc.kb }).then(() => {}).catch(() => {})
+  d.log(`FR-18: session ${s.id} (${s.projectKey}) returns to ${f?.engine ?? 'claude'}`)
+  await switchSession(d, s, edit, { note: 'Лимит Claude восстановился: работа возвращается к тебе после Codex.' }) // i18n-ignore
+}
+
+/** tok:go — the owner lifts the pause now (balance topped up, or the time was guessed wrong); tok:cx|back|stay:<session> — FR-18. */
 export async function handleTokensCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  if (data !== 'tok:go') return false
+  const fb = /^tok:(cx|back|stay):([0-9a-f]+)$/.exec(data)
+  if (data !== 'tok:go' && !fb) return false
   if (!ctx.from || !can(ctx.from.id, 'control')) {
     await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+    return true
+  }
+  if (fb) {
+    const s = d.sessions.get(fb[2])
+    if (!s) { await ctx.answerCallbackQuery({ text: tr('Сессия уже отключилась.') }).catch(() => {}); return true }
+    if (fb[1] === 'stay') {
+      d.store.set(fallbackKey(s.projectKey), null)
+      await ctx.answerCallbackQuery({ text: tr('Остаётся на Codex') }).catch(() => {})
+      await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+      return true
+    }
+    if (fb[1] === 'cx' && s.engine !== 'claude') { await ctx.answerCallbackQuery({ text: tr('Сессия уже на Codex.') }).catch(() => {}); return true }
+    if (fb[1] === 'back' && s.engine !== 'codex') { await ctx.answerCallbackQuery({ text: tr('Сессия уже не на Codex.') }).catch(() => {}); return true }
+    await ctx.answerCallbackQuery({ text: fb[1] === 'cx' ? tr('🔀 Переключаю на Codex…') : tr('↩️ Возвращаю на Claude…') }).catch(() => {})
+    void (fb[1] === 'cx' ? fallBackToCodex(d, ctx, s) : returnFromCodex(d, ctx, s)).catch(err => d.log(`FR-18 switch failed: ${err}`))
     return true
   }
   const was = pauseOf(d)

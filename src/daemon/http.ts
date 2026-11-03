@@ -6,6 +6,7 @@
  *   GET  /status  — daemon state for the CLI
  */
 
+import { watchApprovalSoon } from './codexapproval.ts'
 import { prefsFor } from '../access.ts'
 import { httpToken, settings } from '../config.ts'
 import { escapeHtml, fmtDuration, isOwnTool, maskSecrets, summarizeTool } from '../format.ts'
@@ -76,6 +77,8 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
       // Text before a tool call was narration, not the answer.
       if (name && !isOwnTool(name)) s.answer = ''
       if (name && !isOwnTool(name)) d.streams.onTool(s, summary)
+      // Codex may ask in its window before running it: the request goes to the chat as a card.
+      if (name && !isOwnTool(name)) watchApprovalSoon(d, s)
       break
     }
     case 'PostToolUseFailure': {

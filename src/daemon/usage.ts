@@ -499,6 +499,8 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
   const to = owner()
   if (!to || !settings.usageLimits || (!thresholds.length && !warmupOn(d))) return
   if (limitsCache && now - limitsCache.at >= 60_000) limitsCache = null
+  // Codex's windows (from its own logs) cross the same thresholds; its alerts have no 🔔 buttons.
+  if (thresholds.length) await checkCodexLimits(d, thresholds, now)
   const limits = await fetchLimits()
   if (typeof limits === 'string') return
   // ⚡ Start the next 5-hour window right at its reset.
@@ -524,6 +526,24 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
   await checkShares(d, to, limits, now)
   rescheduleRequested(d)
   d.onSessionsChanged()
+}
+
+async function checkCodexLimits(d: Daemon, thresholds: number[], now: number): Promise<void> {
+  for (const l of freshCodexLimits(collectCodex(now, 31).limits, now)) {
+    const key = `limit:${l.label}`
+    const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
+    const resetsAt = l.resetsAt?.toISOString() ?? null
+    const level = thresholds.filter(t => l.percent >= t).at(-1) ?? 0
+    const newWindow = prev.resetsAt != null && resetsAt != null && Math.abs(Date.parse(prev.resetsAt) - Date.parse(resetsAt)) > 60_000
+    if (prev.level > 0 && level === 0 && !prev.notified) {
+      await sendNotice(d, 'limits', () => tr('✅ Лимит «{v}» восстановился: {v2}% {v3}', { v: escapeHtml(tr(l.label)), v2: Math.round(l.percent), v3: bar(l.percent) }))
+    } else if (level > (newWindow ? 0 : prev.level)) {
+      d.log(`codex limit ${l.label}: ${Math.round(l.percent)}% crossed ${level}%`)
+      await sendNotice(d, 'limits', () => alertText(l, level, now))
+    }
+    d.store.set(key, JSON.stringify({ level, resetsAt } satisfies LimitState))
+    if (level > 0 && l.resetsAt) scheduleResetNotice(d, l.label, l.resetsAt)
+  }
 }
 
 function alertText(l: Limit, level: number, now: number): string {
@@ -819,10 +839,15 @@ function startOfDay(now: number): number {
  * What one turn of a session cost: its transcript entries since the turn
  * began. «🔢 18 тыс. ток. · кэш 96% · $0.05»; null when nothing was counted.
  */
+/** A session's requests of the last day, from its engine's own logs (Codex: rollouts, no API price). */
+function sessionEntries(s: Session, now: number): Entry[] {
+  return s.engine === 'codex' ? collectCodex(now, 1).entries : collectEntries(now, 1)
+}
+
 export function turnCostLine(s: Session, since: number, now = Date.now(), rich = false): string | null {
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
   let read = 0
-  for (const e of collectEntries(now, 1)) {
+  for (const e of sessionEntries(s, now)) {
     if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
     add(sum, e)
     read += e.read
@@ -830,6 +855,8 @@ export function turnCostLine(s: Session, since: number, now = Date.now(), rich =
   if (!sum.tokens) return null
   const cache = Math.round((read / sum.tokens) * 100)
   const vars = { v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2), took: fmtDuration(now - since) }
+  // Codex has no API price: tokens and the cache only.
+  if (s.engine === 'codex') return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}%', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}%', vars)
   // Rich (Markdown) for sendRichMessage, plain text if that fails.
   return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}% · **${cost}**', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}% · ${cost}', vars)
 }
@@ -844,7 +871,8 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
   const k = { input: 0, output: 0, read: 0, write5m: 0, write1h: 0 }
   const models = new Map<string, number>()
   let requests = 0
-  for (const e of collectEntries(now, 1)) {
+  const codex = s.engine === 'codex'
+  for (const e of sessionEntries(s, now)) {
     if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
     add(sum, e)
     for (const f of ['input', 'output', 'read', 'write5m', 'write1h'] as const) k[f] += e[f]
@@ -865,16 +893,19 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
     row(tr('Чтение кэша'), `${fmtTok(k.read)} (${cache}%)`),
     row(tr('Запись в кэш'), fmtTok(k.write5m + k.write1h)),
     row(tr('Всего'), tr('{v} ток.', { v: fmtTok(sum.tokens) })),
-    row(tr('В ценах API'), `<b>$${sum.cost.toFixed(2)}</b>` + (sum.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: sum.unpriced }) : '')),
+    ...(codex ? [] : [row(tr('В ценах API'), `<b>$${sum.cost.toFixed(2)}</b>` + (sum.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: sum.unpriced }) : ''))]),
   ]
-  const gist = tr('🔢 {took} · {v} ток. · кэш {cache}% · ${cost}', { took, v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2) })
+  const gist = codex
+    ? tr('🔢 {took} · {v} ток. · кэш {cache}%', { took, v: fmtTok(sum.tokens), cache })
+    : tr('🔢 {took} · {v} ток. · кэш {cache}% · ${cost}', { took, v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2) })
   return `<details><summary>${escapeHtml(tr('🔢 Расход хода'))}</summary><table bordered striped compact>${rows.join('')}</table></details><footer>${escapeHtml(gist)}</footer>`
 }
 
 export function sessionCostLine(s: Session, now = Date.now()): string | null {
   const since = startOfDay(now)
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
-  for (const e of collectEntries(now, 1)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
-  return sum.tokens ? tr('💸 сегодня ${v} · {v2} ток.', { v: sum.cost.toFixed(2), v2: fmtTok(sum.tokens) }) : null
+  for (const e of sessionEntries(s, now)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
+  if (!sum.tokens) return null
+  return s.engine === 'codex' ? tr('💸 сегодня {v} ток. (Codex)', { v: fmtTok(sum.tokens) }) : tr('💸 сегодня ${v} · {v2} ток.', { v: sum.cost.toFixed(2), v2: fmtTok(sum.tokens) })
 }
 
