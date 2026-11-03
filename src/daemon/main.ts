@@ -24,6 +24,7 @@ import { setSileroStarter } from '../voice/tts.ts'
 import { reportRestart } from './server.ts'
 import { startCiWatch } from './events.ts'
 import { renotifyStopped, startQuestionWatch, startTurnWatch } from './watchdog.ts'
+import { closeOrphanProgress } from './stream.ts'
 import { writeCodexProfile } from './engines.ts'
 import { startHealthWatch } from './health.ts'
 import { inSession } from './lang.ts'
@@ -138,6 +139,8 @@ startCiWatch(d)
 startReports(d)
 startAllowlistWatch(d)
 // Stopped-session notices from before this version: once sessions had time to reconnect.
+// Progress messages the previous daemon left «⏳ Работаю…» (a restart mid-turn): closed once the bot is up.
+setTimeout(() => void closeOrphanProgress(d).catch(err => log(`orphan progress: ${err}`)), 3000).unref?.()
 setTimeout(() => void renotifyStopped(d).catch(err => log(`watchdog renotify: ${err}`)), Math.max(settings.watchdogGraceSec, 30) * 1000).unref?.()
 const voice = voiceServices(log)
 setLocalSttStarter(() => voice.stt.ensure())

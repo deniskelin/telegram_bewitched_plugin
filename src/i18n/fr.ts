@@ -885,6 +885,7 @@ const dict: Dict = {
   "✅ Сессия <b>{v}</b> (#{id}) снова в работе: подключилась за {n} с.": "✅ La session <b>{v}</b> (#{id}) est de nouveau au travail : connectée en {n} s.",
   "⚠️ Сессия <b>{v}</b> не поднялась сама: {why}. Сообщения ждут в очереди — посмотрите экран.": "⚠️ La session <b>{v}</b> ne s'est pas réveillée toute seule : {why}. Les messages attendent dans la file — regardez l'écran.",
   "⏳ Сессия запускается дольше обычного — сообщение в очереди, владелец получил уведомление.": "⏳ La session met plus de temps que d'habitude à démarrer — le message est en file d'attente, le propriétaire a été prévenu.",
+  "⚪️ Прогресс прервался: демон перезапускался. Ответ придёт отдельным сообщением.": "⚪️ Progression interrompue : le démon a redémarré. La réponse arrivera dans un message séparé.",
 }
 
 export default dict
