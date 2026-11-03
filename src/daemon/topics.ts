@@ -19,6 +19,7 @@ import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProject } from './launch.ts'
+import { clearIdle, idleRecord, quietConnect } from './autoresume.ts'
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
 import { fetchLimits, lastLimits, limitsBlock, limitsLine } from './usage.ts'
@@ -167,6 +168,10 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
   onSessionBack(d, s.cwd)
   onLaunchConnected(d, s.cwd)
+  // Woken up after idling: no «🟢 Сессия подключена» in the chat — the journal has it.
+  const quiet = quietConnect.delete(s.cwd) || quietConnect.delete(s.projectKey)
+  clearIdle(d, s.cwd)
+  d.log(`session ${s.id} registered: ${s.engine} in ${s.cwd}, pane ${s.tmuxPane ?? '-'}${s.reconnect ? ', reconnect' : ''}${quiet ? ', woken up' : ''}`)
   try {
     await ensureTopic(d, s)
   } catch (err) {
@@ -174,7 +179,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
   const chat = sessionTarget(d, s)
   if (s.topic) s.lastChat = chat
-  if (s.topic && !s.reconnect) {
+  if (s.topic && !s.reconnect && !quiet) {
     const card = [
       tr('🟢 Сессия подключена'),
       `📁 ${s.cwd}`,
@@ -238,6 +243,8 @@ function replaceStatusCard(d: Daemon, chatId: string, threadId: number | undefin
 export function onSessionGone(d: Daemon, s: Session): void {
   onSessionStopped(d, s)
   if (!s.topic || s.passive) return
+  // Suspended for idling: only the journal hears of it (autoresume.ts).
+  if (idleRecord(d, s.cwd)) return
   // Another live session may still serve this topic (TOPIC_MODE=project).
   if (d.activeSessions().some(o => o.topic?.threadId === s.topic!.threadId && o.topic.chatId === s.topic!.chatId)) return
   const { chatId, threadId } = s.topic

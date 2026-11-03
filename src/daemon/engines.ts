@@ -19,7 +19,10 @@ import { PLUGIN_ROOT, settings } from '../config.ts'
 import { INSTRUCTIONS } from '../client/instructions.ts'
 import type { Daemon, Session } from './daemon.ts'
 import type { LaunchOptions } from './launch.ts'
-import { isQuestion } from './screen.ts'
+import { isQuestion, screenView } from './screen.ts'
+import { inChat } from './lang.ts'
+import { t } from '../i18n/index.ts'
+import type { ChatRef } from './daemon.ts'
 import { projectTranscriptDir } from './transcript.ts'
 
 export type EngineId = 'claude' | 'codex'
@@ -182,23 +185,90 @@ export function codexQueue(thread: string, text: string): Promise<void> {
   })
 }
 
+/** How long a fresh Codex gets to show its input line before a message is pasted anyway. Replaced in tests. */
+export const codexTiming = { readyMs: 30_000, pollMs: 500 }
+
+/** Deliveries per session, one after another: two pastes at once would mix in the input line. */
+const codexChains = new Map<string, Promise<void>>()
+
 /**
  * A message for a Codex session: codex queue into its thread (the id comes
- * with its first hook). Before that — or if queue fails — typed into its
- * window with the FR-14 checks, on one line (Enter would send a newline early).
+ * with its first hook). Before that — or if queue fails — pasted into its
+ * window (one bracketed paste: newlines stay, a long text shows as «[Pasted
+ * Content N chars]») once its input line is up, with the FR-14 checks.
+ * Every step goes to the log: how it went in, how long, how it ended.
  */
-export async function codexDeliver(d: Daemon, s: Session, text: string): Promise<void> {
+export function codexDeliver(d: Daemon, s: Session, text: string): Promise<void> {
+  const prev = codexChains.get(s.id) ?? Promise.resolve()
+  const next = prev.catch(() => {}).then(() => codexDeliverNow(d, s, text))
+  codexChains.set(s.id, next)
+  void next.catch(() => {}).finally(() => { if (codexChains.get(s.id) === next) codexChains.delete(s.id) })
+  return next
+}
+
+async function codexDeliverNow(d: Daemon, s: Session, text: string): Promise<void> {
+  const started = Date.now()
+  const chars = [...text].length
   const thread = s.claude.sessionId
   if (thread) {
     try {
       await d.codexQueue(thread, text)
+      d.log(`codex ${s.id}: queued ${chars} chars into thread ${thread} (${Date.now() - started} ms)`)
       return
     } catch (err) {
-      d.log(`codex queue for session ${s.id} failed, typing instead: ${err}`)
+      d.log(`codex ${s.id}: queue into thread ${thread} failed, pasting instead: ${err}`)
     }
   }
   if (!s.tmuxPane) throw new Error('no thread id yet and no tmux pane')
-  await d.tmuxType(s.tmuxPane, text.replace(/\s*\n\s*/g, ' '))
+  // A fresh Codex connects (its MCP server starts) before its input line is drawn.
+  let screen = ''
+  const until = Date.now() + codexTiming.readyMs
+  while (Date.now() < until) {
+    screen = (await d.tmuxCapture(s.tmuxPane)) ?? ''
+    if (codex.isPromptReady(screen) || codex.isModal(screen)) break
+    await Bun.sleep(codexTiming.pollMs)
+  }
+  const waited = Date.now() - started
+  if (!codex.isPromptReady(screen)) d.log(`codex ${s.id}: input line not ready after ${waited} ms, pasting anyway; screen:\n${tail(screen)}`)
+  try {
+    await d.tmuxType(s.tmuxPane, text, { paste: true })
+  } catch (err) {
+    const shot = err instanceof Error && 'screen' in err ? String((err as { screen: string }).screen) : ((await d.tmuxCapture(s.tmuxPane)) ?? '')
+    d.log(`codex ${s.id}: paste of ${chars} chars not taken (${err instanceof Error ? err.message : err}); screen:\n${tail(shot)}`)
+    throw err
+  }
+  d.log(`codex ${s.id}: pasted ${chars} chars into ${s.tmuxPane}${thread ? '' : ' (no thread id yet)'} (waited ${waited} ms, total ${Date.now() - started} ms)`)
+}
+
+/**
+ * A message Codex did not take: the chat no longer shows «⏳ Работаю…» for a
+ * turn that never began, and gets the window's screen with keys — the text
+ * may be in the input line waiting for Enter, or a question holds it.
+ */
+export async function codexUndelivered(d: Daemon, s: Session, err: unknown, from?: ChatRef): Promise<void> {
+  d.log(`deliver to codex session ${s.id} failed: ${err instanceof Error ? err.message : err}`)
+  if (!from) return
+  if (s.turn && !s.turn.replied) {
+    s.turn = null
+    s.status = 'idle'
+    d.streams.close(s, 'gone')
+    d.onSessionsChanged()
+  }
+  const pane = s.tmuxPane && /^%\d+$/.test(s.tmuxPane) ? s.tmuxPane : null
+  await inChat(d, from.chatId, from.threadId, async () => {
+    const note = t('⚠️ Сообщение не дошло до Codex: окно не приняло ввод. Если на экране ваш текст — нажмите ⏎ Enter; если вопрос — ответьте клавишами и отправьте сообщение ещё раз.')
+    const v = pane ? await screenView(d, `p${pane.slice(1)}`, false, note) : null
+    await d.bot.api.sendMessage(from.chatId, v?.text ?? note, {
+      parse_mode: 'HTML',
+      ...(from.threadId != null ? { message_thread_id: from.threadId } : {}),
+      ...(v ? { reply_markup: v.kb } : {}),
+    })
+  }).catch(e => d.log(`codex undelivered notice failed: ${e}`))
+}
+
+/** The last non-empty lines of a screen, for the log. */
+function tail(screen: string, n = 8): string {
+  return screen.split('\n').filter(l => l.trim()).slice(-n).map(l => `  | ${l.trimEnd()}`).join('\n')
 }
 
 export const ENGINES: Record<EngineId, Engine> = { claude, codex }
@@ -206,6 +276,22 @@ export const ENGINES: Record<EngineId, Engine> = { claude, codex }
 /** The engine by id; Claude Code for anything unknown (old records, no choice yet). */
 export function engineOf(id?: string | null): Engine {
   return ENGINES[id as EngineId] ?? claude
+}
+
+/**
+ * The last conversation of a folder on an engine (Claude's session id, Codex's
+ * thread id), from the hooks: a restart, a switch back from the other engine
+ * or an idle wake-up continues it rather than starting afresh.
+ */
+export function rememberConversation(d: Daemon, s: Session, id: string): void {
+  const key = `last_conv:${s.engine}:${s.cwd}`
+  if (d.store.get(key) === id) return
+  d.store.set(key, id)
+  d.log(`session ${s.id} (${s.engine}) conversation ${id} in ${s.cwd}`)
+}
+
+export function lastConversation(d: Daemon, engine: EngineId, dir: string): string | null {
+  return d.store.get(`last_conv:${engine}:${dir}`) ?? null
 }
 
 export type EngineChoice = { engine: EngineId; model?: string }

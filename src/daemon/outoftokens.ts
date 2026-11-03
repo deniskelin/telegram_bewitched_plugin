@@ -120,6 +120,11 @@ export async function onLimitFailure(d: Daemon, s: Session, error: string, text:
 export function holdIfPaused(d: Daemon, s: Session, content: string, meta: Record<string, string>, from: ChatRef): boolean {
   const pause = pauseOf(d)
   if (!pause) return false
+  // The pause is Claude's subscription: a Codex session has its own limits and takes the message now.
+  if (s.engine !== 'claude') {
+    d.log(`out of tokens: message for ${s.engine} session ${s.id} not held (the pause is Claude's)`)
+    return false
+  }
   // The time passed while the daemon was down, or the timer is late: release first.
   if (pause.until && pause.until <= Date.now()) {
     void release(d)
@@ -128,6 +133,7 @@ export function holdIfPaused(d: Daemon, s: Session, content: string, meta: Recor
   const held = read<Held[]>(d, HELD, [])
   held.push({ projectKey: s.projectKey, content, meta, from })
   d.store.set(HELD, JSON.stringify(held.slice(-200)))
+  d.log(`out of tokens: message for session ${s.id} held (${held.length} waiting)`)
   const replyTo = Number(meta.message_id) || undefined
   // A voice message: show what was heard, so the sender knows it was saved right.
   void say(d, from, pause, replyTo, false, meta.voice_transcribed === 'true' ? content : undefined)
@@ -201,7 +207,11 @@ export async function release(d: Daemon): Promise<void> {
   const told = new Set<string>()
   for (const [key, items] of byProject) {
     const s = d.sessionForProject(key)
-    const note = broken.includes(key)
+    // The project moved to another engine meanwhile: Claude's broken turn is not its business.
+    const brokenHere = broken.includes(key) && (!s || s.engine === 'claude')
+    if (s && s.engine !== 'claude' && broken.includes(key)) d.log(`tokens back: broken turn of ${key} dropped, its session ${s.id} now runs ${s.engine}`)
+    if (s && s.engine !== 'claude' && !items.length) continue
+    const note = brokenHere
       ? 'Лимит токенов восстановился. Твой предыдущий ход прервался из-за лимита — доведи его до конца.' // i18n-ignore
       : 'Лимит токенов восстановился.' // i18n-ignore
     if (!s) {

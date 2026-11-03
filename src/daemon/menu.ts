@@ -19,7 +19,7 @@ import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
 import { listConversations, transcriptInfo } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
-import { attachTarget, confirmHint, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
+import { attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, engineOf, projectEngine, setProjectEngine } from './engines.ts'
 
 export const MAX_MESSAGE = 4000
@@ -130,36 +130,66 @@ function modelScreen(d: Daemon, s: Session): Screen {
   const choice = projectEngine(d, s.projectKey)
   const engine = engineOf(choice.engine)
   const cur = choice.model
+  const switching = engine.id !== s.engine
   const rows: Btn[][] = []
-  // FR-16: the engine row once a second CLI is installed; a switch applies on the next launch.
+  // The switch first: once another engine is chosen, that is what the owner came for.
+  if (switching) rows.push([button(t('♻️ Переключить на {engine} сейчас', { engine: engine.name }), `sm:engre:${s.id}`, 'primary')])
+  // FR-16: the engine row once a second CLI is installed.
   const engines = Object.values(ENGINES).filter(e => e.available())
-  if (engines.length > 1) rows.push(engines.map(e => button(`${e.id === engine.id ? '• ' : ''}${e.name}`, `sm:eng:${s.id}:${e.id}`, e.id === engine.id ? 'primary' : undefined)))
+  if (engines.length > 1) rows.push(engines.map(e => button(`${e.id === engine.id ? '• ' : ''}${e.name}`, `sm:eng:${s.id}:${e.id}`)))
   rows.push(...engine.models.map(m => [button(`${cur === m.id ? '• ' : ''}🧠 ${m.id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${m.alias}`, cur === m.id ? 'primary' : undefined)]))
   if (cur) rows.push([button(t('↩️ Модель по умолчанию CLI'), `sm:mdldef:${s.id}`)])
-  if (engine.id !== s.engine) rows.push([button(t('♻️ Перезапустить на {engine}', { engine: engine.name }), `sm:engre:${s.id}`, 'primary')])
   rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
   const text = [
-    t('🧠 Модель для сессии #{id} ({v}). Команда <code>/model</code> уйдёт в её окно tmux.', { id: s.id, v: escapeHtml(projectTitle(s)) }),
-    t('Движок: <b>{engine}</b> · для проекта: <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
-    engine.id !== s.engine
-      ? t('<i>Сейчас работает {running}; проект переключён на {engine} — со следующего запуска. Разговор на новый движок не переносится.</i>', { running: engineOf(s.engine).name, engine: engine.name })
-      : t('<i>Выбранная модель запоминается для проекта: следующие запуски сессии — сразу на ней.</i>'),
+    t('🧠 <b>Движок и модель</b> · сессия #{id} ({v})', { id: s.id, v: escapeHtml(projectTitle(s)) }),
+    t('Сейчас работает: <b>{engine}</b>', { engine: engineOf(s.engine).name }),
+    t('Для проекта: <b>{engine}</b> · модель <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
+    '',
+    switching
+      ? t('<i>«♻️ Переключить» закроет сессию и сразу запустит её на {engine} — подтверждать в терминале ничего не нужно. Разговор {running} сохранится: при возврате он продолжится.</i>', { running: engineOf(s.engine).name, engine: engine.name })
+      : engine.liveModelSwitch
+        ? t('<i>Модель меняется сразу командой <code>/model</code>, без перезапуска, и запоминается для проекта.</i>')
+        : t('<i>{engine} меняет модель только перезапуском: после выбора предложу перезапустить с тем же разговором.</i>', { engine: engine.name }),
   ].join('\n')
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
-/** ♻️ on another engine: close the session (with the /exit checks) and start the project's engine fresh — a conversation does not carry over. */
-async function restartOnEngine(d: Daemon, s: Session): Promise<Screen> {
-  const engine = engineOf(projectEngine(d, s.projectKey).engine)
+/**
+ * ♻️ A session started again on the project's engine and model: closed with
+ * the /exit checks, its window closed, started with the conversation it
+ * should continue (the same one on the same engine; on a switch — the last
+ * one that engine had in the folder), the startup prompt answered — the
+ * owner asked for it with the button. Every step edits the menu message.
+ */
+async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) => Promise<void>): Promise<void> {
+  const choice = projectEngine(d, s.projectKey)
+  const engine = engineOf(choice.engine)
+  const same = engine.id === s.engine
   const back = new InlineKeyboard([[button(t('« Сессии'), 'sm:list')]])
-  if (!endSession(d, s)) return { text: t('Сессия не в tmux — перезапустите её сами.'), kb: back }
+  d.log(`switch session ${s.id}: ${s.engine} → ${engine.id}${choice.model ? `/${choice.model}` : ''} (${s.cwd})`)
+  await edit({ text: t('♻️ Закрываю сессию #{id} ({engine})…', { id: s.id, engine: engineOf(s.engine).name }), kb: new InlineKeyboard() })
+  const pane = s.tmuxPane
+  if (!endSession(d, s)) return edit({ text: t('Сессия не в tmux — перезапустите её сами.'), kb: back })
   if (!(await waitGone(d, s.id, endTiming.checkMs * 2 + 10_000))) {
     d.ending.delete(s.id)
-    return { text: t('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id: s.id }), kb: back }
+    return edit({ text: t('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id: s.id }), kb: back })
   }
-  const l = await launchOnce(d, s.cwd, { name: sessionName(d, s.projectKey) })
-  if (!l.ok) return { text: l.skipped ? t('⏳ Сессия уже запускается.') : t('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }), kb: back }
-  return { text: t('🚀 Запускаю {engine} в tmux: окно {v}. Подтвердите:{v2}', { engine: engine.name, v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) }), kb: screenKb(l.window) }
+  await closeWindow(d, pane)
+  const conv = same && s.claude.sessionId ? { resume: s.claude.sessionId } : continueOptions(d, s.cwd, engine.id)
+  const l = await launchOnce(d, s.cwd, { name: sessionName(d, s.projectKey, engine.id), ...conv }, false)
+  if (!l.ok) return edit({ text: l.skipped ? t('⏳ Сессия уже запускается.') : t('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }), kb: back })
+  const where = escapeHtml(attachTarget(l.window))
+  await edit({ text: t('🚀 Запускаю {engine} в tmux: окно {v}. Жду подключения…', { engine: engine.name, v: where }), kb: screenKb(l.window) })
+  const r = await awaitConnect(d, s.cwd, l.window, { confirm: true })
+  if (!r.ok) {
+    const why = r.reason === 'gone' ? t('окно закрылось') : r.reason === 'stuck' ? t('на экране вопрос, на который я не отвечаю сам') : t('не подключилась за {n} с', { n: Math.round(r.ms / 1000) })
+    return edit({ text: t('⚠️ {engine} в окне {v} не подключился: {why}. Посмотрите экран.', { engine: engine.name, v: where, why }), kb: screenKb(l.window) })
+  }
+  const kept = conv.resume || conv.continue ? t('разговор продолжается') : t('новый разговор')
+  await edit({
+    text: t('✅ Сессия #{id} работает на <b>{engine}</b>{model}: {kept}. Окно {v}. Можно писать.', { id: r.session.id, engine: engine.name, model: choice.model ? ` · ${escapeHtml(choice.model)}` : '', kept, v: where }),
+    kb: new InlineKeyboard([[button(t('« К сессии'), `sm:s:${r.session.id}`), button(t('« Сессии'), 'sm:list')]]),
+  })
 }
 
 /**
@@ -172,10 +202,12 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   if (action === 'eng') {
     const engine = ENGINES[value as keyof typeof ENGINES]
     if (!engine?.available()) return { toast: t('Этот движок не установлен.') }
-    if (engine.id !== projectEngine(d, s.projectKey).engine) setProjectEngine(d, s.projectKey, { engine: engine.id })
+    if (engine.id !== projectEngine(d, s.projectKey).engine) {
+      setProjectEngine(d, s.projectKey, { engine: engine.id })
+      d.log(`project ${s.projectKey}: engine → ${engine.id} (session ${s.id} runs ${s.engine})`)
+    }
     return { toast: t('🧠 Проект → {engine}', { engine: engine.name }), screen: modelScreen(d, s) }
   }
-  if (action === 'engre') return { toast: t('♻️ Перезапускаю'), screen: await restartOnEngine(d, s) }
   if (action === 'mdldef') {
     setProjectEngine(d, s.projectKey, { engine: projectEngine(d, s.projectKey).engine })
     return { toast: t('↩️ Следующие запуски — на модели по умолчанию CLI'), screen: modelScreen(d, s) }
@@ -190,7 +222,14 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
   // A model of another engine, or an engine without /model <id>: it applies from the next launch.
   if (model && (project.engine !== s.engine || !engineOf(s.engine).liveModelSwitch)) {
     setProjectEngine(d, s.projectKey, { engine: project.engine, model })
-    return { toast: t('🧠 {model} — со следующего запуска', { model }), screen: modelScreen(d, s) }
+    d.log(`project ${s.projectKey}: model → ${model} (${project.engine})`)
+    if (project.engine !== s.engine) return { toast: t('🧠 {model} — со следующего запуска', { model }), screen: modelScreen(d, s) }
+    // The same engine without /model <id> (Codex): the model needs a restart — offered right away, with the conversation.
+    const kb = new InlineKeyboard([
+      [button(t('♻️ Перезапустить сейчас'), `sm:engre:${s.id}`, 'primary')],
+      [button(t('Позже — со следующего запуска'), `sm:mdl:${s.id}`)],
+    ])
+    return { toast: `🧠 ${model}`, screen: { text: t('🧠 {engine} меняет модель только перезапуском. Перезапустить сессию #{id} на <b>{model}</b>? Разговор продолжится.', { engine: engineOf(s.engine).name, id: s.id, model: escapeHtml(model) }), kb } }
   }
   const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${model}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
@@ -343,7 +382,15 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     else if (r.sent) await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
     return true
   }
-  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng', 'engre'].includes(action)) {
+  if (action === 'engre') {
+    // Closing and starting takes up to a minute: the button is answered now, the message follows the steps.
+    if (!s.tmuxPane) { await answer(t('Сессия не в tmux — команды не отправить.')); return true }
+    await answer(t('♻️ Перезапускаю'))
+    void switchSession(d, s, sc => show(ctx, sc).catch(err => d.log(`switch screen failed: ${err}`)))
+      .catch(err => d.log(`switch session ${s.id} failed: ${err instanceof Error ? err.stack ?? err.message : err}`))
+    return true
+  }
+  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng'].includes(action)) {
     const r = await controlAction(d, s, action, value)
     if (r.screen) {
       await answer(r.toast)
