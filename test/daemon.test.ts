@@ -506,7 +506,7 @@ describe('topics', () => {
     tg.push(callbackQuery(`sm:clrok:${s.id}`))
     await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /clear')
     tg.push(callbackQuery(`sm:mdl:${s.id}`))
-    const models = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🧠 Модель'))
+    const models = await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🧠 <b>Движок и модель</b>'))
     expect(JSON.stringify(models.body.reply_markup)).toContain(`sm:model:${s.id}:sonnet`)
     // Claude Code asks «Switch model?»: unanswered it holds every message, so its screen comes with keys.
     const capture = d.tmuxCapture
@@ -521,7 +521,7 @@ describe('topics', () => {
     const { projectEngine } = await import('../src/daemon/engines.ts')
     expect(projectEngine(d, '/tmp/ctl')).toEqual({ engine: 'claude', model: 'claude-sonnet-5-5' })
     tg.push(callbackQuery(`sm:mdl:${s.id}`))
-    const marked = await tg.waitFor('editMessageText', x => String(x.body.text).includes('для проекта: <b>claude-sonnet-5-5</b>'))
+    const marked = await tg.waitFor('editMessageText', x => String(x.body.text).includes('модель <b>claude-sonnet-5-5</b>'))
     expect(JSON.stringify(marked.body.reply_markup)).toContain('• 🧠 sonnet-5-5')
     tg.push(callbackQuery(`sm:mdldef:${s.id}`))
     await tg.waitFor('answerCallbackQuery', x => x.body.text === '↩️ Следующие запуски — на модели по умолчанию CLI')
@@ -712,7 +712,7 @@ describe('topics', () => {
     const k = await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('Сжать разговор сессии') && x.body.message_thread_id === thread)
     expect(JSON.stringify(k.body.reply_markup)).toContain(`sm:cmp:${sessionId}`)
     tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/model opus' }))
-    await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('🧠 Модель для сессии') && x.body.message_thread_id === thread)
+    await tg.waitFor('sendMessage', x => String(x.body.text).startsWith('🧠 <b>Движок и модель</b> · сессия') && x.body.message_thread_id === thread)
     tg.push(textMessage({ chat: Number(s.topic!.chatId), thread, text: '/cost' }))
     await tg.waitFor('sendMessage', x => String(x.body.text).includes(`#${sessionId}`) && x.body.message_thread_id === thread && JSON.stringify(x.body.reply_markup ?? '').includes(`sm:g:${sessionId}:c`))
     // A member may not; nothing of it reaches the session.
@@ -1044,21 +1044,30 @@ describe('topics', () => {
     s.tmuxPane = pane
   })
 
-  test('FR-16: a Codex session gets messages with codex queue (typed on one line before its thread is known), no stream_answer', async () => {
+  test('FR-16: a Codex session gets messages with codex queue (pasted once its input line is up, before its thread is known), no stream_answer', async () => {
     const c = new FakeClient()
     await c.connect({ cwd: '/tmp/cx', projectRoot: '/tmp/cx', claudePid: 616161, tmuxPane: '%61', engine: 'codex' } as never)
     const s = [...d.sessions.values()].find(x => x.claudePid === 616161)!
     expect(s.engine).toBe('codex')
     for (let i = 0; i < 100 && !s.topic; i++) await Bun.sleep(20)
-    const saved = { type: d.tmuxType, queue: d.codexQueue }
+    const saved = { type: d.tmuxType, queue: d.codexQueue, capture: d.tmuxCapture }
     const typed: string[] = []
+    const opts: unknown[] = []
     const queued: [string, string][] = []
-    d.tmuxType = async (_pane, text) => { typed.push(text) }
+    // Still starting: no input line for a while — the message waits for it.
+    let ready = false
+    d.tmuxCapture = async () => (ready ? '  >_ OpenAI Codex\n\n› Ask Codex to do anything\n' : '  >_ OpenAI Codex\n  Booting MCP server\n')
+    d.tmuxType = async (_pane, text, o) => { typed.push(text); opts.push(o) }
     d.codexQueue = async (thread, text) => { queued.push([thread, text]) }
     try {
       tg.push(textMessage({ chat: Number(group), text: 'первое\nсообщение', thread: s.topic!.threadId }))
-      for (let i = 0; i < 100 && !typed.length; i++) await Bun.sleep(20)
-      expect(typed[0]).toMatch(/^<channel source="telegram-bewitched" .*> первое сообщение <\/channel>$/)
+      await Bun.sleep(300)
+      expect(typed).toEqual([])
+      ready = true
+      for (let i = 0; i < 150 && !typed.length; i++) await Bun.sleep(20)
+      // One bracketed paste: the newlines stay, Enter does not send it early.
+      expect(typed[0]).toMatch(/^<channel source="telegram-bewitched" .*>\nпервое\nсообщение\n<\/channel>$/)
+      expect(opts[0]).toEqual({ paste: true })
       expect(typed[0]).not.toContain('stream_answer')
       expect(c.msgs.some(m => m.t === 'inbound')).toBe(false)
       s.claude.sessionId = '01a19724-efea'
@@ -1067,7 +1076,32 @@ describe('topics', () => {
       expect(queued[0][0]).toBe('01a19724-efea')
       expect(queued[0][1]).toContain('\nвторое\n</channel>')
     } finally {
-      Object.assign(d, { tmuxType: saved.type, codexQueue: saved.queue })
+      Object.assign(d, { tmuxType: saved.type, codexQueue: saved.queue, tmuxCapture: saved.capture })
+      c.close()
+    }
+  })
+
+  test('FR-16: a message Codex did not take: no «working» left behind, the chat gets the screen with keys; Claude\'s token pause does not hold it', async () => {
+    const { InputBlocked } = await import('../src/daemon/launch.ts')
+    const c = new FakeClient()
+    await c.connect({ cwd: '/tmp/cx2', projectRoot: '/tmp/cx2', claudePid: 626262, tmuxPane: '%62', engine: 'codex' } as never)
+    const s = [...d.sessions.values()].find(x => x.claudePid === 626262)!
+    for (let i = 0; i < 100 && !s.topic; i++) await Bun.sleep(20)
+    const saved = { type: d.tmuxType, capture: d.tmuxCapture }
+    d.tmuxCapture = async () => '› [Pasted Content 1274 chars]\n  GPT-6.1-Sol default'
+    d.tmuxType = async () => { throw new InputBlocked('› [Pasted Content 1274 chars]') }
+    // Claude is out of tokens: a Codex session is not held by it.
+    d.store.set('tokens_pause', JSON.stringify({ kind: 'subscription', until: Date.now() + 3600_000, at: Date.now(), tries: 0 }))
+    try {
+      tg.push(textMessage({ chat: Number(group), text: 'расскажи про лимиты', thread: s.topic!.threadId }))
+      const note = await tg.waitFor('sendMessage', x => String(x.body.text).includes('Сообщение не дошло до Codex') && x.body.message_thread_id === s.topic!.threadId)
+      expect(String(note.body.text)).toContain('[Pasted Content 1274 chars]')
+      expect(JSON.stringify(note.body.reply_markup)).toContain('tx:p62:e')
+      expect(s.status).toBe('idle')
+      expect(s.turn).toBeNull()
+    } finally {
+      d.store.set('tokens_pause', null)
+      Object.assign(d, { tmuxType: saved.type, tmuxCapture: saved.capture })
       c.close()
     }
   })
@@ -1560,7 +1594,7 @@ describe('voice', () => {
 describe('server stats', () => {
   test('/server: CPU, memory, disks, sessions; 🔄 refreshes; owner only', async () => {
     tg.push(textMessage({ text: '/server' }))
-    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🖥 <b>'), 6000)
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🖥 <b>') && !String(c.body.text).startsWith('🖥 <b>Экран'), 6000)
     const text = String(r.body.text)
     for (const part of ['⚙️ CPU: <b>', '🧠 Память: <b>', '💾 Диск /: <b>', '🤖 Claude Code:', '🔥 <b>Больше всего CPU</b>', '🐘 <b>Больше всего памяти</b>']) expect(text).toContain(part)
     expect(JSON.stringify(r.body.reply_markup)).toContain('srv:refresh')
@@ -2287,9 +2321,9 @@ describe('session types', () => {
     m.close(); b.close()
   })
 
-  test('💤 suspension: presets per kind in /menu; a suspended member session gets 🙋, the owner 🚀', async () => {
+  test('💤 suspension: presets per kind in /menu; a suspension is told only to the journal', async () => {
     const { idleMin } = await import('../src/daemon/idle.ts')
-    const { announceSuspended } = await import('../src/daemon/watchdog.ts')
+    const { logSuspended, markIdle, idleRecord } = await import('../src/daemon/autoresume.ts')
     for (const k of ['user', 'owner', 'project']) d.store.set(`idle:${k}`, null)
     // The owner's own session: a week by default; the others from .env (0 here).
     expect(idleMin(d, 'owner')).toBe(10080)
@@ -2308,11 +2342,15 @@ describe('session types', () => {
     const m = new FakeClient()
     await m.connect({ cwd: `${usersDir}/333`, projectRoot: `${usersDir}/333`, claudePid: 7777 })
     const s = [...d.sessions.values()].find(x => x.claudePid === 7777)!
-    await announceSuspended(d, s, 'сутки')
-    const mine = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '333' && String(c.body.text).startsWith('💤 Ваша сессия приостановлена: сутки'))
-    expect(JSON.stringify(mine.body.reply_markup)).toContain('🙋 Запросить запуск')
-    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('приостановлена: сутки'))
-    expect(JSON.stringify(own.body.reply_markup)).toContain('wd:run:')
+    const sent = tg.callsOf('sendMessage').length
+    markIdle(d, s, 'сутки')
+    expect(idleRecord(d, s.cwd)).toMatchObject({ engine: 'claude', period: 'сутки', id: s.id })
+    await logSuspended(d, s, 'сутки')
+    const own = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('приостановлена: сутки без дела. Следующее сообщение поднимет её само'))
+    expect(own.body.reply_markup).toBeUndefined()
+    // The member hears nothing: the next message wakes the session up.
+    expect(tg.callsOf('sendMessage').slice(sent).some(c => String(c.body.chat_id) === '333')).toBe(false)
+    d.store.set(`idle_suspended:${s.cwd}`, null)
     m.close()
     d.store.set('idle:user', null)
   })
@@ -2371,6 +2409,89 @@ describe('session types', () => {
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
     expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-project-other' } })
+  })
+
+  test('💤 idle wake-up: a suspended project session wakes up on the next topic message with its conversation; only the journal hears of it', async () => {
+    const { mkdirSync } = await import('fs')
+    const { markIdle, logSuspended, idleRecord } = await import('../src/daemon/autoresume.ts')
+    const { connectTiming } = await import('../src/daemon/launch.ts')
+    mkdirSync('/tmp/sleepy', { recursive: true })
+    const saved = { capture: d.tmuxCapture, poll: connectTiming.pollMs }
+    connectTiming.pollMs = 20
+    d.tmuxCapture = async () => '  claude starting…'
+    try {
+      const p = new FakeClient()
+      await p.connect({ cwd: '/tmp/sleepy', projectRoot: '/tmp/sleepy', claudePid: 7171, tmuxPane: '%71' })
+      await tg.waitFor('createForumTopic', c => c.body.name === 'sleepy')
+      const s = [...d.sessions.values()].find(x => x.claudePid === 7171)!
+      for (let i = 0; i < 100 && !s.topic; i++) await Bun.sleep(20)
+      const thread = s.topic!.threadId
+      s.claude.sessionId = 'sess-sleepy-1'
+      // The idle closer: marked, ended on purpose, the journal told.
+      markIdle(d, s, 'сутки')
+      d.ending.add(s.id)
+      const mark = tg.calls.length
+      p.close()
+      await logSuspended(d, s, 'сутки')
+      await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('📂 sleepy') && String(c.body.text).includes('приостановлена: сутки'))
+      await Bun.sleep(200)
+      // Nothing in the topic: no «⚪️ Сессия отключена», no «💤».
+      expect(tg.calls.slice(mark).some(c => c.method === 'sendMessage' && c.body.message_thread_id === thread)).toBe(false)
+
+      d.launching.clear()
+      const before = tg.calls.length
+      tg.push(textMessage({ chat: Number(group), text: 'проснись', thread }))
+      await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).startsWith('🔄 Сессия <b>📂 sleepy</b> поднимается сама'))
+      expect(calls.at(-1)).toEqual({ dir: '/tmp/sleepy', o: { name: 'claude-project-sleepy', resume: 'sess-sleepy-1' } })
+      const p2 = new FakeClient()
+      await p2.connect({ cwd: '/tmp/sleepy', projectRoot: '/tmp/sleepy', claudePid: 7172, tmuxPane: '%72' })
+      const resume = await p2.inbound(x => x.meta.event === 'session_resume')
+      expect(resume.content).toContain('проснись')
+      await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).includes('снова в работе'))
+      // The chat heard nothing but the answer's own progress: no «🚀 Запускаю», no «🟢 Сессия подключена».
+      expect(tg.calls.slice(before).filter(c => c.method === 'sendMessage' && c.body.message_thread_id === thread).map(c => String(c.body.text)).filter(t => !t.startsWith('⏳ Работаю'))).toEqual([])
+      expect(idleRecord(d, '/tmp/sleepy')).toBeNull()
+      p2.close()
+    } finally {
+      d.tmuxCapture = saved.capture
+      connectTiming.pollMs = saved.poll
+    }
+  })
+
+  test('♻️ engine switch from 🧠: closed, its window closed, started as codex-project-… with the last Codex conversation, the menu follows each step', async () => {
+    const { mkdirSync } = await import('fs')
+    const { setProjectEngine } = await import('../src/daemon/engines.ts')
+    const { connectTiming, endTiming } = await import('../src/daemon/launch.ts')
+    mkdirSync('/tmp/sw', { recursive: true })
+    const saved = { capture: d.tmuxCapture, type: d.tmuxType, keys: d.tmuxKeys, pane: d.tmuxPaneId, poll: connectTiming.pollMs, ms: endTiming.checkMs }
+    connectTiming.pollMs = 20
+    const p = new FakeClient()
+    try {
+      await p.connect({ cwd: '/tmp/sw', projectRoot: '/tmp/sw', claudePid: 8181, tmuxPane: '%81' })
+      const s = [...d.sessions.values()].find(x => x.claudePid === 8181)!
+      d.tmuxCapture = async () => '❯ '
+      d.tmuxKeys = async () => {}
+      d.tmuxType = async (_t, text) => { if (text === '/exit') p.close() }
+      d.tmuxPaneId = async () => null
+      setProjectEngine(d, '/tmp/sw', { engine: 'codex' })
+      d.store.set('last_conv:codex:/tmp/sw', 'thr-sw-1')
+      tg.push(callbackQuery(`sm:mdl:${s.id}`))
+      const sc = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🧠 <b>Движок и модель</b>') && String(c.body.text).includes(`#${s.id}`))
+      expect(JSON.stringify(sc.body.reply_markup)).toContain(`"♻️ Переключить на Codex сейчас","callback_data":"sm:engre:${s.id}"`)
+      tg.push(callbackQuery(`sm:engre:${s.id}`))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '♻️ Перезапускаю')
+      await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю Codex в tmux'))
+      expect(calls.at(-1)).toEqual({ dir: '/tmp/sw', o: { name: 'codex-project-sw', resume: 'thr-sw-1' } })
+      const q = new FakeClient()
+      await q.connect({ cwd: '/tmp/sw', projectRoot: '/tmp/sw', claudePid: 8182, tmuxPane: '%82', engine: 'codex' })
+      const done = await tg.waitFor('editMessageText', c => String(c.body.text).includes('работает на <b>Codex</b>'))
+      expect(String(done.body.text)).toContain('разговор продолжается')
+      q.close()
+    } finally {
+      Object.assign(d, { tmuxCapture: saved.capture, tmuxType: saved.type, tmuxKeys: saved.keys, tmuxPaneId: saved.pane })
+      connectTiming.pollMs = saved.poll
+      endTiming.checkMs = saved.ms
+    }
   })
 
   test('a stopped user session is reported in its DM; a planned end is not', async () => {

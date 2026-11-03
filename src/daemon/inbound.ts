@@ -21,6 +21,7 @@ import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Sessi
 import { button } from './stream.ts'
 import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
+import { idleRecord } from './autoresume.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
 import { journal, journalText, who } from './journal.ts'
 import { handleIdleCallback } from './idle.ts'
@@ -108,6 +109,8 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
     const s = d.sessionForThread(chatId, threadId)
     if (s) return { kind: 'session', session: s, projectKey: t?.project_key ?? undefined }
     if (t?.project_key) {
+      // Suspended for idling: it wakes up on the message, whatever TOPIC_NO_SESSION says.
+      if (idleRecord(d, t.project_key)) return { kind: 'launch', projectKey: t.project_key, threadId }
       if (t.status === 'waiting') return { kind: 'waiting', projectKey: t.project_key }
       const mode = settings.topicNoSession
       if (mode === 'launch') return { kind: 'launch', projectKey: t.project_key, threadId }
@@ -145,7 +148,7 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
       return d.deliver(target.session, text, meta, chat)
     case 'launch':
       d.store.addPending(target.projectKey, text, meta)
-      return launchForTopic(d, chat.chatId, target.threadId, target.projectKey)
+      return launchForTopic(d, chat.chatId, target.threadId, target.projectKey, d.userLabel(fromId))
     case 'user_offline':
       d.store.addPending(userPendingKey(target.userId), text, meta)
       return launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId: chat.chatId, threadId: chat.threadId })
@@ -363,7 +366,7 @@ async function handleInbound(
   }
   if (target.kind === 'launch') {
     d.store.addPending(target.projectKey, text, meta)
-    void launchForTopic(d, chatId, target.threadId, target.projectKey).catch(err => d.log(`topic launch failed: ${err}`))
+    void launchForTopic(d, chatId, target.threadId, target.projectKey, d.userLabel(String(from.id))).catch(err => d.log(`topic launch failed: ${err}`))
     return
   }
   if (target.kind === 'waiting') {

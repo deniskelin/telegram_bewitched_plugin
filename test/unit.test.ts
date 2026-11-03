@@ -134,6 +134,9 @@ describe('launch', async () => {
     expect(windowCode('3')).toBe('w3')
     expect(windowCode('claude-project-1004291818146-37:0')).toBe('sclaude-project-1004291818146-37.0')
     expect(tmuxTarget('sclaude-project-1004291818146-37.0')).toBe('=claude-project-1004291818146-37:0')
+    expect(tmuxTarget('scodex-project-1004291818146-917.0')).toBe('=codex-project-1004291818146-917:0')
+    expect(windowCode('codex-user-140211098:0')).toBe('scodex-user-140211098.0')
+    expect(attachTarget('codex-user-140211098:0')).toBe('codex-user-140211098')
     expect(tmuxTarget('sother.0')).toBeNull()
     expect(tmuxTarget('sclaude-x;rm.0')).toBeNull()
   })
@@ -525,6 +528,38 @@ describe('typing into a session (FR-14)', () => {
     const swallowed = fake([idle('')])
     await expect(tmuxType('%1', '/exit', swallowed.io)).rejects.toBeInstanceOf(InputBlocked)
     expect(swallowed.runs.some(r => r.includes('Enter'))).toBe(false)
+  })
+
+  test('Codex folds a paste over 1000 chars into «[Pasted Content N chars]»: N is the proof the text is in; the first line is enough otherwise', async () => {
+    const { inputShows } = await import('../src/daemon/launch.ts')
+    const long = 'привет мир '.repeat(130)
+    expect(inputShows(`  >_ OpenAI Codex\n› [Pasted Content ${[...long].length} chars]\n  GPT-6.1-Sol default`, long)).toBe(true)
+    // A stuck paste of another text and this one after it: this one is there, Enter sends both.
+    expect(inputShows(`› [Pasted Content 1274 chars][Pasted Content ${[...long].length} chars]`, long)).toBe(true)
+    expect(inputShows('› [Pasted Content 1274 chars]', long)).toBe(false)
+    expect(inputShows('› Ask Codex to do anything', long)).toBe(false)
+    // A message with a blank line: the input box ends there, its first line is checked.
+    expect(inputShows('› <channel source="telegram-bewitched" chat_id="1">\n  первое\n\n  GPT-6.1-Sol default', '<channel source="telegram-bewitched" chat_id="1">\nпервое\n\nвторое\n</channel>')).toBe(true)
+  })
+
+  test('paste: one bracketed paste through a private file (set-buffer refuses long text), then Enter once it shows', async () => {
+    const { tmuxType } = await import('../src/daemon/launch.ts')
+    const { existsSync, readFileSync } = await import('fs')
+    const text = 'я'.repeat(5000)
+    let file = ''
+    let body = ''
+    const runs: string[][] = []
+    const io = {
+      run: async (a: string[]) => { runs.push(a); if (a[0] === 'load-buffer') { file = a[3]; body = readFileSync(file, 'utf8') } return '' },
+      capture: async () => (runs.some(r => r[0] === 'paste-buffer') ? '› [Pasted Content 5000 chars]' : '› Ask Codex to do anything'),
+      sleep: async () => {},
+    }
+    await tmuxType('%7', text, io, { paste: true })
+    expect(runs.map(r => r[0])).toEqual(['load-buffer', 'paste-buffer', 'send-keys'])
+    expect(runs[1]).toEqual(['paste-buffer', '-p', '-d', '-b', runs[0][2], '-t', '%7'])
+    expect(runs[2]).toEqual(['send-keys', '-t', '%7', 'Enter'])
+    expect(body).toBe(text)
+    expect(existsSync(file)).toBe(false)
   })
 })
 

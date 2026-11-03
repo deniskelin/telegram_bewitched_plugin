@@ -19,6 +19,7 @@ import { classify, failureHint, onLimitFailure } from './outoftokens.ts'
 import { turnCostBlock, turnCostLine } from './usage.ts'
 import { editRich, sendRich } from '../tg.ts'
 import { t } from '../i18n/index.ts'
+import { rememberConversation } from './engines.ts'
 
 const MAX_BODY = 1024 * 1024
 
@@ -54,9 +55,14 @@ export function handleHook(d: Daemon, h: HookEvent): void {
 function onHook(d: Daemon, s: Session, h: HookEvent): void {
   const data = h.data
   s.lastHookAt = Date.now()
-  if (typeof data.session_id === 'string') s.claude.sessionId = data.session_id
+  if (typeof data.session_id === 'string') {
+    if (s.claude.sessionId !== data.session_id && /^[\w-]+$/.test(data.session_id)) rememberConversation(d, s, data.session_id)
+    s.claude.sessionId = data.session_id
+  }
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
+  // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
+  if (h.event === 'SessionStart' || h.event === 'UserPromptSubmit' || h.event === 'Stop') d.log(`hook ${h.event}: session ${s.id} (${s.engine})${s.status !== 'idle' ? ` ${s.status}` : ''}`)
   switch (h.event) {
     case 'UserPromptSubmit':
       touchTurn(s, true)

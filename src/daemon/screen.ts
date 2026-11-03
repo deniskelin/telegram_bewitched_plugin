@@ -5,7 +5,7 @@
  *
  * Callback data: tx:<target>[:<key>], target p<N> = pane %N, w<N> = window N
  * of TMUX_SESSION, s<session>.<N> = window N of an own session (claude-user-…,
- * claude-project-…). Keys are a fixed set; nothing typed by the user reaches tmux.
+ * claude-project-…, codex-…). Keys are a fixed set; nothing typed by the user reaches tmux.
  * Besides keys: c — confirm the launch: answer the startup questions of a
  * new session (folder trust, development channels — only those) one after
  * another until the session connects; l / s — start / stop refreshing the
@@ -52,11 +52,11 @@ const KEYS: Record<string, { label: string; key: string }> = {
   t: { label: 'Tab', key: 'Tab' },
 }
 
-/** p9 → %9, w3 → <TMUX_SESSION>:3, sclaude-user-1.0 → claude-user-1:0; anything else is refused. */
+/** p9 → %9, w3 → <TMUX_SESSION>:3, sclaude-user-1.0 → claude-user-1:0 (codex-… alike); anything else is refused. */
 export function tmuxTarget(code: string): string | null {
   if (/^p\d+$/.test(code)) return `%${code.slice(1)}`
   if (/^w\d+$/.test(code)) return `${settings.tmuxSession}:${code.slice(1)}`
-  const own = /^s(claude-[\p{L}\p{N}_-]+)\.(\d+)$/u.exec(code)
+  const own = /^s((?:claude|codex)-[\p{L}\p{N}_-]+)\.(\d+)$/u.exec(code)
   if (own) return `=${own[1]}:${own[2]}`
   return null
 }

@@ -7,9 +7,9 @@
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { execFile } from 'child_process'
-import { createHash } from 'crypto'
-import { existsSync, mkdirSync, readdirSync } from 'fs'
-import { homedir } from 'os'
+import { createHash, randomBytes } from 'crypto'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { homedir, tmpdir } from 'os'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
 import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
@@ -17,13 +17,13 @@ import { escapeHtml } from '../format.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { inChat, inSession } from './lang.ts'
-import { isQuestion, isStartupPrompt } from './screen.ts'
-import { engineOf, type EngineId } from './engines.ts'
+import { confirmLaunch, isQuestion, isStartupPrompt } from './screen.ts'
+import { engineOf, lastConversation, projectEngine, type EngineId } from './engines.ts'
 import { button } from './stream.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { sendNotice } from './journal.ts'
 import { idleKind, idleMin, idleName } from './idle.ts'
-import { announceSuspended } from './watchdog.ts'
+import { autoResume, clearIdle, logSuspended, markIdle } from './autoresume.ts'
 import { t as tr } from '../i18n/index.ts'
 
 /** Folder name from a topic name: letters/digits (any script), dot, dash, underscore. */
@@ -73,16 +73,19 @@ export function launchCommand(o: LaunchOptions = {}): string {
  * Name for the Claude session (-n), its tmux session and window, after its
  * folder, as the folders are named by ids: claude-user-<telegram id> for a
  * user's session, claude-project-<group id>-<topic id> for a project
- * (claude-project-<folder> for one made by hand). Undefined for the main
- * session: it keeps the folder name and lives in TMUX_SESSION.
+ * (claude-project-<folder> for one made by hand); codex-… for a project on
+ * Codex. Undefined for the main session: it keeps the folder name and lives
+ * in TMUX_SESSION.
  */
-export function sessionName(d: Daemon, dir: string): string | undefined {
+export function sessionName(d: Daemon, dir: string, engine: EngineId = projectEngine(d, dir).engine): string | undefined {
+  // The engine first: a Codex session is codex-user-…, codex-project-… — its own tmux session, window :0.
+  const prefix = engine === 'claude' ? 'claude' : engine
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
   // The Telegram id: always there and never changes, unlike a username.
-  if (user) return `claude-user-${user}`
+  if (user) return `${prefix}-user-${user}`
   if (dir === d.mainKey()) return undefined
   const slug = slugify(basename(dir))
-  return slug ? `claude-project-${slug}` : undefined
+  return slug ? `${prefix}-project-${slug}` : undefined
 }
 
 export async function tmuxLaunch(dir: string, o: LaunchOptions = {}): Promise<string> {
@@ -149,11 +152,38 @@ export function inputShows(screen: string, text: string): boolean {
     box.push(l)
   }
   const squash = (s: string) => s.replace(/\s+/g, '')
-  return squash(box.join('')).includes(squash(text).slice(0, 40))
+  const shown = box.join('')
+  // A paste longer than 1000 characters Codex folds into «[Pasted Content N chars]», N exact.
+  const len = [...text].length
+  if ([...shown.matchAll(/\[Pasted Content (\d+) chars\]/g)].some(m => Math.abs(Number(m[1]) - len) <= 2)) return true
+  // The first line is enough: the box ends at a blank line, a message may have one.
+  const first = squash(text.split('\n').find(l => l.trim()) ?? text)
+  return squash(shown).includes(first.slice(0, 40))
 }
 
 type TypeIo = { run: (args: string[]) => Promise<string>; capture: (target: string) => Promise<string | null>; sleep: (ms: number) => Promise<void> }
 const typeIo: TypeIo = { run, capture: target => tmuxCapture(target), sleep: ms => Bun.sleep(ms) }
+
+/** paste: as one bracketed paste (tmux paste-buffer -p) — newlines stay and do not send it early; for text, not keys. */
+export type TypeOptions = { paste?: boolean }
+
+/**
+ * Put text into a pane as one bracketed paste. It goes through a file:
+ * set-buffer refuses a long argument («command too long»), load-buffer reads
+ * any size. The file is private and removed right away.
+ */
+async function pasteText(io: TypeIo, target: string, text: string): Promise<void> {
+  const dir = mkdtempSync(join(tmpdir(), 'bewitched-paste-'))
+  const file = join(dir, 'text')
+  const buf = `bewitched-${randomBytes(4).toString('hex')}`
+  try {
+    writeFileSync(file, text, { mode: 0o600 })
+    await io.run(['load-buffer', '-b', buf, file])
+    await io.run(['paste-buffer', '-p', '-d', '-b', buf, '-t', target])
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+}
 
 /**
  * Type a line into a session and press Enter — only once it is seen in the
@@ -163,10 +193,11 @@ const typeIo: TypeIo = { run, capture: target => tmuxCapture(target), sleep: ms 
  * Enter goes only after the text shows up after ❯; otherwise InputBlocked
  * with the screen.
  */
-export async function tmuxType(target: string, text: string, io: TypeIo = typeIo): Promise<void> {
+export async function tmuxType(target: string, text: string, io: TypeIo = typeIo, o: TypeOptions = {}): Promise<void> {
   const before = (await io.capture(target)) ?? ''
   if (isQuestion(before)) throw new InputBlocked(before)
-  await io.run(['send-keys', '-t', target, '-l', text])
+  if (o.paste) await pasteText(io, target, text)
+  else await io.run(['send-keys', '-t', target, '-l', text])
   let screen = ''
   for (let i = 0; i < 4; i++) {
     await io.sleep(250)
@@ -355,25 +386,105 @@ type Launch = { ok: true; window: string } | { ok: false; skipped: boolean; erro
  * passed, or for as long as the launched window lives (FR-19 — it may wait on
  * a question for an hour; a second launch only left a second window waiting).
  */
-export async function launchOnce(d: Daemon, dir: string, o: LaunchOptions): Promise<Launch> {
+export async function launchOnce(d: Daemon, dir: string, o: LaunchOptions, remind = true): Promise<Launch> {
   const at = d.launching.get(dir)
-  if (at && (Date.now() - at < RELAUNCH_MS || await launchAlive(d, dir))) return { ok: false, skipped: true, error: '', window: d.launchWindows.get(dir) }
+  if (at && (Date.now() - at < RELAUNCH_MS || await launchAlive(d, dir))) {
+    d.log(`launch ${dir}: skipped, a launch is under way (window ${d.launchWindows.get(dir) ?? '?'})`)
+    return { ok: false, skipped: true, error: '', window: d.launchWindows.get(dir) }
+  }
   d.launching.set(dir, Date.now())
   try {
     const window = await d.launchSession(dir, o)
-    noteLaunch(d, dir, window)
+    d.log(`launch ${dir}: window ${window}, ${describeLaunch(d, dir, o)}`)
+    noteLaunch(d, dir, window, remind)
     return { ok: true, window }
   } catch (err) {
     d.launching.delete(dir)
+    d.log(`launch ${dir}: failed: ${err instanceof Error ? err.message : err}`)
     return { ok: false, skipped: false, error: String(err instanceof Error ? err.message : err) }
   }
 }
 
-/** A launch of dir is under way in this window: the lock, and the reminders. */
-export function noteLaunch(d: Daemon, dir: string, window: string): void {
+/** For the log: engine, model, name and which conversation a launch continues. */
+function describeLaunch(d: Daemon, dir: string, o: LaunchOptions): string {
+  const e = o.engine ?? projectEngine(d, dir).engine
+  const model = o.model ?? projectEngine(d, dir).model
+  return `${e}${model ? `/${model}` : ''} name=${o.name ?? '-'} ${o.resume ? `resume ${o.resume}` : o.continue ? 'continue' : 'new conversation'}`
+}
+
+/** A launch of dir is under way in this window: the lock, and (unless the daemon watches it itself) the reminders. */
+export function noteLaunch(d: Daemon, dir: string, window: string, remind = true): void {
   d.launching.set(dir, Date.now())
   d.launchWindows.set(dir, window)
-  watchLaunch(d, dir, window)
+  if (remind) watchLaunch(d, dir, window)
+}
+
+/**
+ * Which conversation a new start of dir on an engine continues: the last one
+ * the hooks reported for it, else --continue for Claude when the folder has
+ * transcripts; nothing — a new one.
+ */
+export function continueOptions(d: Daemon, dir: string, engine: EngineId): Pick<LaunchOptions, 'resume' | 'continue'> {
+  const id = lastConversation(d, engine, dir)
+  if (id) return { resume: id }
+  return engine === 'claude' && hasTranscripts(dir) ? { continue: true } : {}
+}
+
+/** How long a launch gets to connect when the daemon waits for it itself. Replaced in tests. */
+export const connectTiming = { ms: 120_000, pollMs: 1000, windowGoneMs: 8000 }
+
+export type Connect = { ok: true; session: Session; ms: number } | { ok: false; reason: 'gone' | 'timeout' | 'stuck'; screen: string; ms: number }
+
+/**
+ * Wait until the session launched into win connects. confirm: the startup
+ * questions of Claude Code (trust the folder, development channels) are
+ * answered here — only for launches the owner asked for or allowed (a
+ * switch, ♻️, an idle wake-up). Anything else on the screen is left alone:
+ * the question watch shows it to the chat.
+ */
+export async function awaitConnect(d: Daemon, dir: string, win: string, o: { confirm: boolean }): Promise<Connect> {
+  const started = Date.now()
+  const target = windowTarget(win)
+  let raw = ''
+  while (Date.now() - started < connectTiming.ms) {
+    const s = d.activeSessions().find(x => x.cwd === dir || x.projectKey === dir)
+    if (s) return { ok: true, session: s, ms: Date.now() - started }
+    const cap = await d.tmuxCapture(target)
+    if (cap == null) {
+      d.log(`launch ${dir}: window ${win} closed before the session connected`)
+      return { ok: false, reason: 'gone', screen: raw, ms: Date.now() - started }
+    }
+    raw = cap
+    if (o.confirm && isStartupPrompt(raw)) {
+      d.log(`launch ${dir}: confirming the startup prompt in ${win}`)
+      const r = await confirmLaunch(d, target)
+      if (r.result === 'connected') {
+        const s = d.sessions.get(r.sessionId)
+        if (s) return { ok: true, session: s, ms: Date.now() - started }
+      }
+      if (r.result === 'stuck') return { ok: false, reason: 'stuck', screen: (await d.tmuxCapture(target)) ?? raw, ms: Date.now() - started }
+      continue
+    }
+    await Bun.sleep(connectTiming.pollMs)
+  }
+  d.log(`launch ${dir}: no connection after ${Date.now() - started} ms; screen:\n${raw.split('\n').filter(l => l.trim()).slice(-8).map(l => `  | ${l.trimEnd()}`).join('\n')}`)
+  return { ok: false, reason: 'timeout', screen: raw, ms: Date.now() - started }
+}
+
+/**
+ * The window of a session that has disconnected: give its process a few
+ * seconds to exit, then close the window — a new start of the same name
+ * opens window :0 of a fresh tmux session instead of :1 next to a leftover.
+ */
+export async function closeWindow(d: Daemon, pane: string | null): Promise<void> {
+  if (!pane || !/^%\d+$/.test(pane)) return
+  const until = Date.now() + connectTiming.windowGoneMs
+  while (Date.now() < until) {
+    if ((await d.tmuxPaneId(pane)) == null) return
+    await Bun.sleep(250)
+  }
+  d.log(`window of pane ${pane} still open after its session ended, closing it`)
+  await d.tmuxKillWindow(pane).catch(err => d.log(`kill-window ${pane} failed: ${err}`))
 }
 
 /** The window of dir's pending launch is still there. */
@@ -427,6 +538,8 @@ export function manualCmd(dir: string, o: LaunchOptions = {}): string {
 export async function launchUserSession(d: Daemon, userId: string, name: string, where: { chatId: string; threadId?: number } = { chatId: userId }): Promise<void> {
   const dir = join(settings.usersDir, userId)
   mkdirSync(dir, { recursive: true })
+  // Suspended for idling: it wakes up by itself, the chat hears nothing (autoresume.ts).
+  if (await autoResume(d, dir, name, where)) return
   const cont = hasTranscripts(dir)
   const r = await launchOnce(d, dir, { continue: cont, name: sessionName(d, dir) })
   const o = owner()
@@ -456,8 +569,10 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
  * session. If that fails, post the manual command and close the topic until
  * the session connects (ensureTopic reopens it).
  */
-export async function launchForTopic(d: Daemon, chatId: string, threadId: number, projectKey: string): Promise<void> {
+export async function launchForTopic(d: Daemon, chatId: string, threadId: number, projectKey: string, from = ''): Promise<void> {
   const launchable = !projectKey.includes('#') && existsSync(projectKey)
+  // Suspended for idling: it wakes up by itself, the chat hears nothing (autoresume.ts).
+  if (launchable && await autoResume(d, projectKey, from, { chatId, threadId })) return
   const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: tr('папки проекта нет') }
   if (!r.ok && r.skipped) {
     await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'), r.window ? screenKb(r.window) : undefined)
@@ -477,8 +592,9 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
 
 /**
  * Close idle sessions: user sessions after USER_IDLE_MIN, project sessions
- * after PROJECT_IDLE_MIN (0 = never, the default). The next DM or topic
- * message starts them again; the main session is never closed.
+ * after PROJECT_IDLE_MIN (0 = never, the default). Only the journal hears of
+ * it; the next DM or topic message wakes them up by themselves with their
+ * conversation (autoresume.ts). The main session is never closed.
  */
 export function startIdleCloser(d: Daemon): void {
   const closing = new WeakSet<Session>()
@@ -488,22 +604,29 @@ export function startIdleCloser(d: Daemon): void {
       const min = kind ? idleMin(d, kind) : 0
       if (min <= 0 || s.turn || s.status !== 'idle' || closing.has(s)) continue
       if (Date.now() - s.lastActivity < min * 60_000) continue
+      if (!s.tmuxPane) continue
+      // Marked first: the disconnect that follows says nothing in the chat.
+      markIdle(d, s, idleName(min))
       if (endSession(d, s)) {
         closing.add(s)
-        d.log(`${kind} session ${s.id} idle ${min} min, suspending`)
+        d.log(`${kind} session ${s.id} (${s.engine}) idle ${min} min, suspending`)
         void suspended(d, s, idleName(min)).catch(err => d.log(`suspend notice failed: ${err}`))
-      }
+      } else clearIdle(d, s.cwd)
     }
   }, 60_000).unref?.()
 }
 
 /**
- * «💤 приостановлена» only once the session is really gone. If it outlives
+ * The journal's «💤 приостановлена» only once the session is really gone (its window closed too). If it outlives
  * /exit, Ctrl-C and SIGTERM, it is a live session again (messages keep going
  * to it) and the owner hears that it could not be suspended.
  */
 async function suspended(d: Daemon, s: Session, period: string): Promise<void> {
-  if (await waitGone(d, s.id, endTiming.checkMs * 2 + 10_000)) return inSession(d, s, () => announceSuspended(d, s, period))
+  if (await waitGone(d, s.id, endTiming.checkMs * 2 + 10_000)) {
+    await closeWindow(d, s.tmuxPane)
+    return logSuspended(d, s, period)
+  }
+  clearIdle(d, s.cwd)
   d.ending.delete(s.id)
   d.log(`session ${s.id}: could not suspend, still connected`)
   await sendNotice(d, 'sessions', () => tr('⚠️ Не смог приостановить сессию <b>{v}</b> (#{id}): она не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Она по-прежнему подключена; посмотрите окно в tmux.', { v: escapeHtml(s.projectName), id: s.id }))

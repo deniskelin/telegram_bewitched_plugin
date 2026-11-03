@@ -20,8 +20,8 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
-import { channelText, codexDeliver, codexQueue, withProjectEngine, type EngineId } from './engines.ts'
-import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation } from './launch.ts'
+import { channelText, codexDeliver, codexQueue, codexUndelivered, withProjectEngine, type EngineId } from './engines.ts'
+import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation, type TypeOptions } from './launch.ts'
 import { sendNotice } from './journal.ts'
 
 /** Queue for messages to the main session while it is not running. */
@@ -291,7 +291,7 @@ export class Daemon {
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && session.engine === 'claude' && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     // Codex has no channel: the message goes into its thread with codex queue (FR-16).
-    if (session.engine === 'codex') void codexDeliver(this, session, channelText(content, meta)).catch(err => this.log(`deliver to codex session ${session.id} failed: ${err}`))
+    if (session.engine === 'codex') void codexDeliver(this, session, channelText(content, meta)).catch(err => codexUndelivered(this, session, err, from))
     else this.send(session, { t: 'inbound', content, meta })
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
@@ -325,7 +325,7 @@ export class Daemon {
   tmuxCapture: (target: string) => Promise<string | null> = tmuxCapture
   tmuxKeys: (target: string, keys: string[]) => Promise<void> = tmuxKeys
   /** Type a line (e.g. "/compact") into a pane and press Enter. Replaced in tests. */
-  tmuxType: (target: string, text: string) => Promise<void> = tmuxType
+  tmuxType: (target: string, text: string, o?: TypeOptions) => Promise<void> = (target, text, o) => tmuxType(target, text, undefined, o)
   tmuxKillWindow: (target: string) => Promise<void> = tmuxKillWindow
   /** A message into a Codex thread (FR-16). Replaced in tests. */
   codexQueue: (thread: string, text: string) => Promise<void> = codexQueue
