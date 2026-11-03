@@ -37,6 +37,11 @@ export const TOOLS = [
           description: "'text' (default, plain), 'markdownv2' (caller escapes per MarkdownV2), 'rich' (Telegram rich message from GitHub Markdown: # headings, --- dividers, lists, tables, code, > quotes, <details> blocks, [links](#anchor); a single newline stays a line break; falls back to text if unsupported).",
         },
         buttons: optionsSchema,
+        copy: {
+          type: 'array',
+          description: 'Tap-to-copy buttons under the message (each text ≤ 256 characters): commands, paths, ids, links. Short ```bash blocks of a rich message get one automatically.',
+          items: { type: 'object', properties: { label: { type: 'string' }, text: { type: 'string' } }, required: ['text'] },
+        },
         voice: { type: 'boolean', description: 'Also send the text as a voice message (TTS). The chat\'s /voice mode may voice replies on its own; this forces it.' },
       },
       required: [],
@@ -163,7 +168,7 @@ export const TOOLS = [
   {
     name: 'remind',
     // i18n-ignore: for the model
-    description: 'Set a reminder or deferred task for this chat. When due, the text is posted in the chat and comes back to you (or whichever session serves the chat) as a <channel> message with event="reminder" — write it as an instruction to yourself, e.g. "проверь CI в PR #12 и сообщи результат". Give in_minutes, or at ("HH:MM" local time, next occurrence), optionally daily.',
+    description: 'Set a reminder or deferred task for this chat. When due, the text is posted in the chat and comes back to you (or whichever session serves the chat) as a <channel> message with event="reminder" — write it as an instruction to yourself, e.g. "проверь CI в PR #12 и сообщи результат". Give in_minutes, or at ("HH:MM" local time, next occurrence), optionally daily or every_minutes to repeat. mode "task" (default) comes back to the session; "note" is only posted to the chat for the people there. Use this for ANY "later" / "every N" / "check back" work — never CronCreate, ScheduleWakeup, /loop, sleep or background timers of the session: those die with the session, the daemon keeps reminders across restarts.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -173,8 +178,19 @@ export const TOOLS = [
         in_minutes: { type: 'number' },
         at: { type: 'string', description: '"HH:MM" local time.' },
         daily: { type: 'boolean', description: 'Repeat every day at that time (needs at).' },
+        every_minutes: { type: 'number', description: 'Repeat every N minutes (>= 1); the first one fires after in_minutes, or after N.' },
+        mode: { type: 'string', enum: ['task', 'note'], description: 'task (default): delivered back to the session as an instruction; note: only posted in the chat.' },
       },
       required: ['text'],
+    },
+  },
+  {
+    name: 'cancel_reminder',
+    description: 'Cancel a reminder by its id (from remind, or the list in session_resume).',
+    inputSchema: {
+      type: 'object',
+      properties: { id: { type: 'string' } },
+      required: ['id'],
     },
   },
   {

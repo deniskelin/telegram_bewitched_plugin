@@ -151,9 +151,13 @@ export async function handleShortcutCallback(d: Daemon, ctx: Context, data: stri
   }
   if (!s.tmuxPane) { await answer(t('Сессия не в tmux — команды не отправить.')); return true }
   if (s.turn || s.status !== 'idle') { await answer(t('Сессия работает — дождитесь конца хода или нажмите ⏹.')); return true }
+  // FR-19: /exit, /quit typed from Telegram end the session on purpose — no «остановилась» after it.
+  const quits = /^\/(exit|quit)\s*$/i.test(r.text.trim())
+  if (quits) d.ending.add(s.id)
   try {
     await d.tmuxType(s.tmuxPane, r.text)
   } catch (err) {
+    if (quits) d.ending.delete(s.id)
     if (!(err instanceof InputBlocked)) throw err
     await answer(t('⛔ Не набрал: сессия ждёт ответа на экране'))
     const screen = await blockedScreen(d, s.tmuxPane)

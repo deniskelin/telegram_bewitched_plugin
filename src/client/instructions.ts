@@ -16,7 +16,7 @@ export const INSTRUCTIONS = [
   '- event="session_resume": sent once when this session connects — memory, recent history and messages that arrived while no session was running. Do not reply to it unless it contains pending messages that need an answer.',
   '- event="broadcast" / "control_send" / "remember_request": sent by the owner from the control panel; treat like a normal user message.',
   // i18n-ignore: for the model
-  '- event="reminder": a reminder the user (/remind) or a session (the remind tool) set earlier is due — do what it says, then reply in that chat. When the user asks to do something later ("через 2 часа проверь CI", "каждое утро …"), set it with the remind tool, phrased as an instruction to yourself.',
+  '- event="reminder": a reminder the user (/remind) or a session (the remind tool) set earlier is due — do what it says, then reply in that chat. When the user asks to do something later ("через 2 часа проверь CI", "каждое утро …"), set it with the remind tool, phrased as an instruction to yourself. Any "later", "every N minutes", "check back" or "remind me" goes through remind only — never CronCreate, ScheduleWakeup, /loop, sleep or background timers of the session: they die with the session, reminders live in the daemon. late_min on a reminder: it fired late because the daemon was down. session_resume lists this chat\'s active reminders; cancel with cancel_reminder.',
   '',
   'stream_answer="true" on a message: the chat watches your answer appear as you write it. Write the answer to the user as your normal text (after any tool calls, as one final message), then call reply with use_last_message: true and no text (add format: "rich" for Markdown, buttons/files as usual). Do not repeat the text in the tool call. Without stream_answer, pass the text to reply as usual.',
   'Use reply_to (a message_id) only when replying to an earlier message; the latest message doesn\'t need a quote-reply.',
@@ -29,7 +29,8 @@ export const INSTRUCTIONS = [
   '- "> quote" for what the user or a document said; ||spoiler||, ==marked==, footnotes[^1] when they help; <footer>…</footer> for a closing note (version, time, source);',
   '- no decorative headings or emoji in every line; plain text (format="text") for one-line answers.',
   '',
-  'Anything the user may copy — commands (including /slash commands), paths, ids — must be copyable on a phone: rich messages do not let users copy code there. Send each such command as its own reply with format="markdownv2" as a code block (```\\n<command>\\n``` — inside it escape only ` and \\), which Telegram shows with a Copy button; keep the explanation in a separate message.',
+  'Anything the user may copy — commands (including /slash commands), paths, ids — must be copyable on a phone: rich messages do not let users copy code there. Put each such item in reply\'s copy: [{label, text}] (a 📋 button that copies text, ≤ 256 characters); a short ```bash block in a rich answer gets that button by itself. Only for longer text send it as its own reply with format="markdownv2" as a code block (```\\n<command>\\n``` — inside it escape only ` and \\).',
+  'The bridge tidies rich answers itself: code longer than 15 lines is folded, `src/file.ts:12`, commit hashes and #123 become GitHub links, a very long answer is split at its ## headings — do not do this by hand. A long answer may open with a one-line conclusion in <aside>…</aside> under its title.',
   '',
   'Whenever you offer the user a choice between options or ask for confirmation (yes/no, "which variant?", "proceed?"), use ask_user (or reply with buttons) instead of listing options in text.',
   '',

@@ -114,7 +114,7 @@ function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Sc
 }
 
 export function helpScreen(): Screen {
-  const text = [
+  const lines = [
     t('❓ <b>Помощь</b>'),
     t('Пишите в личку — отвечает ваша сессия Claude Code. В группе: топик = проект, General — пульт и ваша сессия.'),
     '',
@@ -127,10 +127,22 @@ export function helpScreen(): Screen {
     t('/new_session &lt;имя|путь&gt; — новый проект'),
     t('Обычная группа (без топиков) тоже может быть проектом: разрешите её через access, бот пришлёт вам карточку — /menu → 👥 Группы'),
     t('/lang — язык интерфейса в этом чате'),
+    t('/prompt [текст|off] — режим промпта топика: обычный, ревью, собеседник или свой'),
+    t('/once [claude|codex] &lt;вопрос&gt; — разовый ход без сессии (только чтение), /review — ревью изменений другой моделью'),
     '',
     t('Голосовые расшифровываются, ответы — голосом на голосовое (⚙️ Настройки чата).'),
-  ].join('\n')
-  return { text, kb: new InlineKeyboard([[button(t('🎛 Меню'), 'hub:main')]]) }
+  ]
+  const author = settings.authorContact
+  const rows: Btn[][] = []
+  if (author) {
+    lines.push('', t('💌 Связаться с автором и предложить улучшение:'))
+    const links: Btn[] = []
+    if (author.telegram) links.push(InlineKeyboard.url(t('✈️ Написать автору'), author.telegram))
+    if (author.issues) links.push(InlineKeyboard.url(t('🐞 GitHub Issues'), author.issues))
+    if (links.length) rows.push(links)
+  }
+  rows.push([button(t('🎛 Меню'), 'hub:main')])
+  return { text: lines.join('\n'), kb: new InlineKeyboard(rows as never) }
 }
 
 export function registerHubCommands(d: Daemon, bot: Bot): void {

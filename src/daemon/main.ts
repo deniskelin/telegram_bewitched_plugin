@@ -27,6 +27,7 @@ import { renotifyStopped, startQuestionWatch, startTurnWatch } from './watchdog.
 import { closeOrphanProgress } from './stream.ts'
 import { writeCodexProfile } from './engines.ts'
 import { startHealthWatch } from './health.ts'
+import { startOrphanWatch } from './orphans.ts'
 import { inSession } from './lang.ts'
 import { LANGS, t, withLang } from '../i18n/index.ts'
 import { onSessionGone, onSessionRegistered, registerTopicCommands, scheduleDashboard } from './topics.ts'
@@ -131,6 +132,7 @@ try {
 startTurnWatch(d)
 startQuestionWatch(d)
 startHealthWatch(d)
+startOrphanWatch(d)
 startLimitWatch(d)
 startTokensWatch(d)
 startReminders(d)

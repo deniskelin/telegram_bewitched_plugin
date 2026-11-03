@@ -11,7 +11,7 @@
  * starts with them.
  */
 
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
 import { execFile, execFileSync } from 'child_process'
@@ -24,6 +24,7 @@ import { inChat } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import type { ChatRef } from './daemon.ts'
 import { projectTranscriptDir } from './transcript.ts'
+import { launchPrompt } from './promptmode.ts'
 
 export type EngineId = 'claude' | 'codex'
 
@@ -52,6 +53,7 @@ export type Engine = {
 }
 
 const NAME = /^[\p{L}\p{N}._-]+$/u
+const SAFE_PATH = /^[\w./-]+$/
 const MODEL = /^[\w.-]+$/
 
 /** Claude Code: CLAUDE_LAUNCH_CMD plus -n <name> (a slug), --model <id>, --resume <id> (ids are checked) or --continue. */
@@ -69,6 +71,10 @@ export const claude: Engine = {
     let cmd = settings.launchCmd
     if (o.name && NAME.test(o.name)) cmd += ` -n ${o.name}`
     if (o.model && MODEL.test(o.model)) cmd += ` --model ${o.model}`
+    // FR-20: the prompt is read from the daemon's file by the shell, never put on the command line as text.
+    if (o.prompt && SAFE_PATH.test(o.prompt.file)) cmd += ` --append-system-prompt "$(cat '${o.prompt.file}')"`
+    const tools = (o.prompt?.disallowed ?? []).filter(x => /^\w+$/.test(x))
+    if (tools.length) cmd += ` --disallowedTools ${tools.join(',')}`
     if (o.resume && /^[\w-]+$/.test(o.resume)) return `${cmd} --resume ${o.resume}`
     return o.continue ? `${cmd} --continue` : cmd
   },
@@ -88,7 +94,7 @@ export const claude: Engine = {
 export const CODEX_PROFILE = 'bewitched'
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), '.codex')
 
-function codexBin(): string | null {
+export function codexBin(): string | null {
   const own = process.env.CODEX_BIN ?? join(homedir(), '.local', 'bin', 'codex')
   if (existsSync(own)) return own
   try {
@@ -116,9 +122,11 @@ export const codex: Engine = {
     { alias: 'luna', id: 'gpt-6-luna' },
   ],
   launchCommand(o) {
-    let cmd = `${codexBin() ?? 'codex'} --no-alt-screen -p ${CODEX_PROFILE}`
+    // FR-20: a prompt mode runs with a profile of its own (the mode's text in the instructions, a read-only sandbox).
+    const profile = o.prompt ? writeCodexModeProfile(o.prompt) ?? CODEX_PROFILE : CODEX_PROFILE
+    let cmd = `${codexBin() ?? 'codex'} --no-alt-screen -p ${profile}`
     if (o.model && MODEL.test(o.model)) cmd += ` -m ${o.model}`
-    if (o.resume && /^[\w-]+$/.test(o.resume)) return `${codexBin() ?? 'codex'} resume ${o.resume} --no-alt-screen -p ${CODEX_PROFILE}${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}`
+    if (o.resume && /^[\w-]+$/.test(o.resume)) return `${codexBin() ?? 'codex'} resume ${o.resume} --no-alt-screen -p ${profile}${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}`
     return o.continue ? cmd.replace(' --no-alt-screen', ' resume --last --no-alt-screen') : cmd
   },
   isPromptReady: screen => /^\s*›/m.test(screen) && !isQuestion(screen),
@@ -128,6 +136,9 @@ export const codex: Engine = {
   liveModelSwitch: false,
   available: () => codexBin() != null,
 }
+
+/** A POSIX shell single-quoted word. */
+const shQuote = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`
 
 /** TOML basic string. */
 const tomlString = (v: string) => JSON.stringify(v)
@@ -144,13 +155,19 @@ const CODEX_PREFACE = [
  * the channel instructions. Rewritten on every daemon start — paths follow the
  * plugin. Codex asks once to trust the hooks; the answer is kept.
  */
-export function writeCodexProfile(bun = process.execPath): string | null {
+export function writeCodexProfile(bun = process.execPath, mode?: { name: string; text: string; readOnly: boolean }): string | null {
   if (!codex.available()) return null
-  const hook = `${bun} "${join(PLUGIN_ROOT, 'hooks', 'hook.ts')}"`
+  mkdirSync(CODEX_HOME, { recursive: true })
+  // FR-19: Codex trusts a hook by a hash of its definition. The definition is a fixed wrapper path, so moving the
+  // plugin or updating bun changes only the wrapper's body — Codex does not ask to trust the hooks again.
+  const wrapper = join(CODEX_HOME, 'bewitched-hook.sh')
+  writeFileSync(wrapper, `#!/bin/sh\n# Written by the telegram-bewitched daemon on every start.\nexec ${shQuote(bun)} ${shQuote(join(PLUGIN_ROOT, 'hooks', 'hook.ts'))}\n`, { mode: 0o700 })
+  const hook = `sh ${shQuote(wrapper)}`
   const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']
   const lines = [
     '# Written by the telegram-bewitched daemon on every start; edits are lost.',
-    `developer_instructions = ${tomlString(CODEX_PREFACE + INSTRUCTIONS)}`,
+    `developer_instructions = ${tomlString(CODEX_PREFACE + INSTRUCTIONS + (mode ? `\n\n${mode.text}` : ''))}`,
+    ...(mode?.readOnly ? ['sandbox_mode = "read-only"'] : []),
     // One project memory for both engines: without an AGENTS.md Codex reads the project's CLAUDE.md.
     'project_doc_fallback_filenames = ["CLAUDE.md"]',
     '',
@@ -164,10 +181,17 @@ export function writeCodexProfile(bun = process.execPath): string | null {
     '',
     ...events.flatMap(e => [`[[hooks.${e}]]`, ...(e === 'PreToolUse' || e === 'PostToolUse' ? ['matcher = "*"'] : []), `[[hooks.${e}.hooks]]`, 'type = "command"', `command = ${tomlString(hook)}`, 'timeout = 3', '']),
   ]
-  mkdirSync(CODEX_HOME, { recursive: true })
-  const file = join(CODEX_HOME, `${CODEX_PROFILE}.config.toml`)
+  const file = join(CODEX_HOME, `${mode?.name ?? CODEX_PROFILE}.config.toml`)
   writeFileSync(file, lines.join('\n'), { mode: 0o600 })
   return file
+}
+
+/** FR-20: the profile of a prompt mode, bewitched-<key>; null when Codex is missing. */
+export function writeCodexModeProfile(p: NonNullable<LaunchOptions['prompt']>): string | null {
+  let text = ''
+  try { text = readFileSync(p.file, 'utf8').trim() } catch { return null }
+  const name = `${CODEX_PROFILE}-${p.key}`
+  return writeCodexProfile(process.execPath, { name, text, readOnly: p.readOnly }) ? name : null
 }
 
 /** A Telegram message as the model sees it on the channel: <channel source=… attrs>content</channel>. */
@@ -242,6 +266,51 @@ async function codexDeliverNow(d: Daemon, s: Session, text: string): Promise<voi
   d.log(`codex ${s.id}: pasted ${chars} chars into ${s.tmuxPane}${thread ? '' : ' (no thread id yet)'} (waited ${waited} ms, total ${Date.now() - started} ms)`)
 }
 
+/** FR-16: messages that came in during a Codex turn, by session. */
+const codexHeld = new Map<string, { texts: string[]; from?: ChatRef }>()
+
+/** Longest a message waits for the end of a turn: a lost Stop hook must not keep it forever. */
+export const CODEX_HOLD_MAX_MS = 10 * 60_000
+
+/**
+ * Hold a message for after the turn (the turn really runs: a hook came since
+ * it began). False when nothing should be held (no chat to tell).
+ */
+export function holdForCodex(d: Daemon, s: Session, text: string, from?: ChatRef): boolean {
+  if (!from) return false
+  const first = !codexHeld.has(s.id)
+  const h = codexHeld.get(s.id) ?? { texts: [], from }
+  h.texts.push(text)
+  h.from = from
+  codexHeld.set(s.id, h)
+  if (first) setTimeout(() => { if (codexHeld.get(s.id) === h) codexFlushHeld(d, s) }, CODEX_HOLD_MAX_MS).unref?.()
+  return true
+}
+
+/** Messages held for a session: how many. */
+export function codexHeldCount(s: Session): number {
+  return codexHeld.get(s.id)?.texts.length ?? 0
+}
+
+/** The turn ended: what came in meanwhile goes in as one message. Text for the model, not translated. */
+export function codexFlushHeld(d: Daemon, s: Session): void {
+  const h = codexHeld.get(s.id)
+  if (!h) return
+  codexHeld.delete(s.id)
+  const text = h.texts.length === 1
+    ? h.texts[0]
+    : `While you were working, ${h.texts.length} messages came in. Answer them together, in order:\n\n${h.texts.join('\n\n')}` // i18n-ignore
+  d.log(`codex ${s.id}: ${h.texts.length} held message(s) delivered after the turn`)
+  void codexDeliver(d, s, text).catch(err => codexUndelivered(d, s, err, h.from))
+}
+
+/** The session is gone: its held messages, if any, are handed back (to the pending queue by the caller). */
+export function codexTakeHeld(s: Session): string[] {
+  const h = codexHeld.get(s.id)
+  codexHeld.delete(s.id)
+  return h?.texts ?? []
+}
+
 /**
  * A message Codex did not take: the chat no longer shows «⏳ Работаю…» for a
  * turn that never began, and gets the window's screen with keys — the text
@@ -289,7 +358,30 @@ export function rememberConversation(d: Daemon, s: Session, id: string): void {
   const key = `last_conv:${s.engine}:${s.cwd}`
   if (d.store.get(key) === id) return
   d.store.set(key, id)
+  // FR-20: which conversation the folder had when — a reply to an old message can go back to its conversation.
+  const hist = conversationHistory(d, s.cwd)
+  hist.push({ id, engine: s.engine, at: Date.now() })
+  d.store.set(`conv_hist:${s.cwd}`, JSON.stringify(hist.slice(-50)))
   d.log(`session ${s.id} (${s.engine}) conversation ${id} in ${s.cwd}`)
+}
+
+export type ConvMark = { id: string; engine: EngineId; at: number }
+
+/** The conversations a folder had, oldest first, with when each became current. */
+export function conversationHistory(d: Daemon, dir: string): ConvMark[] {
+  try {
+    const v = JSON.parse(d.store.get(`conv_hist:${dir}`) ?? '[]')
+    return Array.isArray(v) ? v : []
+  } catch {
+    return []
+  }
+}
+
+/** The conversation that was current in dir at time `at` (ms), or null when none is known. */
+export function conversationAt(d: Daemon, dir: string, at: number): ConvMark | null {
+  let found: ConvMark | null = null
+  for (const c of conversationHistory(d, dir)) if (c.at <= at) found = c
+  return found
 }
 
 export function lastConversation(d: Daemon, engine: EngineId, dir: string): string | null {
@@ -318,5 +410,6 @@ export function setProjectEngine(d: Daemon, projectKey: string, c: EngineChoice)
 /** Launch options with the project's engine and model, unless the caller chose them. */
 export function withProjectEngine(d: Daemon, dir: string, o: LaunchOptions = {}): LaunchOptions {
   const c = projectEngine(d, dir)
-  return { engine: c.engine, ...(c.model ? { model: c.model } : {}), ...o }
+  const prompt = launchPrompt(d, dir)
+  return { engine: c.engine, ...(c.model ? { model: c.model } : {}), ...(prompt ? { prompt } : {}), ...o }
 }

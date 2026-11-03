@@ -34,6 +34,7 @@ import { sendDaily, todaySoFar } from './daily.ts'
 import { handleSessionMenu, sessionCommandScreen } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
 import { handleReminderCallback, registerReminderCommands } from './reminders.ts'
+import { handleOrphanCallback } from './orphans.ts'
 import { handleReportCallback, registerReportCommands } from './reports.ts'
 import { handleInviteCallback, registerInviteCommands } from './invite.ts'
 import { handleUserCallback, registerUserCommands } from './users.ts'
@@ -43,6 +44,10 @@ import { askOwnerAboutGroup, groupBinding, groupPendingKey, handleGroupCallback,
 import { handleMacroCallback, registerMacroCommands } from './macros.ts'
 import { addProjectRule, projectRules } from './permrules.ts'
 import { handleServerCallback, registerServerCommands } from './server.ts'
+import { handleCliCallback } from './cliupdate.ts'
+import { handleReplyConvCallback, holdIfOldConversation } from './replyconv.ts'
+import { handlePromptCallback, registerPromptCommands } from './promptmode.ts'
+import { handleReviewCallback, registerOnceCommands } from './oneshot.ts'
 import { handleHubCallback, helpScreen, registerHubCommands } from './hub.ts'
 import { t as tr } from '../i18n/index.ts'
 import { projectTitle } from './report.ts'
@@ -411,6 +416,8 @@ async function handleInbound(
     return
   }
 
+  // FR-20: a reply to a message of an older conversation asks where it goes.
+  if (!target.fallback && await holdIfOldConversation(d, target.session, chat, text, meta).catch(err => { d.log(`reply conversation check failed: ${err}`); return false })) return
   d.deliver(target.session, text, meta, chat)
 }
 
@@ -543,6 +550,8 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
 export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   d.routeText = (chat, fromId, text, meta) => routeText(d, chat, fromId, text, meta)
   registerReminderCommands(d, bot)
+  registerPromptCommands(d, bot)
+  registerOnceCommands(d, bot)
   registerReportCommands(d, bot)
   registerInviteCommands(d, bot)
   registerUserCommands(d, bot)
@@ -624,10 +633,15 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleResetCallback(d, ctx, data)) return
     if (await handleTokensCallback(d, ctx, data)) return
     if (await handleReminderCallback(d, ctx, data)) return
+    if (await handleOrphanCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
     if (await handleUserCallback(d, ctx, data)) return
     if (await handleServerCallback(d, ctx, data)) return
+    if (await handleCliCallback(d, ctx, data)) return
+    if (await handleReplyConvCallback(d, ctx, data)) return
+    if (await handlePromptCallback(d, ctx, data)) return
+    if (await handleReviewCallback(d, ctx, data)) return
     if (await handleHubCallback(d, ctx, data)) return
     if (await handleMacroCallback(d, ctx, data)) return
     if (await handleCiCallback(d, ctx, data)) return

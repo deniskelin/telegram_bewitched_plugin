@@ -78,6 +78,12 @@ function str<T extends string>(name: string, def: T, allowed?: readonly T[]): T 
   return allowed && !allowed.includes(v) ? def : v
 }
 
+/** Build config: where users reach the author (FR-8). */
+export const AUTHOR = {
+  telegram: 'https://t.me/deniskelin',
+  issues: 'https://github.com/deniskelin/telegram_bewitched_plugin/issues',
+} as const
+
 /** Settings read lazily so tests can tweak process.env before use. */
 export const settings = {
   get httpPort() { return num('BEWITCHED_HTTP_PORT', 8797) },
@@ -178,6 +184,13 @@ export const settings = {
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   /** JOURNAL_CHAT_ID: a group for the daemon's notices and events instead of the owner's DM (see journal.ts). */
   get journalChatId() { const v = process.env.JOURNAL_CHAT_ID?.trim(); return v && /^-\d+$/.test(v) ? v : null },
+  /** FR-16: on an engine switch the outgoing model writes a summary for the handoff, waited for this long (0 = off). */
+  get handoffSummarySec() { return num('HANDOFF_SUMMARY_SEC', 90) },
+  /** FR-8: the author's contacts in /help (Telegram, GitHub Issues); AUTHOR_CONTACT=off hides them. */
+  get authorContact(): { telegram?: string; issues?: string } | null {
+    if ((process.env.AUTHOR_CONTACT ?? '').trim().toLowerCase() === 'off') return null
+    return { telegram: AUTHOR.telegram, issues: AUTHOR.issues }
+  },
   get launchCmd() { return process.env.CLAUDE_LAUNCH_CMD || 'claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched' },
 }
 

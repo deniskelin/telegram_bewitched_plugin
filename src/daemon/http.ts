@@ -14,13 +14,15 @@ import type { Daemon, Session } from './daemon.ts'
 import { handleEvent, type ExternalEvent } from './events.ts'
 import { notify } from './tools.ts'
 import { scheduleDashboard, sessionTarget } from './topics.ts'
+import { parsePlan } from './stream.ts'
+import { changesBlock, noteTool, takeTurn, turnStarted, type TurnChanges } from './turnfiles.ts'
 import { checkContext } from './menu.ts'
 import { inChat } from './lang.ts'
 import { classify, failureHint, onLimitFailure } from './outoftokens.ts'
 import { turnCostBlock, turnCostLine } from './usage.ts'
 import { editRich, sendRich } from '../tg.ts'
 import { t } from '../i18n/index.ts'
-import { rememberConversation } from './engines.ts'
+import { codexFlushHeld, rememberConversation } from './engines.ts'
 
 const MAX_BODY = 1024 * 1024
 
@@ -39,7 +41,7 @@ function touchTurn(s: Session, prompt = false): void {
   if (prompt) s.stoppedAt = null
   s.lastActivity = Date.now()
   if (s.stoppedAt) return
-  if (!s.turn) s.turn = { start: Date.now(), replied: false }
+  if (!s.turn) { s.turn = { start: Date.now(), replied: false }; turnStarted(s) }
   if (s.status === 'idle') s.status = 'working'
 }
 
@@ -77,6 +79,8 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
       // Text before a tool call was narration, not the answer.
       if (name && !isOwnTool(name)) s.answer = ''
       if (name && !isOwnTool(name)) d.streams.onTool(s, summary)
+      if (name) noteTool(s, name, data.tool_input as Record<string, unknown> | undefined)
+      if (name === 'TodoWrite') { s.plan = parsePlan(data.tool_input); d.streams.onPlan(s, s.plan) }
       // Codex may ask in its window before running it: the request goes to the chat as a card.
       if (name && !isOwnTool(name)) watchApprovalSoon(d, s)
       break
@@ -91,6 +95,15 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
       const delta = typeof data.delta === 'string' ? data.delta : ''
       if (delta) s.answer = (s.answer + (delta.endsWith('\n') ? delta : delta + '\n')).slice(-20_000)
       if (delta) d.streams.onText(s, delta.endsWith('\n') ? delta : delta + '\n')
+      break
+    }
+    case 'SessionEnd': {
+      // FR-19: /exit typed in the terminal (or a logout) is a planned end — no «остановилась» for it.
+      const reason = String(data.reason ?? '')
+      if (reason === 'prompt_input_exit' || reason === 'logout') {
+        d.ending.add(s.id)
+        d.log(`session ${s.id}: ended on purpose (${reason})`)
+      }
       break
     }
     case 'Stop':
@@ -115,7 +128,12 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
   s.status = 'idle'
   d.streams.close(s, 'stop')
   void checkContext(d, s).catch(err => d.log(`context check failed: ${err}`))
-  if (turn) reportTurnCost(d, s, turn.start)
+  if (s.engine === 'codex') codexFlushHeld(d, s)
+  // A session being closed on purpose (♻️, /exit, a switch): its interrupted turn is no «ошибка хода».
+  if (d.ending.has(s.id)) return
+  if (s.quietTurn) { s.quietTurn = false; return }
+  const changes = takeTurn(s)
+  if (turn) reportTurnCost(d, s, turn.start, changes)
   if (!turn || turn.replied) return
   const target = sessionTarget(d, s)
   if (!target) return
@@ -137,13 +155,16 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
  * bot's last message when there is no such answer or the edit fails. The
  * transcript lags the Stop hook a little, hence the wait.
  */
-function reportTurnCost(d: Daemon, s: Session, start: number): void {
+function reportTurnCost(d: Daemon, s: Session, start: number, changes: TurnChanges | null = null): void {
   const target = sessionTarget(d, s)
   if (!target || !prefsFor(target.chatId, target.threadId).turnCost) return
   const end = Date.now()
   setTimeout(() => void (async () => {
-    const [block, rich, plain] = inChat(d, target.chatId, target.threadId, () => [turnCostBlock(s, start, end), turnCostLine(s, start, end, true), turnCostLine(s, start, end)])
-    if (!block || !rich || !plain) return
+    const [cost, rich, plain] = inChat(d, target.chatId, target.threadId, () => [turnCostBlock(s, start, end), turnCostLine(s, start, end, true), turnCostLine(s, start, end)])
+    if (!cost || !rich || !plain) return
+    // FR-12: what the turn changed, above the cost.
+    const files = await inChat(d, target.chatId, target.threadId, () => changesBlock(s, changes)).catch(() => null)
+    const block = files ? `${files}${cost}` : cost
     const a = s.lastAnswer
     if (a && a.chatId === target.chatId && a.at >= start - 1000) {
       try {

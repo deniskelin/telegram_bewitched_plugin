@@ -4,6 +4,7 @@
  * links the supergroup from the bot's DM.
  */
 
+import { remindersForModel } from './reminders.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { existsSync, readFileSync } from 'fs'
@@ -196,6 +197,8 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   if (chat && !s.reconnect) {
     const mem = readMemory(chat.chatId, chat.threadId)
     if (mem) parts.push(`Память этого чата (save_memory):\n${mem.trim()}`) // i18n-ignore
+    const rem = remindersForModel(d, chat.chatId, chat.threadId)
+    if (rem) parts.push(rem)
     const hist = d.store.history(chat.chatId, chat.threadId ?? null, settings.resumeLastN)
     if (hist.length) {
       // i18n-ignore
@@ -203,8 +206,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
         `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n')) // i18n-ignore
     }
   }
-  const role = d.roleOf(s)
-  const key = role === 'user' ? userPendingKey(d.userIdOf(s)!) : role === 'main' ? MAIN_PENDING_KEY : topicKey(s).key
+  const key = pendingKeyOf(d, s)
   const all = d.store.takePending(key, settings.pendingTtlH)
   const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}` // i18n-ignore
   const handled = all.filter(p => p.meta.handled_by === 'main')
@@ -224,6 +226,12 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
       pending_count: String(pending.length),
     }, pending.length ? chat : undefined)
   }
+}
+
+/** The queue a session takes its offline messages from. */
+export function pendingKeyOf(d: Daemon, s: Session): string {
+  const role = d.roleOf(s)
+  return role === 'user' ? userPendingKey(d.userIdOf(s)!) : role === 'main' ? MAIN_PENDING_KEY : topicKey(s).key
 }
 
 /** Where a queued message came from, when it is not the session's own DM: General or a topic. */

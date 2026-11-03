@@ -18,6 +18,9 @@
     ],
     "StopFailure": [
       { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "bun \"${CLAUDE_PLUGIN_ROOT}/hooks/hook.ts\"", "timeout": 3 }] }
     ]
   }
 }

@@ -6,7 +6,7 @@
 
 import { Bot, GrammyError } from 'grammy'
 import { escapeHtml } from './format.ts'
-import { hardBreaks, screenToRich } from './rich.ts'
+import { hardBreaks, liveTimes, screenToRich } from './rich.ts'
 
 export type ThreadOpt = { message_thread_id?: number }
 
@@ -25,6 +25,9 @@ export function createBot(token: string, apiRoot?: string): Bot {
   })
   bot.api.config.use(async (prev, method, payload, signal) => {
     const rich = richScreenCall(method, payload as Record<string, unknown>)
+    // Live-time markers (liveTime) never reach Telegram as they are: rich gets <tg-time>, the rest the plain text.
+    const p = payload as Record<string, unknown>
+    if (typeof p.text === 'string' && p.text.includes('\u2063')) payload = { ...p, text: liveTimes(p.text, false) } as typeof payload
     const key = method === 'sendMessage' ? 'sendRichMessage' : 'editMessageText:rich'
     if (!rich) return prev(method, payload, signal)
     const res = await prev(rich.method as typeof method, rich.payload as typeof payload, signal)
@@ -50,6 +53,10 @@ function richScreenCall(method: string, p: Record<string, unknown>): { method: s
   if (isUnsupported(method === 'sendMessage' ? 'sendRichMessage' : 'editMessageText:rich')) return null
   const html = screenToRich(p.text)
   if (!html) return null
+  return finishRich(method, p, liveTimes(html, true))
+}
+
+function finishRich(method: string, p: Record<string, unknown>, html: string): { method: string; payload: Record<string, unknown> } {
   const { text: _t, parse_mode: _p, link_preview_options: _l, entities: _e, ...rest } = p
   return { method: method === 'sendMessage' ? 'sendRichMessage' : method, payload: { ...rest, rich_message: { html } } }
 }
@@ -105,13 +112,13 @@ export async function sendDraft(bot: Bot, chatId: number, draftId: number, c: Dr
 
 /** Rich message from Markdown (Bot API 10.1+). Returns the message id. */
 export async function sendRich(bot: Bot, chatId: string, markdown: string, extra: Record<string, unknown> = {}): Promise<number> {
-  const res = await raw(bot).sendRichMessage({ chat_id: chatId, rich_message: { markdown: hardBreaks(markdown) }, ...extra })
+  const res = await raw(bot).sendRichMessage({ chat_id: chatId, rich_message: { markdown: liveTimes(hardBreaks(markdown), true) }, ...extra })
   return res.message_id as number
 }
 
 /** An existing message (text or rich) becomes this rich Markdown, or rich HTML. */
 export async function editRich(bot: Bot, chatId: string, messageId: number, content: string | { html: string }, extra: Record<string, unknown> = {}): Promise<void> {
-  const rich_message = typeof content === 'string' ? { markdown: hardBreaks(content) } : content
+  const rich_message = typeof content === 'string' ? { markdown: liveTimes(hardBreaks(content), true) } : { html: liveTimes(content.html, true) }
   await raw(bot).editMessageText({ chat_id: chatId, message_id: messageId, rich_message, ...extra })
 }
 
