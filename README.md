@@ -228,7 +228,7 @@ The daemon itself does the housekeeping, without Claude: control commands, closi
 | `MAIN_DIR` | `~` | The main session's folder (with `USER_SESSIONS=off` — DMs and General) |
 | `CONTEXT_WINDOW` | `1000000` | Context window size for the fill percentage on session cards |
 | `CONTEXT_WARN_PCT` | `80` | Offer `/compact` in the session's chat at this context fill (0 — never) |
-| `DIGEST_AT` | `21:00` | When to send the owner the «🌙 Daily summary» (spending, commits, limits); `off` — never. On request — `/digest` |
+| `DIGEST_AT` | `on` | Whether the «🌙 Daily summary» is on by default: one rich message at 00:00 for the day that ended (the spending chart inside, Claude and Codex, sessions with commits, limits); `off` — off until switched on in `/reports`. The time is no longer used. On request — `/digest` (today so far) |
 | `LIMIT_ALERTS` | `80,95` | Subscription limit notice thresholds in percent; `off` — no notices. A window that crossed a threshold gets «✅ Tokens are back» exactly at the reset; in `/usage` the same can be ordered with 🔔 for any window |
 | `LIMIT_WARMUP` | `off` | `on`: a minute after the 5-hour window resets, send a tiny `claude -p` request (haiku) so the next window starts right away instead of when work resumes. Also the ⚡ button in `/usage` |
 | `LIMIT_CHECK_MIN` | `10` | How often to check limits (minutes, 0 — never) |

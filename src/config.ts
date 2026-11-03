@@ -127,8 +127,8 @@ export const settings = {
     const v = process.env.LIMIT_ALERTS ?? '80,95'
     return v === 'off' ? [] : v.split(',').map(Number).filter(n => n > 0 && n <= 100).sort((a, b) => a - b)
   },
-  /** Daily digest to the owner at this local time ("HH:MM"), or "off". */
-  get digestAt() { const v = process.env.DIGEST_AT ?? '21:00'; return /^\d{1,2}:\d{2}$/.test(v) ? v.padStart(5, '0') : null },
+  /** The daily summary (00:00, daily.ts) is on by default unless DIGEST_AT=off; any other value (a time, from before) means on. */
+  get digestOn() { return (process.env.DIGEST_AT ?? 'on').trim().toLowerCase() !== 'off' },
   get limitCheckMin() { return num('LIMIT_CHECK_MIN', 10) },
   /** ⚡ Start the next 5-hour window right at its reset with a tiny request (on/off; the /usage button wins). */
   get limitWarmup() { return process.env.LIMIT_WARMUP === 'on' },

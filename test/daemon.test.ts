@@ -444,7 +444,7 @@ describe('topics', () => {
       expect(day).toMatch(/📂 проекты и главная: 100% расхода · \$0\.50/)
       d.store.set('usage_period', null)
       // The same replies: today's cost in the session card and in the daily digest.
-      const { sessionCostLine, digestReport } = await import('../src/daemon/usage.ts')
+      const { sessionCostLine } = await import('../src/daemon/usage.ts')
       expect(sessionCostLine(d.sessions.get(sessionId)!)).toBe('💸 сегодня $0.50 · 3.0 млн ток.')
       // 🔢 the cost of one turn: the same entries since it began; almost all of it cache reads.
       const { turnCostLine } = await import('../src/daemon/usage.ts')
@@ -461,29 +461,41 @@ describe('topics', () => {
       expect(block).toContain('haiku-5-5 ×1')
       expect(block).toEndWith('</table></details><footer>🔢 1 мин · 3.0 млн ток. · кэш 100% · $0.50</footer>')
       expect(turnCostBlock(ses, Date.now() + 60_000)).toBeNull()
-      const digest = await digestReport(d)
-      expect(digest).toStartWith('🌙 <b>Итоги дня</b>')
-      expect(digest).toContain('📂 proj · $0.50')
-
-      // Period reports: off by default; switched on, the day report goes out once after midnight.
+      // «🌙 Итоги дня»: one rich message at 00:00 — the chart inside, Claude, sessions; on by default (DIGEST_AT).
       const { sendDueReports } = await import('../src/daemon/reports.ts')
       tg.push(textMessage({ text: '/reports' }))
       const rs = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Отчёты о потреблении</b>'))
-      expect(String(rs.body.text)).toContain('⬜️ За сутки')
-      tg.push(callbackQuery('rp:t:day'))
-      await tg.waitFor('editMessageText', c => String(c.body.text).includes('✅ За сутки'))
+      expect(String(rs.body.text)).toContain('✅ За сутки')
       const tomorrow = new Date(Date.now() + 86_400_000)
       tomorrow.setHours(0, 30, 0, 0)
       const photos = () => tg.callsOf('sendPhoto').length
+      const riches = () => tg.callsOf('sendRichMessage').filter(c => String(c.body.rich_message).includes('🌙'))
       const before = photos()
       await sendDueReports(d, tomorrow)
-      expect(photos()).toBe(before + 1)
-      const rep = tg.callsOf('sendMessage').at(-1)!
-      expect(String(rep.body.text)).toStartWith('📊 <b>Статистика за сутки</b>')
-      expect(String(rep.body.text)).toContain('💸 3.0 млн ток. · $0.50')
-      expect(String(rep.body.text)).toContain('• 📂 proj: $0.50')
+      expect(riches().length).toBe(1)
+      expect(photos()).toBe(before)
+      const call = riches()[0]
+      const rich = JSON.parse(String(call.body.rich_message)) as { markdown: string; media: { id: string; media: { type: string; media: string } }[] }
+      expect(rich.markdown).toStartWith('# 🌙 Итоги дня · ')
+      expect(rich.markdown).toContain('![](tg://photo?id=chart)')
+      expect(rich.markdown).toContain('## 🟠 Claude')
+      expect(rich.markdown).toContain('**$0.50** в ценах API · 3.0 млн ток.')
+      expect(rich.markdown).toContain('| opus-5-5 | 0.45 | 2.0 млн | 89% |')
+      expect(rich.markdown).toContain('| 📂 proj | $0.50 | — |')
+      expect(rich.media[0]).toMatchObject({ id: 'chart', media: { type: 'photo' } })
+      expect(rich.media[0].media.media).toStartWith('attach://')
+      expect(Object.values(call.body)).toContain('(file)')
       await sendDueReports(d, tomorrow)
-      expect(photos()).toBe(before + 1)
+      expect(riches().length).toBe(1)
+      // Without rich messages: the chart as a photo and the text, as before.
+      tg.failures.set('sendRichMessage', { code: 400, description: 'Bad Request: rich messages unsupported' })
+      try {
+        tg.push(callbackQuery('rp:now:day'))
+        await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за сутки</b>'))
+        expect(photos()).toBe(before + 1)
+      } finally {
+        tg.failures.delete('sendRichMessage')
+      }
       tg.push(callbackQuery('rp:now:week'))
       await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за неделю</b>'))
       expect(photos()).toBe(before + 2)

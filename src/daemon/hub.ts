@@ -20,7 +20,8 @@ import { remindersScreen } from './reminders.ts'
 import { reportsScreen } from './reports.ts'
 import { serverReport } from './server.ts'
 import { button } from './stream.ts'
-import { digestReport, limitsLine, usageKeyboard, usageReport } from './usage.ts'
+import { limitsLine, usageKeyboard, usageReport } from './usage.ts'
+import { sendDaily, todaySoFar } from './daily.ts'
 import { idleScreen } from './idle.ts'
 
 const BACK = () => button(t('« Меню'), 'hub:main')
@@ -184,8 +185,9 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       await show(ctx, { text: await usageReport(d), kb: usageKeyboard(d) })
       return true
     case 'digest':
+      // The day so far, as the 00:00 summary: a new rich message under the menu.
       await ctx.answerCallbackQuery({ text: t('🌙 Собираю…') }).catch(() => {})
-      await show(ctx, { text: await digestReport(d), kb: new InlineKeyboard([[button(t('« Статистика'), 'hub:stats')]]) })
+      if (ctx.chat) await sendDaily(d, String(ctx.chat.id), todaySoFar(), ctx.callbackQuery?.message?.message_thread_id)
       return true
     case 'reports': screen = primary ? reportsScreen(d) : statsScreen(); if (!primary) toast = t('Отчёты — у владельца.'); break
     case 'set': screen = settingsScreen(d, place(ctx)); break

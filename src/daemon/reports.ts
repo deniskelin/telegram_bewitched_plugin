@@ -16,6 +16,8 @@ import { add, collectEntries, fmtSum, fmtTok, limitsLine, ownerOf, type Entry, t
 import { locale, k, t } from '../i18n/index.ts'
 import { noticeTarget } from './journal.ts'
 import { inChat } from './lang.ts'
+import { sendDaily } from './daily.ts'
+import { settings } from '../config.ts'
 
 export type Kind = 'day' | 'week' | 'month'
 const KINDS: Kind[] = ['day', 'week', 'month']
@@ -28,7 +30,7 @@ const WEEKDAYS = [k('Пн'), k('Вт'), k('Ср'), k('Чт'), k('Пт'), k('Сб
 
 export type Period = { kind: Kind; start: Date; end: Date }
 
-function midnight(t: Date): Date {
+export function midnight(t: Date): Date {
   const d = new Date(t)
   d.setHours(0, 0, 0, 0)
   return d
@@ -190,11 +192,19 @@ async function sendReport(d: Daemon, chatId: string, r: Report, thread?: number)
 // --------------------------------------------------------------------------
 
 export function reportSettings(d: Daemon): Record<Kind, boolean> {
+  // The day's summary replaced the DIGEST_AT digest: on unless DIGEST_AT=off, until switched in /reports.
+  const base = { day: settings.digestOn, week: false, month: false }
   try {
-    return { day: false, week: false, month: false, ...JSON.parse(d.store.get('reports') ?? '{}') }
+    return { ...base, ...JSON.parse(d.store.get('reports') ?? '{}') }
   } catch {
-    return { day: false, week: false, month: false }
+    return base
   }
+}
+
+/** The day goes as one rich message with the chart inside (daily.ts); the photo and the text only without rich messages. */
+async function sendPeriod(d: Daemon, chatId: string, p: Period, thread?: number): Promise<void> {
+  if (p.kind === 'day' && await sendDaily(d, chatId, p, thread)) return
+  await sendReport(d, chatId, await buildReport(d, p), thread)
 }
 
 const sentKey = (p: Period) => `report_sent:${p.kind}:${p.end.toISOString()}`
@@ -215,7 +225,7 @@ export async function sendDueReports(d: Daemon, now = new Date()): Promise<void>
     if (d.store.get(sentKey(p))) continue
     d.store.set(sentKey(p), '1')
     const to = await noticeTarget(d, 'reports')
-    if (to) await inChat(d, to.chat, to.thread, async () => sendReport(d, to.chat, await buildReport(d, p), to.thread)).catch(err => d.log(`report ${kind} failed: ${err}`))
+    if (to) await inChat(d, to.chat, to.thread, async () => sendPeriod(d, to.chat, p, to.thread)).catch(err => d.log(`report ${kind} failed: ${err}`))
   }
 }
 
@@ -266,6 +276,6 @@ export async function handleReportCallback(d: Daemon, ctx: Context, data: string
     return true
   }
   await ctx.answerCallbackQuery({ text: t('📨 Собираю отчёт…') }).catch(() => {})
-  await sendReport(d, String(ctx.chat!.id), await buildReport(d, lastPeriod(kind)))
+  await sendPeriod(d, String(ctx.chat!.id), lastPeriod(kind))
   return true
 }
