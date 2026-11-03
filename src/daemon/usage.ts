@@ -334,7 +334,7 @@ export function ownerOf(d: Daemon, cwd: string): string {
   return `📂 ${basename(cwd) || cwd}`
 }
 
-export type Share = { who: string; userId: string | null; cost: number; percent: number }
+export type Share = { who: string; userId: string | null; cost: number; tokens: number; percent: number }
 
 /**
  * Who spent the 5-hour window: API-price cost since the window began, by
@@ -350,21 +350,23 @@ export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = 
 }
 
 /** Cost by person since start; percent = scale × their part of the cost (scale 100: share of spending). */
-export function sharesSince(d: Daemon, entries: Entry[], start: number, scale = 100): Share[] {
-  const by = new Map<string, Share>()
+export function sharesSince(d: Daemon, entries: Entry[], start: number, scale = 100, by: 'cost' | 'tokens' = 'cost'): Share[] {
+  const groups = new Map<string, Share>()
   let total = 0
   for (const e of entries) {
     if (e.ts < start) continue
     const cost = costOf(e) ?? 0
+    const tokens = e.input + e.output + e.write5m + e.write1h + e.read
     const userId = /^(\d+)(\/|$)/.exec(relative(settings.usersDir, e.cwd))?.[1] ?? null
     const key = userId ?? 'projects'
-    const sh = by.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : tr('📂 проекты и главная'), userId, cost: 0, percent: 0 }
+    const sh = groups.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : tr('📂 проекты и главная'), userId, cost: 0, tokens: 0, percent: 0 }
     sh.cost += cost
-    total += cost
-    by.set(key, sh)
+    sh.tokens += tokens
+    total += by === 'cost' ? cost : tokens
+    groups.set(key, sh)
   }
   if (total <= 0) return []
-  return [...by.values()].map(sh => ({ ...sh, percent: scale * sh.cost / total })).sort((a, b) => b.cost - a.cost)
+  return [...groups.values()].map(sh => ({ ...sh, percent: scale * (by === 'cost' ? sh.cost : sh.tokens) / total })).sort((a, b) => by === 'cost' ? b.cost - a.cost : b.tokens - a.tokens)
 }
 
 /** The period of the «who spends», «by model» and «by session» sections of /usage, chosen with buttons. */
@@ -382,56 +384,22 @@ export function usagePeriod(d: Daemon): Period {
 export async function usageReport(d: Daemon, now = Date.now(), period: Period = usagePeriod(d)): Promise<string> {
   const oauth = readOAuth()
   const plan = planName(oauth)
-  // Codex (FR-16): from its own session logs; nothing when it was never used here.
+  // Codex (FR-16): from its own session logs; no section when it was never used here.
   const cx = collectCodex(now, 31)
-  const out: string[] = [tr('📊 <b>Подписка</b>: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })
-    + (cx.limits ? tr(' · Codex: {v}', { v: escapeHtml(cx.limits.plan ?? '?') }) : '')]
-  const limitLine = (l: Limit) => `${escapeHtml(tr(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`
-
   const limits = await fetchLimits(oauth)
-  const limitLines: string[] = []
-  if (typeof limits === 'string') out.push(tr('Лимиты: {v}', { v: escapeHtml(limits) }))
-  else {
-    limitLines.push(...limits.items.map(limitLine))
-    if (limits.breakdown) limitLines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
-  }
-  if (cx.limits?.items.length) {
-    const at = new Date(cx.limits.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
-    limitLines.push(...freshCodexLimits(cx.limits, now).map(limitLine), tr('<i>Codex — по последнему запросу, {at}</i>', { at }))
-  }
-  if (limitLines.length) out.push(`<blockquote>${limitLines.join('\n')}</blockquote>`)
-
-  const claudeEntries = collectEntries(now, 31)
-  const entries = [...claudeEntries, ...cx.entries]
+  const since = now - PERIOD_MS[period]
+  const name = tr(PERIOD_NAME[period])
+  const none = tr('ничего')
+  const limitLine = (l: Limit) => `${escapeHtml(shortLabel(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`
   const windows: [string, number][] = [[tr('5 часов'), 5 * 3600_000], [tr('Сутки'), 86_400_000], [tr('7 дней'), 7 * 86_400_000]]
   const sumOf = (list: Entry[], ms: number) => {
     const s: Sum = { tokens: 0, cost: 0, unpriced: 0 }
     for (const e of list) if (e.ts >= now - ms) add(s, e)
     return s
   }
-  const sums = windows.map(([label, ms]) => `${label}: ${fmtSum(sumOf(claudeEntries, ms))}`)
-  if (cx.entries.length) sums.push(tr('Codex — {v}', { v: windows.map(([label, ms]) => `${label.toLowerCase()}: ${fmtTokens(sumOf(cx.entries, ms))}`).join(', ') }))
-  out.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: sums.join('\n') }))
-  if (!entries.length) return out.join('\n\n')
-  const since = now - PERIOD_MS[period]
-  const name = tr(PERIOD_NAME[period])
-  // For 5 hours and a week the share is of the subscription window (its own start), otherwise of the spending.
-  const window = typeof limits === 'string' ? null : limits.items.find(l => l.label === (period === 'h5' ? LIMIT_LABELS.session : period === 'w' ? LIMIT_LABELS.weekly_all : ''))
-  const windowStart = window?.resetsAt ? window.resetsAt.getTime() - PERIOD_MS[period] : since
-  // Shares are of Claude's spending and window: Codex has no API price to compare by.
-  const shares = window ? sharesSince(d, claudeEntries, windowStart, window.percent) : sharesSince(d, claudeEntries, since)
-  if (shares.length) {
-    const head = window
-      ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(tr(window.label)), v2: Math.round(window.percent) })
-      : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
-    const line = (sh: Share) => window ? tr('{who}: ≈{p}% окна · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
-      : tr('{who}: {p}% расхода · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
-    out.push(`${head}\n<blockquote>${shares.map(line).join('\n')}</blockquote>`)
-  }
-
-  const group = (key: (e: Entry) => string) => {
+  const group = (list: Entry[], key: (e: Entry) => string) => {
     const m = new Map<string, Sum>()
-    for (const e of entries) {
+    for (const e of list) {
       if (e.ts < since) continue
       const k = key(e)
       const s = m.get(k) ?? { tokens: 0, cost: 0, unpriced: 0 }
@@ -440,16 +408,80 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
     }
     return [...m.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].tokens - a[1].tokens)
   }
-  const models = group(e => e.model.replace(/^claude-/, ''))
-  const owners = group(e => ownerOf(d, e.cwd))
-  const none = tr('ничего')
-  out.push(tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }))
-  out.push(tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }))
+  /** «По моделям» and «По сессиям» of one subscription, for the chosen period. */
+  const breakdown = (list: Entry[]) => {
+    if (!list.some(e => e.ts >= since)) return []
+    const models = group(list, e => e.model.replace(/^claude-/, ''))
+    const owners = group(list, e => ownerOf(d, e.cwd))
+    return [
+      tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
+      tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
+    ]
+  }
+
+  const out: string[] = [tr('📊 <b>Подписки и расход</b>')]
+
+  // --- Claude ---
+  const claude: string[] = [tr('🟠 <b>Claude</b> · подписка: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })]
+  if (typeof limits === 'string') claude.push(tr('Лимиты: {v}', { v: escapeHtml(limits) }))
+  else if (limits.items.length) {
+    const lines = limits.items.map(limitLine)
+    if (limits.breakdown) lines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
+    claude.push(`<blockquote>${lines.join('\n')}</blockquote>`)
+  }
+  const claudeEntries = collectEntries(now, 31)
+  claude.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: windows.map(([label, ms]) => `${label}: ${fmtSum(sumOf(claudeEntries, ms))}`).join('\n') }))
+  if (claudeEntries.length) {
+    // For 5 hours and a week the share is of the subscription window (its own start), otherwise of the spending.
+    const window = typeof limits === 'string' ? null : limits.items.find(l => l.label === (period === 'h5' ? LIMIT_LABELS.session : period === 'w' ? LIMIT_LABELS.weekly_all : ''))
+    const windowStart = window?.resetsAt ? window.resetsAt.getTime() - PERIOD_MS[period] : since
+    const shares = window ? sharesSince(d, claudeEntries, windowStart, window.percent) : sharesSince(d, claudeEntries, since)
+    if (shares.length) {
+      const head = window
+        ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(tr(window.label)), v2: Math.round(window.percent) })
+        : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
+      const line = (sh: Share) => window ? tr('{who}: ≈{p}% окна · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
+        : tr('{who}: {p}% расхода · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
+      claude.push(`${head}\n<blockquote>${shares.map(line).join('\n')}</blockquote>`)
+    }
+    claude.push(...breakdown(claudeEntries))
+  }
+  out.push(claude.join('\n\n'))
+
+  // --- Codex ---
+  if (cx.limits || cx.entries.length) {
+    const codex: string[] = [tr('⚫️ <b>Codex</b> · подписка: {v}', { v: escapeHtml(cx.limits?.plan ?? '?') })]
+    if (cx.limits?.items.length) {
+      const at = new Date(cx.limits.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+      codex.push(`<blockquote>${[...freshCodexLimits(cx.limits, now).map(limitLine), tr('<i>по последнему запросу, {at}</i>', { at })].join('\n')}</blockquote>`)
+    }
+    codex.push(tr('💸 <b>Потребление</b>, токены (цены API для Codex нет)\n<blockquote>{v}</blockquote>', { v: windows.map(([label, ms]) => `${label}: ${fmtTokens(sumOf(cx.entries, ms))}`).join('\n') }))
+    // Who spends, in tokens: Codex has no API price; for 5 hours and a week — of its own window.
+    const cxWindow = freshCodexLimits(cx.limits, now).find(l => l.label === (period === 'h5' ? k('Codex: 5 часов') : period === 'w' ? k('Codex: неделя') : ''))
+    const cxStart = cxWindow?.resetsAt ? cxWindow.resetsAt.getTime() - PERIOD_MS[period] : since
+    const cxShares = cxWindow?.resetsAt ? sharesSince(d, cx.entries, cxStart, cxWindow.percent, 'tokens') : sharesSince(d, cx.entries, since, 100, 'tokens')
+    if (cxShares.length) {
+      const head = cxWindow?.resetsAt
+        ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(shortLabel(cxWindow.label)), v2: Math.round(cxWindow.percent) })
+        : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
+      const line = (sh: Share) => cxWindow?.resetsAt ? tr('{who}: ≈{p}% окна · {v}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), v: tr('{v} ток.', { v: fmtTok(sh.tokens) }) })
+        : tr('{who}: {p}% токенов · {v}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), v: tr('{v} ток.', { v: fmtTok(sh.tokens) }) })
+      codex.push(`${head}\n<blockquote>${cxShares.map(line).join('\n')}</blockquote>`)
+    }
+    codex.push(...breakdown(cx.entries))
+    out.push(codex.join('\n\n'))
+  }
+
   const noModel = savedLine(d)
   if (noModel) out.push(noModel)
   if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>'))
   out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
   return out.join('\n\n')
+}
+
+/** A limit's name inside its subscription's section: «Codex: 5 часов» → «5 часов». */
+function shortLabel(label: string): string {
+  return tr(label).replace(/^Codex:\s*/, '')
 }
 
 // --------------------------------------------------------------------------
@@ -748,19 +780,29 @@ export function freshCodexLimits(l: CodexLimits | null, now = Date.now()): Limit
 
 export function limitsBlock(now = Date.now()): string | null {
   const l = lastLimits()
-  const codex = freshCodexLimits(collectCodex(now, 31).limits, now)
+  const cx = collectCodex(now, 31).limits
+  const codex = freshCodexLimits(cx, now)
   if (!l?.limits.items.length && !codex.length) return null
-  const items = [...(l?.limits.items ?? []), ...codex]
-  const lines = items.map(i => `${tr(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`)
-  if (l?.limits.breakdown) lines.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
-  return [tr('📊 Лимиты'), ...lines].join('\n')
+  const line = (i: Limit) => `${shortLabel(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`
+  const out = [tr('📊 Лимиты')]
+  if (l?.limits.items.length) {
+    const plan = planName(readOAuth())
+    out.push('', plan ? tr('🟠 Claude · {v}', { v: plan }) : '🟠 Claude', ...l.limits.items.map(line))
+    if (l.limits.breakdown) out.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
+  }
+  if (codex.length) {
+    const at = new Date(cx!.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+    out.push('', cx!.plan ? tr('⚫️ Codex · {v}', { v: cx!.plan }) : '⚫️ Codex', ...codex.map(line), tr('по последнему запросу, {at}', { at }))
+  }
+  return out.join('\n')
 }
 
 export function limitsLine(now = Date.now()): string | null {
-  const l = lastLimits()
-  const items = [...(l?.limits.items ?? []), ...freshCodexLimits(collectCodex(now, 31).limits, now)]
-  if (!items.length) return null
-  return '📊 ' + items.map(i => `${tr(i.label)} ${Math.round(i.percent)}%`).join(' · ')
+  const claude = lastLimits()?.limits.items ?? []
+  const codex = freshCodexLimits(collectCodex(now, 31).limits, now)
+  const part = (name: string, items: Limit[]) => `${name}: ` + items.map(i => `${shortLabel(i.label)} ${Math.round(i.percent)}%`).join(' · ')
+  const parts = [...(claude.length ? [part('Claude', claude)] : []), ...(codex.length ? [part('Codex', codex)] : [])]
+  return parts.length ? '📊 ' + parts.join(' │ ') : null
 }
 
 // --------------------------------------------------------------------------

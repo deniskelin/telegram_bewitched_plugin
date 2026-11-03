@@ -423,7 +423,7 @@ describe('topics', () => {
       const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊'))
       const text = String(r.body.text)
       expect(auth).toBe('Bearer tok')
-      expect(text).toContain('Подписка</b>: Max 20x')
+      expect(text).toContain('🟠 <b>Claude</b> · подписка: Max 20x')
       expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱')
       expect(text).toContain('Неделя: <b>7%</b>')
       expect(text).toContain('через 3 д')
@@ -625,12 +625,13 @@ describe('topics', () => {
         '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱',
         '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
       ])
-      expect(renderDashboard(d)).toContain('📊 5 часов 3%')
+      expect(renderDashboard(d)).toContain('📊 Claude: 5 часов 3%')
       // With a journal the status shows them as in /usage: percent, bar, reset.
       process.env.JOURNAL_CHAT_ID = '-5300'
       try {
         const status = renderDashboard(d)
         expect(status).toContain('📊 Лимиты')
+        expect(status).toContain('\n🟠 Claude')
         expect(status).toMatch(/5 часов: 3% ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
       } finally {
         delete process.env.JOURNAL_CHAT_ID
@@ -1185,11 +1186,22 @@ describe('topics', () => {
       { timestamp: at(50_000), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 30_000, cached_input_tokens: 20_000, output_tokens: 500 } }, rate_limits: rl } },
     ].map(x => JSON.stringify(x)).join('\n'))
     const text = await usageReport(d, now, 'd')
-    expect(text).toContain(' · Codex: plus')
-    expect(text).toContain('Codex: 5 часов: <b>12%</b>')
-    expect(text).toContain('Codex — 5 часов: 31 тыс. ток.')
-    expect(text).toContain('gpt-6.1-sol: 31 тыс. ток.')
-    expect(text).toContain('cxusage: 31 тыс. ток.')
+    // Its own section, after Claude's: plan, windows, tokens, models and sessions of Codex only.
+    const codex = text.slice(text.indexOf('⚫️ <b>Codex</b>'))
+    expect(text.indexOf('🟠 <b>Claude</b>')).toBeLessThan(text.indexOf('⚫️ <b>Codex</b>'))
+    expect(codex).toStartWith('⚫️ <b>Codex</b> · подписка: plus')
+    expect(codex).toContain('5 часов: <b>12%</b>')
+    expect(codex).toContain('по последнему запросу')
+    expect(codex).toContain('5 часов: 31 тыс. ток.')
+    expect(codex).toContain('gpt-6.1-sol: 31 тыс. ток.')
+    expect(codex).toContain('cxusage: 31 тыс. ток.')
+    // Who spends Codex: in tokens, not dollars.
+    expect(codex).toContain('👥 <b>Кто тратит</b>, сутки')
+    expect(codex).toContain('📂 проекты и главная: 100% токенов · 31 тыс. ток.')
+    expect(text.slice(0, text.indexOf('⚫️ <b>Codex</b>'))).not.toContain('gpt-6.1-sol')
+    const { limitsBlock, limitsLine } = await import('../src/daemon/usage.ts')
+    expect(limitsBlock(now)).toContain('⚫️ Codex · plus\n5 часов: 12%')
+    expect(limitsLine(now)).toContain('Codex: 5 часов 12% · неделя 4%')
   })
 
   test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
