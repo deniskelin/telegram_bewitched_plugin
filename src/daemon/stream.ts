@@ -17,6 +17,7 @@ import { clip, escapeHtml, fmtDuration, maskSecrets } from '../format.ts'
 import { editRich, isMessageNotModified, sendDraft } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { t } from '../i18n/index.ts'
+import { inChat } from './lang.ts'
 
 const MAX_LINES = 12
 const MAX_TEXT = 1500
@@ -64,6 +65,25 @@ export type ButtonStyle = 'primary' | 'success' | 'danger'
 /** Callback button with Bot API 9.4 `style` (unknown to the bundled grammY types). */
 export function button(text: string, data: string, style?: ButtonStyle, disabled = false) {
   return { text: clip(text, 64), callback_data: data, ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
+}
+
+const progressKey = (chatId: string, id: number) => `progress_msg:${chatId}:${id}`
+
+/**
+ * After a daemon start: progress messages of turns the previous daemon did
+ * not close (it restarted or crashed mid-turn) stop pretending to work — no
+ * ⏹, a line saying why. The session keeps working; its answer comes as a
+ * message of its own.
+ */
+export async function closeOrphanProgress(d: Daemon): Promise<void> {
+  for (const key of d.store.keys('progress_msg:')) {
+    d.store.set(key, null)
+    const m = /^progress_msg:(-?\d+):(\d+)$/.exec(key)
+    if (!m) continue
+    d.log(`progress message ${m[2]} in ${m[1]} left by the previous daemon, closing it`)
+    await inChat(d, m[1], undefined, () => d.bot.api.editMessageText(m[1], Number(m[2]), t('⚪️ Прогресс прервался: демон перезапускался. Ответ придёт отдельным сообщением.'), { reply_markup: { inline_keyboard: [] } }))
+      .catch(err => d.log(`orphan progress ${m[2]}: ${err}`))
+  }
 }
 
 export class Streams {
@@ -123,6 +143,8 @@ export class Streams {
         return
       }
       st.progressMsgId = msg.message_id
+      // Remembered until it is closed: a daemon restart mid-turn would leave it «⏳ Работаю…» with ⏹ for good.
+      this.d.store.set(progressKey(chatId, msg.message_id), s.id)
       st.lastFlush = Date.now()
       // Re-render periodically so the elapsed time ticks even without events.
       st.ticker = setInterval(() => {
@@ -235,6 +257,7 @@ export class Streams {
     if (prefsFor(st.chat.chatId, st.chat.threadId).streamFinal !== 'edit') return null
     const id = st.progressMsgId
     st.progressMsgId = null
+    this.d.store.set(progressKey(chatId, id), null)
     this.close(s, 'reply')
     return id
   }
@@ -256,6 +279,7 @@ export class Streams {
     if (st.chat.isPrivate || st.progressMsgId == null) return
     const { chatId } = st.chat
     const id = st.progressMsgId
+    this.d.store.set(progressKey(chatId, id), null)
     const took = fmtDuration(Date.now() - st.startedAt)
     if (reason === 'stopped') {
       void this.d.bot.api.editMessageText(chatId, id, t('⏹ Остановлено пользователем ({took})', { took })).catch(() => {})

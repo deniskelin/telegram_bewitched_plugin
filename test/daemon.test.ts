@@ -200,6 +200,16 @@ describe('topics', () => {
     expect(d.sessions.get(sessionId)!.topic?.name).toBe('proj')
   }, 15_000)
 
+  test('a progress message left by the previous daemon (restarted mid-turn) loses ⏹ and says why on the next start', async () => {
+    const { closeOrphanProgress } = await import('../src/daemon/stream.ts')
+    d.store.set(`progress_msg:${group}:4242`, 'dead')
+    await closeOrphanProgress(d)
+    const e = await tg.waitFor('editMessageText', c => c.body.message_id === 4242)
+    expect(String(e.body.text)).toStartWith('⚪️ Прогресс прервался: демон перезапускался')
+    expect(e.body.reply_markup).toEqual({ inline_keyboard: [] })
+    expect(d.store.get(`progress_msg:${group}:4242`)).toBeNull()
+  })
+
   test('message in the topic routes to the session; progress message + hook lines + delete on reply', async () => {
     const thread = d.sessions.get(sessionId)!.topic!.threadId
     tg.push(textMessage({ chat: Number(group), text: 'сделай тесты', thread }))
@@ -208,6 +218,9 @@ describe('topics', () => {
     expect(m.meta.topic_name).toBe('proj')
     const progress = await tg.waitFor('sendMessage', c => c.body.text === '⏳ Работаю… · 🔔1')
     expect(JSON.stringify(progress.body.reply_markup)).toContain(`stop:${sessionId}`)
+    // Remembered while open: a daemon restart mid-turn closes it on the next start.
+    for (let i = 0; i < 50 && !d.store.keys('progress_msg:').length; i++) await Bun.sleep(20)
+    expect(d.store.keys('progress_msg:').some(k => k.startsWith(`progress_msg:${group}:`))).toBe(true)
 
     const res = await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',
