@@ -12,6 +12,7 @@
  * notice says "stopped", not "crashed".
  */
 
+import { checkCodexApproval } from './codexapproval.ts'
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { statSync } from 'fs'
@@ -215,6 +216,8 @@ export async function checkQuestions(d: Daemon): Promise<void> {
     const pane = s.tmuxPane
     if (!pane || !/^%\d+$/.test(pane)) continue
     if ([...d.permissions.values()].some(p => p.sessionId === s.id)) continue
+    // Codex's approval requests get their own card with buttons (codexapproval.ts).
+    if (await checkCodexApproval(d, s)) continue
     const raw = await d.tmuxCapture(pane)
     const sig = raw && isQuestion(raw) ? questionSig(raw) : null
     if (!sig) {

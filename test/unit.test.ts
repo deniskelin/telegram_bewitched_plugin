@@ -656,3 +656,101 @@ describe('Codex usage', () => {
     expect(freshCodexLimits(l, at.getTime() + 1)[0]).toEqual({ label: 'Codex: 5 часов', percent: 0, resetsAt: null })
   })
 })
+
+describe('Codex seamless: handoff, approvals, conversations', () => {
+  const L = (o: unknown) => JSON.stringify(o)
+  test('claudeTurns: channel messages unwrapped, the resume digest skipped, reply tool text and plain text kept, sidechains dropped', async () => {
+    const { claudeTurns } = await import('../src/daemon/handoff.ts')
+    const text = [
+      L({ type: 'user', message: { role: 'user', content: '<channel source="x" event="session_resume" chat_id="1">\ndigest\n</channel>' } }),
+      L({ type: 'user', timestamp: '2026-11-03T10:00:00Z', message: { role: 'user', content: '<channel source="plugin:telegram" chat_id="1" user="den">\nпочини тесты\n</channel>' } }),
+      L({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Смотрю.' }, { type: 'tool_use', name: 'Bash', input: { command: 'ls' } }] } }),
+      L({ type: 'user', message: { role: 'user', content: [{ type: 'tool_result', content: 'x' }] } }),
+      L({ type: 'assistant', message: { role: 'assistant', content: [{ type: 'tool_use', name: 'mcp__plugin_telegram-bewitched_telegram__reply', input: { text: 'Готово, 3 теста.' } }] } }),
+      L({ type: 'assistant', isSidechain: true, message: { role: 'assistant', content: [{ type: 'text', text: 'subagent' }] } }),
+      L({ type: 'attachment', attachment: { type: 'queued_command', prompt: '<channel source="x" user="den">\nи ещё линтер\n</channel>' } }),
+    ].join('\n')
+    expect(claudeTurns(text)).toEqual([
+      { role: 'user', who: 'den', text: 'почини тесты', at: '2026-11-03T10:00:00Z' },
+      { role: 'assistant', text: 'Смотрю.', at: undefined },
+      { role: 'assistant', text: 'Готово, 3 теста.', at: undefined },
+      { role: 'user', who: 'den', text: 'и ещё линтер', at: undefined },
+    ])
+  })
+
+  test('codexTurns: user messages, reply tool calls, agent messages', async () => {
+    const { codexTurns } = await import('../src/daemon/handoff.ts')
+    const ev = (item: unknown) => L({ timestamp: 't', type: 'event_msg', payload: { type: 'item_completed', item } })
+    const text = [
+      ev({ type: 'UserMessage', content: [{ type: 'text', text: '<channel source="telegram-bewitched" user="den">\nсделай отчёт\n</channel>' }] }),
+      ev({ type: 'McpToolCall', server: 'telegram-bewitched', tool: 'reply', arguments: { text: 'Отчёт готов.' } }),
+      ev({ type: 'AgentMessage', content: [{ type: 'Text', text: '' }] }),
+      ev({ type: 'CommandExecution', command: ['ls'] }),
+    ].join('\n')
+    expect(codexTurns(text)).toEqual([
+      { role: 'user', who: 'den', text: 'сделай отчёт', at: 't' },
+      { role: 'assistant', text: 'Отчёт готов.', at: 't' },
+    ])
+  })
+
+  test('buildHandoff writes .telegram/handoff.md and a first message pointing to it', async () => {
+    const { mkdtempSync, writeFileSync, readFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { buildHandoff } = await import('../src/daemon/handoff.ts')
+    const dir = mkdtempSync(`${tmpdir()}/handoff-`)
+    writeFileSync(`${dir}/CLAUDE.md`, '# rules')
+    const tr = `${dir}/t.jsonl`
+    writeFileSync(tr, L({ type: 'user', message: { role: 'user', content: '<channel source="x" user="den">\nдобавь кэш\n</channel>' } }))
+    const s = { engine: 'claude', cwd: dir, claude: { sessionId: 'abc', transcript: tr } } as never
+    const h = await buildHandoff(s, 'codex', 'Лимит.')
+    expect(h.path).toBe(`${dir}/.telegram/handoff.md`)
+    const md = readFileSync(h.path, 'utf8')
+    expect(md).toStartWith('# Передача дел: Claude Code → Codex')
+    expect(md).toContain('Причина: Лимит.')
+    expect(md).toContain('**Пользователь (den)**\nдобавь кэш')
+    expect(h.message).toContain(h.path)
+    expect(h.message).toContain('«добавь кэш»')
+    expect(h.message).toContain('CLAUDE.md')
+  })
+
+  const screen = [
+    '• Running tests',
+    '',
+    '  Would you like to run the following command?',
+    '',
+    '  $ bun test --coverage',
+    '',
+    '› 1. Yes, just this once (y)',
+    '  2. Yes, and don\'t ask again for this command in this session (a)',
+    '  3. No, and tell Codex what to do differently (esc)',
+    '',
+    '  Press enter to confirm or esc to cancel',
+  ].join('\n')
+
+  test('parseApproval reads the request, its command and options; optionFor maps the buttons', async () => {
+    const { parseApproval, optionFor } = await import('../src/daemon/codexapproval.ts')
+    const a = parseApproval(screen)!
+    expect(a).toEqual({ kind: 'command', detail: '$ bun test --coverage', selected: 0, options: ['Yes, just this once', 'Yes, and don\'t ask again for this command in this session', 'No, and tell Codex what to do differently'] })
+    expect([optionFor(a, 'y'), optionFor(a, 'a'), optionFor(a, 'n')]).toEqual([0, 1, 2])
+    expect(parseApproval('› 1. Something else')).toBeNull()
+    expect(parseApproval('› ')).toBeNull()
+  })
+
+  test('listCodexConversations: rollouts of this folder only, newest first, with the first real prompt', async () => {
+    const { mkdirSync, writeFileSync, mkdtempSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { listCodexConversations } = await import('../src/daemon/transcript.ts')
+    const home = mkdtempSync(`${tmpdir()}/cxh-`)
+    const day = `${home}/sessions/2026/11/03`
+    mkdirSync(day, { recursive: true })
+    const roll = (id: string, cwd: string, prompt: string) => writeFileSync(`${day}/rollout-2026-11-03T10-00-${id}.jsonl`, [
+      L({ type: 'session_meta', payload: { id, cwd } }),
+      L({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ text: '<channel event="session_resume">x</channel>' }] } } }),
+      L({ type: 'event_msg', payload: { type: 'item_completed', item: { type: 'UserMessage', content: [{ text: `<channel user="den">\n${prompt}\n</channel>` }] } } }),
+    ].join('\n'))
+    roll('aaa-1', '/p/one', 'первый')
+    roll('bbb-2', '/p/two', 'чужой')
+    const list = await listCodexConversations('/p/one', 8, home)
+    expect(list.map(c => [c.id, c.prompt])).toEqual([['aaa-1', 'первый']])
+  })
+})

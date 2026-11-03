@@ -23,6 +23,7 @@ import { handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { idleRecord } from './autoresume.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
+import { handleCodexApprovalCallback } from './codexapproval.ts'
 import { journal, journalText, who } from './journal.ts'
 import { handleIdleCallback } from './idle.ts'
 import { handleShortcutCallback, withoutModel } from './shortcuts.ts'
@@ -618,6 +619,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleShortcutCallback(d, ctx, data)) return
     if (await handleVoiceForbiddenCallback(d, ctx, data)) return
     if (await handleWatchdogCallback(d, ctx, data)) return
+    if (await handleCodexApprovalCallback(d, ctx, data)) return
     if (await handleScreenCallback(d, ctx, data)) return
     if (await handleResetCallback(d, ctx, data)) return
     if (await handleTokensCallback(d, ctx, data)) return

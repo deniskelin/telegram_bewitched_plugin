@@ -151,6 +151,8 @@ export function writeCodexProfile(bun = process.execPath): string | null {
   const lines = [
     '# Written by the telegram-bewitched daemon on every start; edits are lost.',
     `developer_instructions = ${tomlString(CODEX_PREFACE + INSTRUCTIONS)}`,
+    // One project memory for both engines: without an AGENTS.md Codex reads the project's CLAUDE.md.
+    'project_doc_fallback_filenames = ["CLAUDE.md"]',
     '',
     '[mcp_servers.telegram-bewitched]',
     `command = ${tomlString(bun)}`,

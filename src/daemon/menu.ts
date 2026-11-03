@@ -17,10 +17,11 @@ import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLa
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
-import { listConversations, transcriptInfo } from './transcript.ts'
+import { listCodexConversations, listConversations, transcriptInfo, type Conversation } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, engineOf, projectEngine, setProjectEngine } from './engines.ts'
+import { buildHandoff, type Handoff } from './handoff.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -122,7 +123,7 @@ export async function sessionCommandScreen(d: Daemon, s: Session, cmd: 'clear' |
   if (cmd === 'clear') return (await controlAction(d, s, 'clr', undefined)).screen!
   if (cmd === 'model') return (await controlAction(d, s, 'mdl', undefined)).screen!
   const kb = new InlineKeyboard([[button(t('✅ Да, /compact'), `sm:cmp:${s.id}`, 'primary'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
-  return { text: t('Сжать разговор сессии #{id} ({v})? Claude перескажет его коротко, место в контексте освободится.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb }
+  return { text: t('Сжать разговор сессии #{id} ({v})? {engine} перескажет его коротко, место в контексте освободится.', { id: s.id, v: escapeHtml(projectTitle(s)), engine: engineOf(s.engine).name }), kb }
 }
 
 /** 🧠: the session's engine and its models; the chosen one goes in now (/model) and stays the project's (FR-15). */
@@ -146,7 +147,7 @@ function modelScreen(d: Daemon, s: Session): Screen {
     t('Для проекта: <b>{engine}</b> · модель <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
     '',
     switching
-      ? t('<i>«♻️ Переключить» закроет сессию и сразу запустит её на {engine} — подтверждать в терминале ничего не нужно. Разговор {running} сохранится: при возврате он продолжится.</i>', { running: engineOf(s.engine).name, engine: engine.name })
+      ? t('<i>«♻️ Переключить» закроет сессию и сразу запустит её на {engine} с передачей дел: {running} оставит последние реплики и состояние git в .telegram/handoff.md, {engine} продолжит с них. Подтверждать в терминале ничего не нужно.</i>', { running: engineOf(s.engine).name, engine: engine.name })
       : engine.liveModelSwitch
         ? t('<i>Модель меняется сразу командой <code>/model</code>, без перезапуска, и запоминается для проекта.</i>')
         : t('<i>{engine} меняет модель только перезапуском: после выбора предложу перезапустить с тем же разговором.</i>', { engine: engine.name }),
@@ -161,35 +162,49 @@ function modelScreen(d: Daemon, s: Session): Screen {
  * one that engine had in the folder), the startup prompt answered — the
  * owner asked for it with the button. Every step edits the menu message.
  */
-async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) => Promise<void>): Promise<void> {
+export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) => Promise<void>, o: { note?: string; after?: (n: Session) => Promise<void>; resume?: string } = {}): Promise<Session | null> {
   const choice = projectEngine(d, s.projectKey)
   const engine = engineOf(choice.engine)
   const same = engine.id === s.engine
   const back = new InlineKeyboard([[button(t('« Сессии'), 'sm:list')]])
+  const chat = s.lastChat ?? sessionTarget(d, s)
   d.log(`switch session ${s.id}: ${s.engine} → ${engine.id}${choice.model ? `/${choice.model}` : ''} (${s.cwd})`)
+  // Another engine: the work is handed over (handoff.ts) — gathered while the outgoing conversation is still known.
+  let handoff: Handoff | null = null
+  if (!same) {
+    handoff = await buildHandoff(s, engine.id, o.note).catch(err => { d.log(`handoff of ${s.id} failed: ${err}`); return null })
+    if (handoff) d.log(`handoff of ${s.id}: ${handoff.path}`)
+  }
   await edit({ text: t('♻️ Закрываю сессию #{id} ({engine})…', { id: s.id, engine: engineOf(s.engine).name }), kb: new InlineKeyboard() })
   const pane = s.tmuxPane
-  if (!endSession(d, s)) return edit({ text: t('Сессия не в tmux — перезапустите её сами.'), kb: back })
+  if (!endSession(d, s)) { await edit({ text: t('Сессия не в tmux — перезапустите её сами.'), kb: back }); return null }
   if (!(await waitGone(d, s.id, endTiming.checkMs * 2 + 10_000))) {
     d.ending.delete(s.id)
-    return edit({ text: t('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id: s.id }), kb: back })
+    await edit({ text: t('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id: s.id }), kb: back })
+    return null
   }
   await closeWindow(d, pane)
-  const conv = same && s.claude.sessionId ? { resume: s.claude.sessionId } : continueOptions(d, s.cwd, engine.id)
+  // Another engine starts a fresh conversation with the handoff: its own old thread would be stale next to it.
+  const conv = same && o.resume ? { resume: o.resume } : same && s.claude.sessionId ? { resume: s.claude.sessionId } : handoff ? {} : continueOptions(d, s.cwd, engine.id)
   const l = await launchOnce(d, s.cwd, { name: sessionName(d, s.projectKey, engine.id), ...conv }, false)
-  if (!l.ok) return edit({ text: l.skipped ? t('⏳ Сессия уже запускается.') : t('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }), kb: back })
+  if (!l.ok) { await edit({ text: l.skipped ? t('⏳ Сессия уже запускается.') : t('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }), kb: back }); return null }
   const where = escapeHtml(attachTarget(l.window))
   await edit({ text: t('🚀 Запускаю {engine} в tmux: окно {v}. Жду подключения…', { engine: engine.name, v: where }), kb: screenKb(l.window) })
   const r = await awaitConnect(d, s.cwd, l.window, { confirm: true })
   if (!r.ok) {
     const why = r.reason === 'gone' ? t('окно закрылось') : r.reason === 'stuck' ? t('на экране вопрос, на который я не отвечаю сам') : t('не подключилась за {n} с', { n: Math.round(r.ms / 1000) })
-    return edit({ text: t('⚠️ {engine} в окне {v} не подключился: {why}. Посмотрите экран.', { engine: engine.name, v: where, why }), kb: screenKb(l.window) })
+    await edit({ text: t('⚠️ {engine} в окне {v} не подключился: {why}. Посмотрите экран.', { engine: engine.name, v: where, why }), kb: screenKb(l.window) })
+    return null
   }
-  const kept = conv.resume || conv.continue ? t('разговор продолжается') : t('новый разговор')
+  // The new engine gets the handoff first: what was going on, where the full context is.
+  if (handoff && chat) d.deliver(r.session, handoff.message, { event: 'handoff', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }, chat)
+  const kept = handoff ? t('дела переданы: последние реплики и состояние git') : conv.resume || conv.continue ? t('разговор продолжается') : t('новый разговор')
   await edit({
     text: t('✅ Сессия #{id} работает на <b>{engine}</b>{model}: {kept}. Окно {v}. Можно писать.', { id: r.session.id, engine: engine.name, model: choice.model ? ` · ${escapeHtml(choice.model)}` : '', kept, v: where }),
     kb: new InlineKeyboard([[button(t('« К сессии'), `sm:s:${r.session.id}`), button(t('« Сессии'), 'sm:list')]]),
   })
+  if (o.after) await o.after(r.session).catch(err => d.log(`after switch of ${s.id} failed: ${err}`))
+  return r.session
 }
 
 /**
@@ -213,7 +228,7 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
     return { toast: t('↩️ Следующие запуски — на модели по умолчанию CLI'), screen: modelScreen(d, s) }
   }
   if (action === 'clr') {
-    const kb = new InlineKeyboard([[button(t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
+    const kb = new InlineKeyboard([[button(s.engine === 'codex' ? t('✅ Да, /new') : t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
     return { screen: { text: t('Очистить разговор сессии #{id} ({v})? Контекст начнётся заново, транскрипт останется для <code>--resume</code>.', { id: s.id, v: escapeHtml(projectTitle(s)) }), kb } }
   }
   if (s.turn || s.status !== 'idle') return { toast: t('Сессия работает — дождитесь конца хода или нажмите ⏹.') }
@@ -231,7 +246,8 @@ async function controlAction(d: Daemon, s: Session, action: string, value: strin
     ])
     return { toast: `🧠 ${model}`, screen: { text: t('🧠 {engine} меняет модель только перезапуском. Перезапустить сессию #{id} на <b>{model}</b>? Разговор продолжится.', { engine: engineOf(s.engine).name, id: s.id, model: escapeHtml(model) }), kb } }
   }
-  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? '/clear' : action === 'resume' ? `/resume ${value}` : `/model ${model}`
+  // Codex names a fresh conversation /new; /compact is the same in both.
+  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? (s.engine === 'codex' ? '/new' : '/clear') : action === 'resume' ? `/resume ${value}` : `/model ${model}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
   try {
     await d.tmuxType(s.tmuxPane, line)
@@ -252,10 +268,18 @@ function when(ms: number): string {
   return new Date(ms).toLocaleString(locale(), { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })
 }
 
+/** The folder's conversations of the session's engine: Claude's transcripts or Codex's rollouts. */
+function conversationsOf(s: Session, limit = 8): Promise<Conversation[]> {
+  return s.engine === 'codex' ? listCodexConversations(s.cwd, limit) : listConversations(s.cwd, limit)
+}
+
 /** 🕘 The project's conversations, newest first; the current one is marked. */
 async function historyScreen(s: Session): Promise<Screen> {
-  const list = await listConversations(s.cwd)
-  const lines = [t('🕘 <b>Разговоры</b> · {v}', { v: escapeHtml(projectTitle(s)) }), t('Выбранный продолжится в этой же сессии командой <code>/resume</code> — без перезапуска.'), '']
+  const list = await conversationsOf(s)
+  const how = s.engine === 'codex'
+    ? t('Выбранный продолжится перезапуском сессии с ним (Codex не переключает разговор на ходу).')
+    : t('Выбранный продолжится в этой же сессии командой <code>/resume</code> — без перезапуска.')
+  const lines = [t('🕘 <b>Разговоры</b> · {v}', { v: escapeHtml(projectTitle(s)) }), how, '']
   const rows: Btn[][] = []
   for (const c of list) {
     const current = c.id === s.claude.sessionId
@@ -348,12 +372,19 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   if (action === 'rs' || action === 'rsok') {
-    const c = (await listConversations(s.cwd, 200)).find(x => dashless(x.id) === value)
+    const c = (await conversationsOf(s, 200)).find(x => dashless(x.id) === value)
     if (!c) { await answer(t('Разговор не найден.')); return true }
     if (action === 'rs') {
       await answer()
       const kb = new InlineKeyboard([[button(t('🕘 Да, продолжить его'), `sm:rsok:${s.id}:${value}`, 'primary'), button(t('Отмена'), `sm:hist:${s.id}`)]])
       await show(ctx, { text: t('Продолжить разговор от {v} в сессии #{id}?\n\n<i>{v2}</i>\n\nТекущий разговор сохранится — вернуться к нему можно так же.', { v: when(c.mtime), id: s.id, v2: escapeHtml(clip(c.prompt || t('(без текста)'), 300)) }), kb })
+      return true
+    }
+    // Codex has no /resume <id>: the session starts again with that conversation.
+    if (s.engine === 'codex') {
+      await answer(t('♻️ Перезапускаю с этим разговором'))
+      void switchSession(d, s, sc => show(ctx, sc).catch(err => d.log(`resume screen failed: ${err}`)), { resume: c.id })
+        .catch(err => d.log(`codex resume of ${s.id} failed: ${err}`))
       return true
     }
     const r = await controlAction(d, s, 'resume', c.id)

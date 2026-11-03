@@ -1214,6 +1214,25 @@ describe('topics', () => {
     const { limitsBlock, limitsLine } = await import('../src/daemon/usage.ts')
     expect(limitsBlock(now)).toContain('⚫️ Codex · plus\n5 часов: 12%')
     expect(limitsLine(now)).toContain('Codex: 5 часов 12% · неделя 4%')
+    // The turn's cost of a Codex session: from its rollouts, tokens and cache, no $.
+    const { turnCostLine, turnCostBlock, sessionCostLine } = await import('../src/daemon/usage.ts')
+    const cx = { engine: 'codex', cwd: '/tmp/cxusage', projectKey: '/tmp/cxusage' } as never
+    expect(turnCostLine(cx, now - 120_000, now)).toBe('🔢 Ход: 31 тыс. ток. · кэш 66%')
+    expect(turnCostBlock(cx, now - 120_000, now)).not.toContain('В ценах API')
+    expect(sessionCostLine(cx, now)).toBe('💸 сегодня 31 тыс. ток. (Codex)')
+    // Codex's windows cross the alert thresholds too (85% ≥ 80).
+    writeFileSync(join(dir, 'rollout-alert.jsonl'), [
+      { timestamp: at(30_000), type: 'session_meta', payload: { cwd: '/tmp/cxusage' } },
+      { timestamp: at(20_000), type: 'event_msg', payload: { type: 'token_count', info: null, rate_limits: { ...rl, primary: { ...rl.primary, used_percent: 85 } } } },
+    ].map(x => JSON.stringify(x)).join('\n'))
+    const { checkLimits } = await import('../src/daemon/usage.ts')
+    process.env.USAGE_API_URL = 'http://127.0.0.1:9/'
+    try {
+      await checkLimits(d, Date.now())
+    } finally {
+      delete process.env.USAGE_API_URL
+    }
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⚠️ Лимит «Codex: 5 часов»: <b>85%</b>'))
   })
 
   test('a message with no sign of life: «не берёт сообщение» once; ♻️ ends the session (/exit, then Ctrl-C) and starts it again', async () => {
@@ -2495,7 +2514,7 @@ describe('session types', () => {
     }
   })
 
-  test('♻️ engine switch from 🧠: closed, its window closed, started as codex-project-… with the last Codex conversation, the menu follows each step', async () => {
+  test('♻️ engine switch from 🧠: closed, its window closed, started as codex-project-… fresh, with the handoff (.telegram/handoff.md + first message); the menu follows each step', async () => {
     const { mkdirSync } = await import('fs')
     const { setProjectEngine } = await import('../src/daemon/engines.ts')
     const { connectTiming, endTiming } = await import('../src/daemon/launch.ts')
@@ -2506,9 +2525,10 @@ describe('session types', () => {
     try {
       await p.connect({ cwd: '/tmp/sw', projectRoot: '/tmp/sw', claudePid: 8181, tmuxPane: '%81' })
       const s = [...d.sessions.values()].find(x => x.claudePid === 8181)!
-      d.tmuxCapture = async () => '❯ '
+      const typed: string[] = []
+      d.tmuxCapture = async () => '❯ \n› '
       d.tmuxKeys = async () => {}
-      d.tmuxType = async (_t, text) => { if (text === '/exit') p.close() }
+      d.tmuxType = async (_t, text) => { typed.push(text); if (text === '/exit') p.close() }
       d.tmuxPaneId = async () => null
       setProjectEngine(d, '/tmp/sw', { engine: 'codex' })
       d.store.set('last_conv:codex:/tmp/sw', 'thr-sw-1')
@@ -2518,16 +2538,113 @@ describe('session types', () => {
       tg.push(callbackQuery(`sm:engre:${s.id}`))
       await tg.waitFor('answerCallbackQuery', c => c.body.text === '♻️ Перезапускаю')
       await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю Codex в tmux'))
-      expect(calls.at(-1)).toEqual({ dir: '/tmp/sw', o: { name: 'codex-project-sw', resume: 'thr-sw-1' } })
+      // Another engine starts fresh: its own old thread (thr-sw-1) would be stale next to the handoff.
+      expect(calls.at(-1)).toEqual({ dir: '/tmp/sw', o: { name: 'codex-project-sw' } })
+      const { readFileSync } = await import('fs')
+      expect(readFileSync('/tmp/sw/.telegram/handoff.md', 'utf8')).toStartWith('# Передача дел: Claude Code → Codex')
       const q = new FakeClient()
       await q.connect({ cwd: '/tmp/sw', projectRoot: '/tmp/sw', claudePid: 8182, tmuxPane: '%82', engine: 'codex' })
       const done = await tg.waitFor('editMessageText', c => String(c.body.text).includes('работает на <b>Codex</b>'))
-      expect(String(done.body.text)).toContain('разговор продолжается')
+      expect(String(done.body.text)).toContain('дела переданы')
+      // The first message to Codex: the handoff, pointing to the file.
+      const deadline = Date.now() + 3000
+      while (!typed.some(x => x.includes('[Передача дел')) && Date.now() < deadline) await Bun.sleep(20)
+      const first = typed.find(x => x.includes('[Передача дел'))!
+      expect(first).toContain('event="handoff"')
+      expect(first).toContain('/tmp/sw/.telegram/handoff.md')
       q.close()
     } finally {
       Object.assign(d, { tmuxCapture: saved.capture, tmuxType: saved.type, tmuxKeys: saved.keys, tmuxPaneId: saved.pane })
       connectTiming.pollMs = saved.poll
       endTiming.checkMs = saved.ms
+    }
+  })
+
+  test('Codex asks in its window: a card with buttons goes to the chat once; ♾ moves the selection and presses Enter', async () => {
+    const { checkCodexApproval } = await import('../src/daemon/codexapproval.ts')
+    const saved = { capture: d.tmuxCapture, keys: d.tmuxKeys }
+    const q = new FakeClient()
+    try {
+      await q.connect({ cwd: '/tmp/cxa', projectRoot: '/tmp/cxa', claudePid: 8191, tmuxPane: '%91', engine: 'codex' })
+      const s = [...d.sessions.values()].find(x => x.claudePid === 8191)!
+      s.lastChat = { chatId: '111', isPrivate: true }
+      let screen = ['  Would you like to run the following command?', '', '  $ rm -rf build', '', '› 1. Yes, just this once (y)', "  2. Yes, and don't ask again for this command in this session (a)", '  3. No, and tell Codex what to do differently (esc)'].join('\n')
+      const keys: string[][] = []
+      d.tmuxCapture = async () => screen
+      d.tmuxKeys = async (_t, k) => { keys.push(k) }
+      expect(await checkCodexApproval(d, s)).toBe(true)
+      const card = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith(`🔐 Codex (#${s.id}) просит запустить команду:`))
+      expect(String(card.body.text)).toContain('$ rm -rf build')
+      expect(JSON.stringify(card.body.reply_markup)).toContain(`"callback_data":"cxa:a:${s.id}"`)
+      // The same request is not sent twice.
+      const n = tg.callsOf('sendMessage').length
+      await checkCodexApproval(d, s)
+      expect(tg.callsOf('sendMessage').length).toBe(n)
+      tg.push(callbackQuery(`cxa:a:${s.id}`))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '♾ Разрешено до конца сессии')
+      expect(keys).toEqual([['Down', 'Enter']])
+      // Closed meanwhile: nothing is pressed.
+      screen = '› '
+      tg.push(callbackQuery(`cxa:y:${s.id}`))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Запрос уже закрыт.')
+      expect(keys.length).toBe(1)
+    } finally {
+      Object.assign(d, { tmuxCapture: saved.capture, tmuxKeys: saved.keys })
+      q.close()
+    }
+  })
+
+  test('FR-18: out of Claude tokens → «🔀 Продолжить на Codex до сброса»; the tap hands the work and the held messages to Codex; at the reset — the way back', async () => {
+    const { mkdirSync } = await import('fs')
+    const { onLimitFailure, holdIfPaused, release, fallbackOf } = await import('../src/daemon/outoftokens.ts')
+    const { projectEngine } = await import('../src/daemon/engines.ts')
+    const { connectTiming } = await import('../src/daemon/launch.ts')
+    mkdirSync('/tmp/fb', { recursive: true })
+    const saved = { capture: d.tmuxCapture, type: d.tmuxType, keys: d.tmuxKeys, pane: d.tmuxPaneId, poll: connectTiming.pollMs }
+    connectTiming.pollMs = 20
+    const p = new FakeClient()
+    const typed: string[] = []
+    try {
+      await p.connect({ cwd: '/tmp/fb', projectRoot: '/tmp/fb', claudePid: 8201, tmuxPane: '%92' })
+      const s = [...d.sessions.values()].find(x => x.claudePid === 8201)!
+      s.lastChat = { chatId: '111', isPrivate: true }
+      d.tmuxCapture = async () => '❯ \n› '
+      d.tmuxKeys = async () => {}
+      d.tmuxType = async (_t, text) => { typed.push(text); if (text === '/exit') p.close() }
+      d.tmuxPaneId = async () => null
+      await onLimitFailure(d, s, '', "You've hit your usage limit · resets 11pm")
+      const pause = await tg.waitFor('sendMessage', c => String(c.body.chat_id) === '111' && String(c.body.text).startsWith('⏸ Закончились токены подписки Claude.'))
+      expect(JSON.stringify(pause.body.reply_markup)).toContain(`"🔀 Продолжить на Codex до сброса","callback_data":"tok:cx:${s.id}"`)
+      expect(holdIfPaused(d, s, 'а это пока сделай', { chat_id: '111', message_id: '5', user: 'den', user_id: '111' }, { chatId: '111', isPrivate: true })).toBe(true)
+
+      const mark = tg.calls.length
+      const after = (c: { method: string }) => tg.calls.indexOf(c as never) >= mark
+      tg.push(callbackQuery(`tok:cx:${s.id}`))
+      await tg.waitFor('editMessageText', c => after(c) && String(c.body.text).startsWith('🚀 Запускаю Codex в tmux'))
+      expect(projectEngine(d, '/tmp/fb').engine).toBe('codex')
+      expect(fallbackOf(d, '/tmp/fb')?.engine).toBe('claude')
+      const q = new FakeClient()
+      await q.connect({ cwd: '/tmp/fb', projectRoot: '/tmp/fb', claudePid: 8202, tmuxPane: '%93', engine: 'codex' })
+      await tg.waitFor('editMessageText', c => after(c) && String(c.body.text).includes('работает на <b>Codex</b>'))
+      const deadline = Date.now() + 3000
+      while (!typed.some(x => x.includes('а это пока сделай')) && Date.now() < deadline) await Bun.sleep(20)
+      expect(typed.find(x => x.includes('[Передача дел'))).toContain('У Claude закончился лимит')
+      expect(typed.some(x => x.includes('а это пока сделай'))).toBe(true)
+      await tg.waitFor('sendMessage', c => String(c.body.text) === '🔀 Отвечает Codex — записанное (1).')
+
+      // The reset: the pause goes, the project on Codex is offered the way back.
+      await release(d)
+      const offer = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('▶️ Лимит Claude восстановился. Сессия #'))
+      expect(JSON.stringify(offer.body.reply_markup)).toContain('tok:back:')
+      tg.push(callbackQuery(String(JSON.stringify(offer.body.reply_markup)).match(/tok:stay:[0-9a-f]+/)![0]))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Остаётся на Codex')
+      expect(fallbackOf(d, '/tmp/fb')).toBeNull()
+      q.close()
+    } finally {
+      Object.assign(d, { tmuxCapture: saved.capture, tmuxType: saved.type, tmuxKeys: saved.keys, tmuxPaneId: saved.pane })
+      connectTiming.pollMs = saved.poll
+      d.store.set('tokens_pause', null)
+      d.store.set('engine:/tmp/fb', null)
     }
   })
 

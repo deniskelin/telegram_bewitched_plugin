@@ -6,6 +6,7 @@
 
 import { readdirSync, statSync } from 'fs'
 import { open } from 'fs/promises'
+import { homedir } from 'os'
 import { join } from 'path'
 import { CONFIG_DIR } from '../config.ts'
 
@@ -149,4 +150,48 @@ export async function listConversations(cwd: string, limit = 8, configDir = CONF
     const path = join(dir, f)
     return { id: f.slice(0, -'.jsonl'.length), path, mtime: st.mtimeMs, size: st.size, prompt: await firstPrompt(path).catch(() => '') }
   }))
+}
+
+/** Codex's conversations of a folder (rollouts under $CODEX_HOME/sessions whose session_meta names it), newest first. */
+export async function listCodexConversations(cwd: string, limit = 8, home = process.env.CODEX_HOME ?? join(homedir(), '.codex')): Promise<Conversation[]> {
+  const files: string[] = []
+  const walk = (dir: string, depth: number) => {
+    let names: string[]
+    try { names = readdirSync(dir) } catch { return }
+    for (const n of names) {
+      const p = join(dir, n)
+      if (depth < 3) { if (/^\d+$/.test(n)) walk(p, depth + 1) } else if (/^rollout-.+\.jsonl$/.test(n)) files.push(p)
+    }
+  }
+  walk(join(home, 'sessions'), 0)
+  const out: Conversation[] = []
+  // Newest first by name (rollout-<time>-<id>); stop once enough match the folder.
+  for (const path of files.sort().reverse()) {
+    if (out.length >= limit) break
+    const fh = await open(path, 'r').catch(() => null)
+    if (!fh) continue
+    try {
+      const buf = Buffer.alloc(256 * 1024)
+      const { bytesRead } = await fh.read(buf, 0, buf.length, 0)
+      let id = '', here = false, prompt = ''
+      for (const line of buf.subarray(0, bytesRead).toString('utf8').split('\n')) {
+        const m = parse(line) as { type?: string; payload?: { type?: string; id?: string; cwd?: string; item?: { type?: string; content?: { text?: string }[] } } } | null
+        if (!m) continue
+        if (m.type === 'session_meta') { id = m.payload?.id ?? ''; here = m.payload?.cwd === cwd; if (!here) break }
+        else if (m.type === 'event_msg' && m.payload?.type === 'item_completed' && m.payload.item?.type === 'UserMessage') {
+          const text = (m.payload.item.content ?? []).map(c => c.text ?? '').join(' ')
+          if (/^<channel[^>]*event="session_resume"/.test(text)) continue
+          prompt = text.replace(/^<channel[^>]*>\s*/, '').replace(/<\/channel>\s*$/, '').replace(/\s+/g, ' ').trim()
+          if (prompt) break
+        }
+      }
+      if (here && /^[\w-]+$/.test(id)) {
+        const st = statSync(path)
+        out.push({ id, path, mtime: st.mtimeMs, size: st.size, prompt })
+      }
+    } finally {
+      await fh.close()
+    }
+  }
+  return out.sort((a, b) => b.mtime - a.mtime)
 }
