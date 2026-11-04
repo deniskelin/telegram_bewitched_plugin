@@ -156,9 +156,18 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
 
   if (args.buttons != null) {
     const opts = parseOptions(args.buttons)
-    const q = await withTopicRetry(d, s, c, cc => postQuestion(d, s, cc, text, opts, { replyTo }))
-    recordOut(d, c, q.messageId, text)
-    const ids = [q.messageId, ...(await sendFiles(d, c, files, replyTo))]
+    // format="rich" with buttons: the earlier parts of a long answer first, the buttons under the last one.
+    const lead: number[] = []
+    const last = format === 'rich' ? post.parts.at(-1) : undefined
+    if (format === 'rich') {
+      for (const part of post.parts.slice(0, -1)) {
+        const id = await sendRich(d.bot, c.chatId, part, threadOpt(c)).catch(() => null)
+        if (id != null) { lead.push(id); recordOut(d, c, id, part) }
+      }
+    }
+    const q = await withTopicRetry(d, s, c, cc => postQuestion(d, s, cc, text, opts, { replyTo, ...(last ? { rich: last } : {}) }))
+    recordOut(d, c, q.messageId, last ?? text)
+    const ids = [...lead, q.messageId, ...(await sendFiles(d, c, files, replyTo))]
     finishReply(d, s, c)
     return `${idsResult(ids)}; question_id: ${q.id}`
   }

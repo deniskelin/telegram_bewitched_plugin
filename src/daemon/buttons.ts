@@ -12,6 +12,7 @@ import { clip, safeMeta } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { button, type ButtonStyle } from './stream.ts'
 import { t } from '../i18n/index.ts'
+import { isThreadNotFound, sendRich } from '../tg.ts'
 
 export type Option = { label: string; value?: string; style?: ButtonStyle }
 
@@ -55,7 +56,7 @@ export async function postQuestion(
   chat: { chatId: string; threadId?: number },
   text: string,
   opts: Option[],
-  o: { multi?: boolean; timeoutMin?: number; replyTo?: number },
+  o: { multi?: boolean; timeoutMin?: number; replyTo?: number; rich?: string },
 ): Promise<{ id: string; messageId: number }> {
   const id = randomBytes(4).toString('hex')
   const row: QuestionRow = {
@@ -74,11 +75,23 @@ export async function postQuestion(
     closed: 0,
   }
   d.store.addQuestion(row)
-  const sent = await d.bot.api.sendMessage(chat.chatId, text, {
+  const extra = {
     ...(chat.threadId != null ? { message_thread_id: chat.threadId } : {}),
     ...(o.replyTo != null ? { reply_parameters: { message_id: o.replyTo } } : {}),
     reply_markup: keyboard(row, opts, [], false),
-  })
+  }
+  // format="rich": the question is a rich message too (tables, custom emoji); plain text if that fails.
+  if (o.rich) {
+    try {
+      const messageId = await sendRich(d.bot, chat.chatId, o.rich, extra)
+      d.store.updateQuestion(id, { message_id: messageId })
+      return { id, messageId }
+    } catch (err) {
+      if (isThreadNotFound(err)) throw err
+      d.log(`rich question failed, sending text: ${err}`)
+    }
+  }
+  const sent = await d.bot.api.sendMessage(chat.chatId, text, extra)
   d.store.updateQuestion(id, { message_id: sent.message_id })
   return { id, messageId: sent.message_id }
 }
