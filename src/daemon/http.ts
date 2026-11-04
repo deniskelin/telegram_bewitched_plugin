@@ -56,7 +56,7 @@ function touchTurn(s: Session, prompt = false): void {
   if (prompt) s.stoppedAt = null
   s.lastActivity = Date.now()
   if (s.stoppedAt) return
-  if (!s.turn) { s.turn = { start: Date.now(), replied: false }; turnStarted(s) }
+  if (!s.turn) { s.turn = { start: Date.now(), replied: false, ...(prompt ? {} : { byHook: true }) }; turnStarted(s) }
   if (s.status === 'idle') s.status = 'working'
 }
 
@@ -84,8 +84,14 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     if (h.event !== 'MessageDisplay') d.log(`hook ${h.event} of an ended turn ignored: session ${s.id}`)
     return
   }
+  // A tool call of a background agent (Claude Code's own work after a turn, a subagent left running) between turns:
+  // the session is not working for anyone — it opens no turn.
+  if (!s.turn && typeof data.agent_id === 'string' && (h.event === 'PreToolUse' || h.event === 'PostToolUseFailure')) {
+    d.log(`hook ${h.event}: session ${s.id}, ${String(data.tool_name ?? '?')} of agent ${String(data.agent_type ?? data.agent_id)} between turns, ignored`)
+    return
+  }
   // A turn opened without a prompt (begun in the terminal, or a daemon restart mid-turn): worth a line when the status looks wrong.
-  if (!s.turn && !s.stoppedAt && (h.event === 'PreToolUse' || h.event === 'MessageDisplay')) d.log(`hook ${h.event}: session ${s.id} (${s.engine}) opens a turn`)
+  if (!s.turn && !s.stoppedAt && (h.event === 'PreToolUse' || h.event === 'MessageDisplay')) d.log(`hook ${h.event}: session ${s.id} (${s.engine}) opens a turn${data.tool_name ? ` (${String(data.tool_name)})` : ''}`)
   if (h.event === 'SessionStart' || h.event === 'UserPromptSubmit' || h.event === 'Stop') d.log(`hook ${h.event}: session ${s.id} (${s.engine})${s.status !== 'idle' ? ` ${s.status}` : ''}`)
   switch (h.event) {
     case 'UserPromptSubmit':

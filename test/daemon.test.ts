@@ -878,6 +878,37 @@ describe('topics', () => {
     expect(c.body.message_thread_id).toBe(d.sessions.get(sessionId)!.topic!.threadId)
   })
 
+  test('between turns: a background agent\'s tool call opens no turn; a tool-opened turn that goes quiet with an idle screen ends', async () => {
+    const s = d.sessions.get(sessionId)!
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data, at: Date.now() }),
+    })
+    await hook('Stop', {})
+    await Bun.sleep(5)
+    await hook('PreToolUse', { tool_name: 'Write', tool_input: { file_path: '/x/memory.md' }, agent_id: 'a1', agent_type: 'memory' })
+    expect(s.turn).toBeNull()
+    await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
+    expect(s.turn?.byHook).toBe(true)
+    const { closePhantomTurns } = await import('../src/daemon/watchdog.ts')
+    const saved = { capture: d.tmuxCapture, pane: s.tmuxPane }
+    s.tmuxPane = s.tmuxPane ?? '%77'
+    try {
+      d.tmuxCapture = async () => '✻ Reading… (esc to interrupt)'
+      await closePhantomTurns(d, Date.now() + 61_000)
+      expect(s.turn).not.toBeNull()
+      d.tmuxCapture = async () => '> \n  ? for shortcuts'
+      await closePhantomTurns(d, Date.now() + 10_000)
+      expect(s.turn).not.toBeNull()
+      await closePhantomTurns(d, Date.now() + 61_000)
+      expect(s.turn).toBeNull()
+      expect(s.status).toBe('idle')
+    } finally {
+      d.tmuxCapture = saved.capture
+      s.tmuxPane = saved.pane
+    }
+  })
+
   test('FR-1: the answer streams as it is written and reply(use_last_message) sends it; narration before tools is not the answer', async () => {
     const thread = d.sessions.get(sessionId)!.topic!.threadId
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
