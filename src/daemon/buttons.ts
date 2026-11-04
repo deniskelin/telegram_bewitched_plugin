@@ -34,7 +34,16 @@ export function parseOptions(raw: unknown): Option[] {
   return opts
 }
 
-function keyboard(q: Pick<QuestionRow, 'id' | 'multi'>, opts: Option[], chosen: number[], closed: boolean): InlineKeyboard {
+/** 📋 copy buttons under a question (reply with both buttons and copy): kept by id, so every redraw has them. */
+type CopyButton = { label: string; text: string }
+const copiesKey = (id: string) => `qcopy:${id}`
+function copyRows(d: Daemon, id: string): { text: string; copy_text: { text: string } }[][] {
+  try {
+    return (JSON.parse(d.store.get(copiesKey(id)) ?? '[]') as CopyButton[]).map(c => [{ text: c.label, copy_text: { text: c.text } }])
+  } catch { return [] }
+}
+
+function keyboard(q: Pick<QuestionRow, 'id' | 'multi'>, opts: Option[], chosen: number[], closed: boolean, extra: unknown[][] = []): InlineKeyboard {
   const short = opts.every(o => o.label.length <= 12)
   const rows: ReturnType<typeof button>[][] = []
   opts.forEach((o, i) => {
@@ -47,7 +56,7 @@ function keyboard(q: Pick<QuestionRow, 'id' | 'multi'>, opts: Option[], chosen: 
     else rows.push([b])
   })
   if (q.multi && !closed) rows.push([button(t('Готово'), `q:${q.id}:done`, 'primary')])
-  return new InlineKeyboard(rows)
+  return new InlineKeyboard([...rows, ...extra] as never)
 }
 
 export async function postQuestion(
@@ -56,7 +65,7 @@ export async function postQuestion(
   chat: { chatId: string; threadId?: number },
   text: string,
   opts: Option[],
-  o: { multi?: boolean; timeoutMin?: number; replyTo?: number; rich?: string },
+  o: { multi?: boolean; timeoutMin?: number; replyTo?: number; rich?: string; copies?: CopyButton[] },
 ): Promise<{ id: string; messageId: number }> {
   const id = randomBytes(4).toString('hex')
   const row: QuestionRow = {
@@ -75,10 +84,11 @@ export async function postQuestion(
     closed: 0,
   }
   d.store.addQuestion(row)
+  if (o.copies?.length) d.store.set(copiesKey(id), JSON.stringify(o.copies))
   const extra = {
     ...(chat.threadId != null ? { message_thread_id: chat.threadId } : {}),
     ...(o.replyTo != null ? { reply_parameters: { message_id: o.replyTo } } : {}),
-    reply_markup: keyboard(row, opts, [], false),
+    reply_markup: keyboard(row, opts, [], false, copyRows(d, id)),
   }
   // format="rich": the question is a rich message too (tables, custom emoji); plain text if that fails.
   if (o.rich) {
@@ -101,7 +111,7 @@ async function finalize(d: Daemon, q: QuestionRow, chosen: number[], note?: stri
   if (q.message_id == null) return
   const opts = JSON.parse(q.options) as Option[]
   try {
-    await d.bot.api.editMessageReplyMarkup(q.chat_id, q.message_id, { reply_markup: keyboard(q, opts, chosen, true) })
+    await d.bot.api.editMessageReplyMarkup(q.chat_id, q.message_id, { reply_markup: keyboard(q, opts, chosen, true, copyRows(d, q.id)) })
   } catch {
     const picked = chosen.map(i => opts[i]?.label).filter(Boolean).join(', ')
     await d.bot.api.editMessageText(q.chat_id, q.message_id, `${q.text}\n\n${note ?? `✅ ${picked}`}`).catch(() => {})
@@ -158,7 +168,7 @@ export async function handleQuestionCallback(d: Daemon, ctx: Context, data: stri
     if (q.multi) {
       chosen = chosen.includes(idx) ? chosen.filter(i => i !== idx) : [...chosen, idx].sort((a, b) => a - b)
       d.store.updateQuestion(q.id, { chosen: JSON.stringify(chosen) })
-      await ctx.editMessageReplyMarkup({ reply_markup: keyboard(q, opts, chosen, false) }).catch(() => {})
+      await ctx.editMessageReplyMarkup({ reply_markup: keyboard(q, opts, chosen, false, copyRows(d, q.id)) }).catch(() => {})
       return void ctx.answerCallbackQuery().catch(() => {})
     }
     chosen = [idx]
