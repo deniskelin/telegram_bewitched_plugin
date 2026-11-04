@@ -207,9 +207,10 @@ function reportTurnCost(d: Daemon, s: Session, start: number, changes: TurnChang
     const a = s.lastAnswer
     if (a && a.chatId === target.chatId && a.at >= start - 1000) {
       try {
+        // The answer's own buttons (📋 copy) go with the edit: without them Telegram drops the keyboard.
         await editRich(d.bot, a.chatId, a.messageId, a.markdown != null
           ? `${a.markdown}\n\n${block}`
-          : { html: `<p>${escapeHtml(a.text ?? '').replace(/\n/g, '<br>')}</p>${block}` })
+          : { html: `<p>${escapeHtml(a.text ?? '').replace(/\n/g, '<br>')}</p>${block}` }, a.kb ? { reply_markup: a.kb } : {})
         return
       } catch (err) {
         d.log(`turn cost into the answer failed, sending a line: ${err}`)

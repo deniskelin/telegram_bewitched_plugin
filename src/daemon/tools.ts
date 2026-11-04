@@ -210,7 +210,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
       else if (format === 'rich') throw new Error('several parts')
       else if (text.length <= limit) await d.bot.api.editMessageText(c.chatId, progress, text, copyKb)
       else throw new Error('too long for one message')
-      s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: post.parts[0] } : { text }) }
+      s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: post.parts[0] } : { text }), ...('reply_markup' in copyKb ? { kb: copyKb.reply_markup } : {}) }
       ids.push(progress)
       recordOut(d, c, progress, text)
     } catch (err) {
@@ -231,7 +231,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
           })
           ids.push(id)
           recordOut(d, cc, id, post.parts[i])
-          if (last) s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: post.parts[i] }
+          if (last) s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: post.parts[i], ...('reply_markup' in copyKb ? { kb: copyKb.reply_markup } : {}) }
         }
         return
       } catch (err) {

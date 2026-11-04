@@ -63,7 +63,8 @@ export type Session = {
   group: { chatId: string; title: string } | null
   lastChat: ChatRef | null
   /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
-  lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string } | null
+  /** kb: the answer's keyboard (📋 copy buttons): an edit without it would take them off. */
+  lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string; kb?: unknown } | null
   /** stuck: «не берёт сообщение» went out for this turn (watchdog.ts checkTurns). */
   /** byHook: opened by a tool call, not a prompt (a turn begun in the terminal, or a daemon restart mid-turn). */
   turn: { start: number; replied: boolean; stuck?: boolean; byHook?: boolean } | null
