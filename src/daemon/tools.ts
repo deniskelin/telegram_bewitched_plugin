@@ -3,6 +3,8 @@
  * outbound traffic shares one Bot instance (rate limits, history, streams).
  */
 
+import { execFileSync } from 'child_process'
+import { githubBase, postprocess, type Copy } from '../postprocess.ts'
 import { InputFile, InlineKeyboard, type Context } from 'grammy'
 import type { ReactionTypeEmoji } from 'grammy/types'
 import { mkdirSync, statSync, writeFileSync } from 'fs'
@@ -15,7 +17,7 @@ import { parseOptions, postQuestion } from './buttons.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { downloadToInbox } from './media.ts'
 import { forVoice, synthesize, ttsEnabled, type Voice, type VoiceOptions } from '../voice/tts.ts'
-import { addReminder, fmtWhen, parseWhen } from './reminders.ts'
+import { addReminder, cancelReminder, fmtWhen, parseWhen } from './reminders.ts'
 import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -103,6 +105,32 @@ async function sendFiles(d: Daemon, c: ChatRef, files: string[], replyTo?: numbe
   return ids
 }
 
+/** copy: [{label, text}] of the reply tool → copy buttons (text ≤ 256 characters, as Telegram allows). */
+function parseCopies(v: unknown): Copy[] {
+  if (!Array.isArray(v)) return []
+  return v.flatMap(x => {
+    const o = x as { label?: unknown; text?: unknown }
+    const text = typeof o?.text === 'string' ? o.text : typeof x === 'string' ? x : ''
+    if (!text || text.length > 256) return []
+    const label = typeof o?.label === 'string' && o.label.trim() ? o.label.trim() : `📋 ${text.length > 28 ? text.slice(0, 27) + '…' : text}`
+    return [{ label: label.slice(0, 40), text }]
+  })
+}
+
+const remotes = new Map<string, { url: string | null; at: number }>()
+
+/** The project's origin URL, cached for 10 minutes. */
+function remoteOf(cwd: string): string | null {
+  const c = remotes.get(cwd)
+  if (c && Date.now() - c.at < 600_000) return c.url
+  let url: string | null = null
+  try {
+    url = execFileSync('git', ['-C', cwd, 'remote', 'get-url', 'origin'], { encoding: 'utf8', timeout: 2000, stdio: ['ignore', 'pipe', 'ignore'] }).trim() || null
+  } catch {}
+  remotes.set(cwd, { url, at: Date.now() })
+  return url
+}
+
 function idsResult(ids: number[]): string {
   return ids.length === 1 ? `sent (id: ${ids[0]})` : `sent ${ids.length} parts (ids: ${ids.join(', ')})`
 }
@@ -121,6 +149,10 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const files = (args.files as string[] | undefined) ?? []
   const format = str(args.format) ?? 'text'
   checkFiles(files)
+  // FR-12/13: copy buttons (asked for, and found in ```bash blocks), long code folded, GitHub links, split at ##.
+  const post = format === 'rich' ? postprocess(text, { github: githubBase(remoteOf(s.cwd)), branch: s.branch }) : { parts: [text], copies: [] }
+  const copies = [...parseCopies(args.copy), ...post.copies].slice(0, 6)
+  const copyKb = copies.length ? { reply_markup: { inline_keyboard: copies.map(c => [{ text: c.label, copy_text: { text: c.text } }]) } } : {}
 
   if (args.buttons != null) {
     const opts = parseOptions(args.buttons)
@@ -164,10 +196,11 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   const progress = !voice && (format === 'rich' || format === 'text') ? d.streams.takeProgress(s, c.chatId) : null
   if (progress != null) {
     try {
-      if (format === 'rich') await editRich(d.bot, c.chatId, progress, text)
-      else if (text.length <= limit) await d.bot.api.editMessageText(c.chatId, progress, text)
+      if (format === 'rich' && post.parts.length === 1) await editRich(d.bot, c.chatId, progress, post.parts[0], copyKb)
+      else if (format === 'rich') throw new Error('several parts')
+      else if (text.length <= limit) await d.bot.api.editMessageText(c.chatId, progress, text, copyKb)
       else throw new Error('too long for one message')
-      s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: text } : { text }) }
+      s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: post.parts[0] } : { text }) }
       ids.push(progress)
       recordOut(d, c, progress, text)
     } catch (err) {
@@ -180,15 +213,19 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     c.threadId = cc.threadId
     if (format === 'rich') {
       try {
-        const id = await sendRich(d.bot, cc.chatId, text, {
-          ...threadOpt(cc), ...(replyTo != null && replyMode !== 'off' ? { reply_parameters: { message_id: replyTo } } : {}),
-        })
-        ids.push(id)
-        recordOut(d, cc, id, text)
-        s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: text }
+        for (let i = 0; i < post.parts.length; i++) {
+          const last = i === post.parts.length - 1
+          const id = await sendRich(d.bot, cc.chatId, post.parts[i], {
+            ...threadOpt(cc), ...(i === 0 && replyTo != null && replyMode !== 'off' ? { reply_parameters: { message_id: replyTo } } : {}),
+            ...(last ? copyKb : {}),
+          })
+          ids.push(id)
+          recordOut(d, cc, id, post.parts[i])
+          if (last) s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: post.parts[i] }
+        }
         return
       } catch (err) {
-        if (isThreadNotFound(err)) throw err
+        if (isThreadNotFound(err) || ids.length) throw err
         d.log(`sendRichMessage failed, falling back to text: ${err}`)
       }
     }
@@ -477,13 +514,23 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       const text = String(args.text ?? '').trim()
       if (!text) throw new Error('text is required')
       const mins = Number(args.in_minutes)
+      const every = Number(args.every_minutes)
+      const everyMin = Number.isFinite(every) && every >= 1 ? Math.round(every) : undefined
       const at = str(args.at)
       let when: { at: number; daily: boolean } | null = null
       if (Number.isFinite(mins) && mins > 0) when = { at: Date.now() + mins * 60_000, daily: false }
       else if (at) when = parseWhen(`${args.daily === true ? 'every day ' : ''}${at} x`)
-      if (!when) throw new Error('give in_minutes > 0 or at "HH:MM"')
-      const r = addReminder(d, { chatId: c.chatId, threadId: c.threadId, text, at: when.at, daily: when.daily, userId: d.userIdOf(s) ?? owner() ?? c.chatId })
-      return `reminder ${r.id} set: ${fmtWhen(r)} (${new Date(r.at).toISOString()})`
+      else if (everyMin) when = { at: Date.now() + everyMin * 60_000, daily: false }
+      if (!when) throw new Error('give in_minutes > 0, at "HH:MM" or every_minutes')
+      const mode = args.mode === 'note' ? 'note' as const : 'task' as const
+      const r = addReminder(d, { chatId: c.chatId, threadId: c.threadId, text, at: when.at, daily: when.daily, everyMin, userId: d.userIdOf(s) ?? owner() ?? c.chatId, by: 'session', mode })
+      return `reminder ${r.id} set: ${fmtWhen(r)} (${new Date(r.at).toISOString()})${mode === 'note' ? ', note: only posted to the chat' : ''}`
+    }
+
+    case 'cancel_reminder': {
+      const id = String(args.id ?? '').trim()
+      if (!id) throw new Error('id is required')
+      return cancelReminder(d, id) ? `reminder ${id} cancelled` : `no reminder ${id}`
     }
 
     case 'save_memory': {

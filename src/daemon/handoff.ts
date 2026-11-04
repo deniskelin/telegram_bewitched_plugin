@@ -11,7 +11,7 @@
  * first message that points to it and quotes the gist.
  */
 
-import { readdirSync, readFileSync, statSync, writeFileSync } from 'fs'
+import { readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join } from 'path'
 import { execFile } from 'child_process'
 import type { Session } from './daemon.ts'
@@ -30,7 +30,7 @@ function unwrapChannel(text: string): { who?: string; text: string } | null {
   if (!m) return { text }
   const attrs = m[1]
   // The resume digest and reminders are the daemon's, not the user's words.
-  if (/event="(session_resume|tokens_back|handoff)"/.test(attrs)) return null
+  if (/event="(session_resume|tokens_back|handoff|handoff_summary)"/.test(attrs)) return null
   const who = /\buser="([^"]*)"/.exec(attrs)?.[1]
   return { who, text: m[2].trim() }
 }
@@ -141,7 +141,7 @@ export type Handoff = { path: string; message: string }
  * Write <folder>/.telegram/handoff.md for the session's work and return the
  * first message for the new engine. note: why the switch happened (the limit).
  */
-export async function buildHandoff(s: Session, to: EngineId, note?: string): Promise<Handoff> {
+export async function buildHandoff(s: Session, to: EngineId, note?: string, summary?: string | null): Promise<Handoff> {
   const from = engineOf(s.engine).name
   const turns = turnsOf(s.engine, sessionTranscript(s))
   const recent = turns.slice(-24)
@@ -160,6 +160,7 @@ export async function buildHandoff(s: Session, to: EngineId, note?: string): Pro
     '',
     `Папка: ${s.cwd}. Разговор ${from}: ${s.claude.sessionId ?? 'неизвестен'}. Передано ${new Date().toISOString().slice(0, 16).replace('T', ' ')} UTC.`,
     ...(note ? ['', `Причина: ${note}`] : []),
+    ...(summary ? ['', `## Сводка от ${from} (написана им перед передачей)`, clip(summary, 6000)] : []),
     '',
     '## С чего началось',
     firstAsk ? clip(firstAsk.text, 2000) : '(транскрипт недоступен)',
@@ -185,11 +186,53 @@ export async function buildHandoff(s: Session, to: EngineId, note?: string): Pro
   // i18n-ignore-start: for the model
   const message = [
     `[Передача дел: работа в этой папке шла на ${from}, теперь продолжаешь ты.${note ? ` ${note}` : ''}]`,
-    `Полный контекст — последние реплики, изменения в git — в файле ${path}: прочитай его первым делом.`,
+    `Полный контекст — ${summary ? 'сводка прежнего движка, ' : ''}последние реплики, изменения в git — в файле ${path}: прочитай его первым делом.`,
     lastAsk ? `Последняя просьба пользователя: «${clip(lastAsk.text, 600)}»` : '',
     docs.length ? `Правила проекта для агентов — в ${docs.join(' и ')}: следуй им, как прежний движок.` : '',
     'Продолжай с того места, где остановился прежний движок: не переделывай уже сделанное. Если неясно, что дальше, — коротко скажи пользователю, что принял дела, и спроси.',
   ].filter(Boolean).join('\n\n')
   // i18n-ignore-end
   return { path, message }
+}
+
+/** Where the outgoing model writes its summary for the handoff. */
+export function summaryPath(s: Session): string {
+  return join(inboxFor(s.cwd).replace(/\/inbox$/, ''), 'handoff-summary.md')
+}
+
+/** The request to the outgoing model. Text for the model: not translated. */
+export function summaryRequest(path: string, to: EngineId): string {
+  // i18n-ignore-start: for the model
+  return [
+    `[Передача дел: работа в этой папке сейчас перейдёт к ${engineOf(to).name}. Пользователю не отвечай.]`,
+    `Запиши в файл ${path} короткую сводку для преемника (Markdown, до 60 строк):`,
+    '- цель и что просил пользователь;',
+    '- что уже сделано (файлы, коммиты, PR);',
+    '- что осталось и следующий шаг;',
+    '- принятые решения, договорённости и подводные камни.',
+    'Только запиши файл — больше ничего не делай.',
+  ].join('\n')
+  // i18n-ignore-end
+}
+
+/**
+ * FR-16: ask the outgoing session for a summary and wait for the file (and the
+ * end of its turn) up to timeoutMs. Null when it did not come: the handoff is
+ * then built without it, as before.
+ */
+export async function askSummary(s: Session, to: EngineId, deliver: (text: string) => void, alive: () => boolean, timeoutMs: number, pollMs = 1000): Promise<string | null> {
+  const path = summaryPath(s)
+  rmSync(path, { force: true })
+  const start = Date.now()
+  deliver(summaryRequest(path, to))
+  let text: string | null = null
+  while (Date.now() - start < timeoutMs && alive()) {
+    await Bun.sleep(pollMs)
+    try {
+      if (statSync(path).mtimeMs >= start - 1000) text = readFileSync(path, 'utf8').trim() || null
+    } catch {}
+    // Written and the turn is over (or a little grace for the last write).
+    if (text && (!s.turn || Date.now() - start > timeoutMs * 0.8)) break
+  }
+  return text
 }

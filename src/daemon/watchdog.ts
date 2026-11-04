@@ -21,7 +21,7 @@ import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { attachTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
+import { exitCodeSince, attachTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -43,10 +43,15 @@ export function onSessionStopped(d: Daemon, s: Session): void {
   if (s.passive || d.ending.delete(s.id)) return
   const transcript = s.claude.transcript ?? guessTranscript(s.argv, s.cwd)
   const resume = s.claude.sessionId ?? (transcript ? basename(transcript, '.jsonl') : null)
-  setTimeout(() => void inSession(d, s, () => notifyStopped(d, s, resume)).catch(err => d.log(`watchdog notice failed: ${err}`)), settings.watchdogGraceSec * 1000).unref?.()
+  setTimeout(() => void (async () => {
+    // FR-19: exit code 0 — /exit or /quit typed in the terminal (Codex has no SessionEnd hook): a planned end.
+    const code = exitCodeSince(s.cwd, s.connectedAt)
+    if (code === 0) return void d.log(`session ${s.id}: exited normally (code 0), no notice`)
+    await inSession(d, s, () => notifyStopped(d, s, resume, code))
+  })().catch(err => d.log(`watchdog notice failed: ${err}`)), settings.watchdogGraceSec * 1000).unref?.()
 }
 
-async function notifyStopped(d: Daemon, s: Session, resume: string | null): Promise<void> {
+async function notifyStopped(d: Daemon, s: Session, resume: string | null, code: number | null = null): Promise<void> {
   if (d.activeSessions().some(o => o.projectKey === s.projectKey)) return // restarted meanwhile
   const role = d.roleOf(s)
   // With user sessions everyone has their own: the main one is not offered to the owner.
@@ -64,7 +69,8 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null): Prom
     d.store.setTopicStatus(chat!, topic.thread_id, 'waiting')
     await d.bot.api.closeForumTopic(chat!, topic.thread_id).catch(err => d.log(`closeForumTopic failed: ${err}`))
   }
-  await announce(d, restart, id, () => tr('⚠️ Сессия <b>{v}</b> (#{id}) остановилась.', { v: escapeHtml(name), id: s.id }), !topic || topic.status !== 'active')
+  const why = () => (code == null ? '' : '\n' + (code === 137 ? tr('Код выхода 137: процесс убит (часто — нехватка памяти).') : tr('Код выхода {code}: сбой, а не /exit.', { code })))
+  await announce(d, restart, id, () => tr('⚠️ Сессия <b>{v}</b> (#{id}) остановилась.', { v: escapeHtml(name), id: s.id }) + why(), !topic || topic.status !== 'active')
 }
 
 /**

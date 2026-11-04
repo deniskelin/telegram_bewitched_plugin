@@ -8,11 +8,11 @@
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { execFile } from 'child_process'
 import { createHash, randomBytes } from 'crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
 import { homedir, tmpdir } from 'os'
 import { basename, isAbsolute, join, relative, resolve } from 'path'
 import { can, owner } from '../access.ts'
-import { settings } from '../config.ts'
+import { settings, STATE_DIR } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import { cmdlineOf } from '../proc.ts'
 import type { Daemon, Session } from './daemon.ts'
@@ -62,7 +62,11 @@ function run(args: string[]): Promise<string> {
  * argument, not through a shell.
  */
 /** engine and model: the project's choice (engines.ts), filled in by Daemon.launchSession. */
-export type LaunchOptions = { continue?: boolean; resume?: string; name?: string; engine?: EngineId; model?: string }
+export type LaunchOptions = {
+  continue?: boolean; resume?: string; name?: string; engine?: EngineId; model?: string
+  /** FR-20: the topic's prompt mode (promptmode.ts): a system prompt file and tools taken away. */
+  prompt?: { file: string; disallowed: string[]; readOnly: boolean; key: string }
+}
 
 /** The engine's command line: for Claude Code, CLAUDE_LAUNCH_CMD plus -n, --model, --resume / --continue. */
 export function launchCommand(o: LaunchOptions = {}): string {
@@ -88,8 +92,36 @@ export function sessionName(d: Daemon, dir: string, engine: EngineId = projectEn
   return slug ? `${prefix}-project-${slug}` : undefined
 }
 
+/**
+ * FR-19: where a launched agent's exit code is written when it exits. 0 is a
+ * normal exit (/exit or /quit typed in the terminal), anything else a crash or
+ * a kill (137: OOM). The watchdog reads it: from outside the two look alike.
+ */
+export function exitCodeFile(dir: string): string {
+  return join(STATE_DIR, 'exits', `${createHash('sha1').update(dir).digest('hex').slice(0, 16)}.code`)
+}
+
+/** The exit code a session in dir left since `since` (ms), or null. */
+export function exitCodeSince(dir: string, since: number): number | null {
+  try {
+    const f = exitCodeFile(dir)
+    if (statSync(f).mtimeMs < since - 1000) return null
+    const v = readFileSync(f, 'utf8').trim()
+    return /^\d+$/.test(v) ? Number(v) : null
+  } catch {
+    return null
+  }
+}
+
+/** The launch command, followed by writing its exit code (the window still closes with it). */
+export function withExitCode(cmd: string, dir: string): string {
+  const f = exitCodeFile(dir)
+  try { mkdirSync(join(STATE_DIR, 'exits'), { recursive: true, mode: 0o700 }) } catch {}
+  return `${cmd}; printf %s "$?" > '${f.replace(/'/g, "'\\''")}'`
+}
+
 export async function tmuxLaunch(dir: string, o: LaunchOptions = {}): Promise<string> {
-  const cmd = launchCommand(o)
+  const cmd = withExitCode(launchCommand(o), dir)
   if (o.name && /^[\p{L}\p{N}._-]+$/u.test(o.name)) {
     const own = o.name
     if (await run(['has-session', '-t', `=${own}`]).then(() => true, () => false)) {

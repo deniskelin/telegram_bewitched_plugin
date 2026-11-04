@@ -912,6 +912,29 @@ describe('topics', () => {
     await client.call('reply', { chat_id: group, text: 'ок' })
   })
 
+  test('FR-12/13: a rich reply gets 📋 copy buttons (asked for and from ```bash), long code folded; the plan shows in the progress', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
+      method: 'POST', headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ event, claudePid: 424242, data }),
+    })
+    setPref(`${group}:${thread}`, { streamFinal: 'new' })
+    tg.push(textMessage({ chat: Number(group), text: 'план и команда', thread }))
+    await client.inbound(x => x.content === 'план и команда')
+    await hook('PreToolUse', { tool_name: 'TodoWrite', tool_input: { todos: [{ content: 'Шаг один', status: 'completed' }, { content: 'Шаг два', status: 'in_progress' }] } })
+    const md = (c: { body: Record<string, unknown> }) => String((c.body.rich_message as { markdown?: string } | undefined)?.markdown ?? '')
+    await tg.waitFor('editMessageText', c => md(c).includes('- [x] Шаг один') && md(c).includes('**Шаг два**'))
+    const code = Array.from({ length: 18 }, (_, i) => `x${i}`).join('\n')
+    const r = await client.call('reply', { chat_id: group, format: 'rich', text: `Запустите:\n\n\`\`\`bash\nbun test\n\`\`\`\n\n\`\`\`ts\n${code}\n\`\`\``, copy: [{ label: '📋 id', text: 'abc-123' }] })
+    expect(r.ok).toBe(true)
+    const sent = await tg.waitFor('sendRichMessage', c => md(c).startsWith('Запустите'))
+    expect(md(sent)).toContain('<details><summary>📄 ts · 18 строк</summary>')
+    const kb = JSON.stringify(sent.body.reply_markup)
+    expect(kb).toContain('"copy_text":{"text":"abc-123"}')
+    expect(kb).toContain('"copy_text":{"text":"bun test"}')
+    setPref(`${group}:${thread}`, { streamFinal: 'edit' })
+  })
+
   test('out of tokens: the failed turn and new messages get a localized notice, are held, and reach the session at the reset', async () => {
     const thread = d.sessions.get(sessionId)!.topic!.threadId
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
@@ -1030,6 +1053,32 @@ describe('topics', () => {
     expect(listReminders(d)[0]).toMatchObject({ text: 'проверь деплой', chatId: group, threadId: thread })
     const bad = await client.call('remind', { text: 'x' })
     expect(bad.ok).toBe(false)
+
+    // FR-7: a session's task, late after downtime, repeating; a note wakes no session; cancel_reminder.
+    const task = listReminders(d)[0]
+    expect(task.by).toBe('session')
+    await fireDue(d, task.at + 30 * 60_000)
+    await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('⏰🤖 проверь деплой') && String(c.body.text).includes('опоздало на 30 мин'))
+    const late = await client.inbound(x => x.meta.event === 'reminder' && x.content.includes('проверь деплой'))
+    expect(late.meta.late_min).toBe('30')
+    expect(late.meta.reminder_by).toBe('session')
+    expect(late.content).toContain('Задача, которую вы поставили себе')
+
+    expect((await client.call('remind', { text: 'пинг', every_minutes: 10 })).ok).toBe(true)
+    const rep = listReminders(d).find(x => x.text === 'пинг')!
+    await fireDue(d, rep.at + 1000)
+    await client.inbound(x => x.meta.event === 'reminder' && x.content.includes('пинг') && x.meta.repeats === 'true')
+    expect(listReminders(d).find(x => x.id === rep.id)!.at).toBe(rep.at + 10 * 60_000)
+    expect((await client.call('cancel_reminder', { id: rep.id })).ok).toBe(true)
+    expect(listReminders(d).some(x => x.id === rep.id)).toBe(false)
+
+    expect((await client.call('remind', { text: 'только людям', in_minutes: 1, mode: 'note' })).ok).toBe(true)
+    const note = listReminders(d).find(x => x.text === 'только людям')!
+    const before = client.msgs.length
+    await fireDue(d, note.at + 1000)
+    await tg.waitFor('sendMessage', c => String(c.body.text) === '⏰🤖 только людям')
+    await Bun.sleep(200)
+    expect(client.msgs.slice(before).some(x => x.t === "inbound" && (x as Inbound).content.includes("только людям"))).toBe(false)
   })
 
   test('stop button without tmux only notes the stop for the next message', async () => {

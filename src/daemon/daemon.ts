@@ -20,9 +20,11 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
-import { channelText, codexDeliver, codexQueue, codexUndelivered, withProjectEngine, type EngineId } from './engines.ts'
+import { channelText, codexDeliver, codexQueue, codexUndelivered, codexTakeHeld, holdForCodex, withProjectEngine, type EngineId } from './engines.ts'
 import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation, type TypeOptions } from './launch.ts'
 import { sendNotice } from './journal.ts'
+import { pendingKeyOf } from './topics.ts'
+import { turnStarted } from './turnfiles.ts'
 
 /** Queue for messages to the main session while it is not running. */
 export const MAIN_PENDING_KEY = '__main__'
@@ -48,6 +50,10 @@ export type Session = {
   tmuxPane: string | null
   passive: boolean
   connectedAt: number
+  /** The current turn is the daemon's own errand (the FR-16 handoff summary): no «✅ Готово» or turn cost for it. */
+  quietTurn?: boolean
+  /** FR-12: the last plan of the session (TodoWrite). */
+  plan?: import('./stream.ts').PlanItem[]
   lastActivity: number
   status: 'idle' | 'working' | 'waiting'
   topic: { chatId: string; threadId: number; name: string } | null
@@ -291,7 +297,14 @@ export class Daemon {
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && session.engine === 'claude' && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     // Codex has no channel: the message goes into its thread with codex queue (FR-16).
-    if (session.engine === 'codex') void codexDeliver(this, session, channelText(content, meta)).catch(err => codexUndelivered(this, session, err, from))
+    if (session.engine === 'codex') {
+      // FR-16: during a turn messages are held and go in as one after it (codexFlushHeld) — one turn, not N.
+      if (session.turn && meta.event == null && (session.lastHookAt ?? 0) >= session.turn.start && holdForCodex(this, session, channelText(content, meta), from)) {
+        this.log(`message from ${from?.chatId ?? '?'} held for codex session ${session.id} until its turn ends`)
+        return
+      }
+      void codexDeliver(this, session, channelText(content, meta)).catch(err => codexUndelivered(this, session, err, from))
+    }
     else this.send(session, { t: 'inbound', content, meta })
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
@@ -299,7 +312,7 @@ export class Daemon {
     if (from) {
       session.answer = ''
       session.lastChat = from
-      if (!session.turn) session.turn = { start: Date.now(), replied: false }
+      if (!session.turn) { session.turn = { start: Date.now(), replied: false }; turnStarted(session) }
       session.status = 'working'
       this.streams.open(session, from)
     }
@@ -379,6 +392,8 @@ export class Daemon {
     this.streams.close(s, 'gone')
     for (const [rid, p] of this.permissions) if (p.sessionId === s.id) this.permissions.delete(rid)
     this.log(`session ${s.id} disconnected`)
+    // FR-16: messages held for the end of a Codex turn wait for the next session instead of being lost.
+    for (const text of codexTakeHeld(s)) this.store.addPending(pendingKeyOf(this, s), text, {})
     if (this.sessions.size === 0) this.lastClientGone = Date.now()
     this.onSessionGone(s)
     this.onSessionsChanged()

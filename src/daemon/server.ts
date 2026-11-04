@@ -145,7 +145,8 @@ export async function serverReport(d: Daemon): Promise<string> {
 
 const KB = () => new InlineKeyboard([
   [button(t('🔄 Обновить'), 'srv:refresh'), button(t('📜 Логи демона'), 'srv:logs')],
-  [button(t('♻️ Перезапустить демон'), 'srv:rs'), button(t('« Статистика'), 'hub:stats')],
+  [button(t('⬆️ Обновить CLI'), 'cli:show'), button(t('♻️ Перезапустить демон'), 'srv:rs')],
+  [button(t('« Статистика'), 'hub:stats')],
 ])
 
 const LOG_LINES = 40

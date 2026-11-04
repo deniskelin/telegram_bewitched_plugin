@@ -7,6 +7,22 @@
  *  - richToMarkdown: a received rich message (its blocks) → Markdown for the model.
  */
 
+/**
+ * FR-12: live time. A screen marks a moment as liveTime(ms, text); a rich
+ * screen shows it as <tg-time format="r"> («через 1 ч 12 мин», «5 мин назад»
+ * — the client keeps it current), the HTML fallback as the text itself.
+ */
+const TIME_MARK = /\u2063t(\d{1,12})\u2063([^\u2063]*)\u2063\/t\u2063/g
+
+export function liveTime(ms: number, text: string): string {
+  return `\u2063t${Math.floor(ms / 1000)}\u2063${text.replace(/\u2063/g, '')}\u2063/t\u2063`
+}
+
+/** Markers → <tg-time> (rich) or their text (anything else). */
+export function liveTimes(s: string, rich: boolean): string {
+  return s.replace(TIME_MARK, (m, unix: string, text: string) => (rich ? `<tg-time unix="${unix}" format="r">${text}</tg-time>` : text))
+}
+
 /** "🎛 <b>Меню</b>", "📋 <b>Сессии</b> (2)", "📊 <b>Подписка</b>: Max" — an emoji (or nothing), a bold title, a short plain tail. */
 const TITLE = /^((?:[^\p{L}\p{N}\s<]\S* )?)<b>([^<\n]{1,80})<\/b>([^<\n]{0,60})$/u
 const BLOCK = /<(pre|blockquote)\b[^>]*>[\s\S]*?<\/\1>/g

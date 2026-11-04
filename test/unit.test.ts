@@ -303,6 +303,15 @@ describe('reminders', async () => {
     expect(fmtWhen({ at: new Date(2026, 9, 28, 21, 15).getTime(), daily: false }, now)).toBe('сегодня в 21:15')
     expect(fmtWhen({ at: new Date(2026, 9, 29, 9, 0).getTime(), daily: true }, now)).toBe('каждый день в 09:00')
   })
+
+  test('FR-7: repeating every N', () => {
+    expect(parseWhen('каждые 2h проверь CI', now)).toEqual({ at: now + 2 * 3_600_000, daily: false, everyMin: 120, text: 'проверь CI' })
+    expect(parseWhen('every 30m ping', now)).toMatchObject({ everyMin: 30, text: 'ping' })
+    expect(parseWhen('каждый час x', now)).toMatchObject({ everyMin: 60 })
+    expect(parseWhen('каждые 15 минут x', now)).toMatchObject({ everyMin: 15 })
+    expect(parseWhen('каждый день 9:00 x', now)).toMatchObject({ daily: true })
+    expect(fmtWhen({ at: new Date(2026, 9, 28, 21, 15).getTime(), daily: false, everyMin: 120 }, now)).toBe('каждые 2 ч, следующее в 21:15')
+  })
 })
 
 describe('period reports', async () => {
@@ -752,5 +761,181 @@ describe('Codex seamless: handoff, approvals, conversations', () => {
     roll('bbb-2', '/p/two', 'чужой')
     const list = await listCodexConversations('/p/one', 8, home)
     expect(list.map(c => [c.id, c.prompt])).toEqual([['aaa-1', 'первый']])
+  })
+})
+
+describe('FR-19: orphans and exit codes', async () => {
+  const { Store } = await import('../src/db.ts')
+  const { findOrphans, isBridgeLaunch } = await import('../src/daemon/orphans.ts')
+  const { exitCodeSince, withExitCode } = await import('../src/daemon/launch.ts')
+
+  test('a bridge launch is recognised by its flags', () => {
+    expect(isBridgeLaunch(['claude', '--dangerously-load-development-channels', 'plugin:telegram-bewitched@bewitched', '-n', 'x'])).toBe(true)
+    expect(isBridgeLaunch(['/root/.local/bin/codex', '--no-alt-screen', '-p', 'bewitched'])).toBe(true)
+    expect(isBridgeLaunch(['codex', '--no-alt-screen', '-p', 'bewitched-1a2b3c'])).toBe(true)
+    expect(isBridgeLaunch(['claude'])).toBe(false)
+    expect(isBridgeLaunch(['codex', '-p', 'work'])).toBe(false)
+  })
+
+  test('orphans: bridge agents without a session, old enough, not a pending launch', () => {
+    const d = { store: new Store(':memory:'), sessions: new Map([['a', { claudePid: 10 }]]), launching: new Map([['/p/launching', Date.now()]]) } as never
+    const procs: Record<number, { argv: string[]; agent: 'claude' | 'codex' | null; age: number; cwd: string }> = {
+      10: { argv: ['claude', 'plugin:telegram-bewitched@bewitched'], agent: 'claude', age: 9999, cwd: '/p/a' }, // connected
+      11: { argv: ['claude', 'plugin:telegram-bewitched@bewitched'], agent: 'claude', age: 9999, cwd: '/p/b' }, // orphan
+      12: { argv: ['claude', 'plugin:telegram-bewitched@bewitched'], agent: 'claude', age: 60, cwd: '/p/c' }, // too young
+      13: { argv: ['claude'], agent: 'claude', age: 9999, cwd: '/p/d' }, // not ours
+      14: { argv: ['codex', '-p', 'bewitched'], agent: 'codex', age: 9999, cwd: '/p/launching' }, // still launching
+      15: { argv: ['codex', '-p', 'bewitched'], agent: 'codex', age: 7200, cwd: '/p/e' }, // orphan
+    }
+    const reads = {
+      pids: () => Object.keys(procs).map(Number),
+      argv: (p: number) => procs[p].argv,
+      agent: (p: number) => procs[p].agent,
+      age: (p: number) => procs[p].age,
+      rss: () => 100,
+      cwd: (p: number) => procs[p].cwd,
+    }
+    expect(findOrphans(d, reads).map(o => [o.pid, o.agent])).toEqual([[11, 'claude'], [15, 'codex']])
+  })
+
+  test('the exit code of a launch is written by the shell and read back', async () => {
+    const dir = '/p/exit-test'
+    const since = Date.now()
+    await Bun.spawn(['sh', '-c', withExitCode('true', dir)]).exited
+    expect(exitCodeSince(dir, since)).toBe(0)
+    await Bun.spawn(['sh', '-c', withExitCode('sh -c "exit 137"', dir)]).exited
+    expect(exitCodeSince(dir, since)).toBe(137)
+    expect(exitCodeSince(dir, Date.now() + 60_000)).toBeNull()
+    expect(exitCodeSince('/p/never', since)).toBeNull()
+  })
+})
+
+describe('FR-20: prompt modes and conversation history', async () => {
+  const { Store } = await import('../src/db.ts')
+  const { launchPrompt, promptMode, setPromptMode } = await import('../src/daemon/promptmode.ts')
+  const { claude, conversationAt, rememberConversation } = await import('../src/daemon/engines.ts')
+  const { readFileSync } = await import('fs')
+
+  test('a preset adds the prompt file and takes tools away; custom keeps the text; default adds nothing', () => {
+    const d = { store: new Store(':memory:') } as never
+    expect(launchPrompt(d, '/p/x')).toBeNull()
+    setPromptMode(d, '/p/x', { preset: 'review' })
+    const p = launchPrompt(d, '/p/x')!
+    expect(readFileSync(p.file, 'utf8')).toContain('REVIEW')
+    expect(p).toMatchObject({ disallowed: ['Edit', 'Write', 'NotebookEdit'], readOnly: true })
+    const cmd = claude.launchCommand({ prompt: p })
+    expect(cmd).toContain(`--append-system-prompt "$(cat '${p.file}')"`)
+    expect(cmd).toContain('--disallowedTools Edit,Write,NotebookEdit')
+    setPromptMode(d, '/p/x', { preset: 'custom', text: 'Отвечай как пират; $(rm -rf /)' })
+    const c = launchPrompt(d, '/p/x')!
+    expect(readFileSync(c.file, 'utf8')).toContain('пират')
+    expect(claude.launchCommand({ prompt: c })).not.toContain('пират')
+    expect(c.disallowed).toEqual([])
+    setPromptMode(d, '/p/x', { preset: 'default' })
+    expect(promptMode(d, '/p/x').preset).toBe('default')
+  })
+
+  test('which conversation a folder had at a time', () => {
+    const d = { store: new Store(':memory:'), log: () => {} } as never
+    const s = { id: 's', engine: 'claude', cwd: '/p/y' } as never
+    const t0 = Date.now()
+    rememberConversation(d, s, 'conv-1')
+    expect(conversationAt(d, '/p/y', t0 - 1000)).toBeNull()
+    expect(conversationAt(d, '/p/y', Date.now() + 1)?.id).toBe('conv-1')
+  })
+})
+
+describe('FR-16: handoff summary from the outgoing model', async () => {
+  const { askSummary, buildHandoff, summaryPath } = await import('../src/daemon/handoff.ts')
+  const { mkdtempSync, writeFileSync, readFileSync } = await import('fs')
+  const { tmpdir } = await import('os')
+  const { join } = await import('path')
+
+  test('the summary written by the session goes into handoff.md; none in time — null', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'bw-handoff-'))
+    const s = { id: 's', engine: 'claude', cwd, claude: {}, turn: null } as never
+    let asked = ''
+    const summary = await askSummary(s, 'codex', text => { asked = text; writeFileSync(summaryPath(s), '## Цель\nдоделать FR-16\n') }, () => true, 3000, 20)
+    expect(asked).toContain(summaryPath(s))
+    expect(summary).toContain('доделать FR-16')
+    const h = await buildHandoff(s, 'codex', undefined, summary)
+    expect(readFileSync(h.path, 'utf8')).toContain('## Сводка от Claude Code')
+    expect(h.message).toContain('сводка прежнего движка')
+    expect(await askSummary(s, 'codex', () => {}, () => true, 100, 20)).toBeNull()
+  })
+})
+
+describe('FR-17: one-shot turns', async () => {
+  const { onceArgv, parseOnceOutput, reviewPrompt } = await import('../src/daemon/oneshot.ts')
+
+  test('the answer from Claude stream-json and Codex exec --json', () => {
+    const claude = ['{"type":"system","subtype":"init"}', '{"type":"assistant","message":{}}', '{"type":"result","subtype":"success","result":"Да","is_error":false}'].join('\n')
+    expect(parseOnceOutput(claude)).toEqual({ text: 'Да' })
+    const codex = ['{"type":"thread.started","thread_id":"x"}', '{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"сначала"}}', '{"type":"item.completed","item":{"id":"item_1","type":"agent_message","text":"привет"}}', '{"type":"turn.completed"}'].join('\n')
+    expect(parseOnceOutput(codex)).toEqual({ text: 'привет' })
+    expect(parseOnceOutput('{"type":"result","subtype":"error_max_turns","is_error":true}').error).toBe('error_max_turns')
+    expect(parseOnceOutput('not json').text).toBe('')
+  })
+
+  test('read-only command lines; the prompt is one argv item', () => {
+    const c = onceArgv('claude', 'вопрос; rm -rf /', 'claude-haiku-5-5')!
+    expect(c.args).toContain('вопрос; rm -rf /')
+    expect(c.args).toEqual(expect.arrayContaining(['-p', '--output-format', 'stream-json', '--disallowedTools', 'Edit,Write,NotebookEdit', '--model', 'claude-haiku-5-5']))
+    expect(reviewPrompt('сделай X', '+a\n-b', 'Claude Code')).toContain('```diff\n+a\n-b\n```')
+  })
+})
+
+describe('FR-12/13: rich answers', async () => {
+  const { postprocess, githubBase, linkify, splitParts } = await import('../src/postprocess.ts')
+  const { liveTime, liveTimes } = await import('../src/rich.ts')
+  const { parsePlan, planLines, planMarkdown } = await import('../src/daemon/stream.ts')
+  const { parseNumstat } = await import('../src/daemon/turnfiles.ts')
+  const gh = 'https://github.com/o/r'
+
+  test('GitHub remote → base', () => {
+    expect(githubBase('git@github.com:o/r.git')).toBe(gh)
+    expect(githubBase('https://github.com/o/r')).toBe(gh)
+    expect(githubBase('https://gitlab.com/o/r.git')).toBeNull()
+  })
+
+  test('links: paths with lines, hashes, #N; code blocks and existing links untouched', () => {
+    const out = linkify('см. `src/a.ts:12`, b/c.py:3, `a9ed0b2`, #130, `npm test`, [x](http://y/#2)', gh, 'dev')
+    expect(out).toContain(`[\`src/a.ts:12\`](${gh}/blob/dev/src/a.ts#L12)`)
+    expect(out).toContain(`[b/c.py:3](${gh}/blob/dev/b/c.py#L3)`)
+    expect(out).toContain(`[\`a9ed0b2\`](${gh}/commit/a9ed0b2)`)
+    expect(out).toContain(`[#130](${gh}/issues/130)`)
+    expect(out).toContain('`npm test`')
+    expect(out).toContain('[x](http://y/#2)')
+    const p = postprocess('```ts\nconst x = `src/a.ts:1`\n```', { github: gh })
+    expect(p.parts[0]).not.toContain('](')
+  })
+
+  test('long code folds, short shell commands get copy buttons, a long answer splits at ##', () => {
+    const long = '```ts\n' + Array.from({ length: 20 }, (_, i) => `l${i}`).join('\n') + '\n```'
+    const p = postprocess(`text\n\n${long}\n\n\`\`\`bash\n$ bun test\n\`\`\``)
+    expect(p.parts[0]).toContain('<details><summary>📄 ts · 20 строк</summary>')
+    expect(p.copies).toEqual([{ label: '📋 bun test', text: 'bun test' }])
+    expect(postprocess(`<details><summary>x</summary>\n\n${long}\n\n</details>`).parts[0].match(/<details>/g)!.length).toBe(1)
+    const big = ['# T', '## A', 'a'.repeat(200), '## B', 'b'.repeat(200)].join('\n')
+    const parts = splitParts(big, 250)
+    expect(parts.length).toBe(2)
+    expect(parts[1].startsWith('## B')).toBe(true)
+  })
+
+  test('live time: <tg-time> in rich, the text otherwise', () => {
+    const m = `в ${liveTime(1_800_000_000_000, 'через 2 ч')}`
+    expect(liveTimes(m, true)).toBe('в <tg-time unix="1800000000" format="r">через 2 ч</tg-time>')
+    expect(liveTimes(m, false)).toBe('в через 2 ч')
+  })
+
+  test('plan from TodoWrite as a checklist', () => {
+    const plan = parsePlan({ todos: [{ content: 'A', status: 'completed' }, { content: 'B', activeForm: 'Делаю B', status: 'in_progress' }, { content: 'C', status: 'pending' }, { bad: 1 }] })
+    expect(plan.map(p => p.status)).toEqual(['completed', 'in_progress', 'pending'])
+    expect(planLines(plan)).toEqual(['📋 План: 1/3', '☑️ A', '▶️ Делаю B', '⬜ C'])
+    expect(planMarkdown(plan)).toContain('- [x] A\n- [ ] **Делаю B**\n- [ ] C')
+  })
+
+  test('numstat', () => {
+    expect(parseNumstat('3\t1\tsrc/a.ts\n-\t-\timg.png\n')).toEqual([{ file: 'src/a.ts', add: 3, del: 1 }, { file: 'img.png', add: 0, del: 0 }])
   })
 })

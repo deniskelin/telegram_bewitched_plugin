@@ -21,7 +21,8 @@ import { listCodexConversations, listConversations, transcriptInfo, type Convers
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, engineOf, projectEngine, setProjectEngine } from './engines.ts'
-import { buildHandoff, type Handoff } from './handoff.ts'
+import { reviewButton } from './oneshot.ts'
+import { askSummary, buildHandoff, type Handoff } from './handoff.ts'
 
 export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
@@ -103,7 +104,8 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) top.push(button(t('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`))
     if (top.length) rows.push(top)
     rows.push([button(t('🤖 Claude'), `sm:g:${s.id}:c`), button(t('🔔 Уведомления'), `sm:g:${s.id}:n`)])
-    rows.push([...(s.branch ? [button('🌿 Git', `sm:git:${s.id}`)] : []), button(t('⚙️ Управление'), `sm:g:${s.id}:m`)])
+    const review = s.branch ? reviewButton(s) : null
+    rows.push([...(s.branch ? [button('🌿 Git', `sm:git:${s.id}`)] : []), ...(review ? [review] : []), button(t('⚙️ Управление'), `sm:g:${s.id}:m`)])
     const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
     if (link) rows.push([InlineKeyboard.url(clip(t('💬 Открыть топик «{name}»', { name: s.topic!.name }), 40), link)])
     rows.push([button(t('« К списку'), 'sm:list'), button('🔄', `sm:s:${s.id}`)])
@@ -172,7 +174,17 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
   // Another engine: the work is handed over (handoff.ts) — gathered while the outgoing conversation is still known.
   let handoff: Handoff | null = null
   if (!same) {
-    handoff = await buildHandoff(s, engine.id, o.note).catch(err => { d.log(`handoff of ${s.id} failed: ${err}`); return null })
+    // FR-16: the outgoing model writes a summary first — unless it is out of tokens (o.note: FR-18) or switched off.
+    let summary: string | null = null
+    if (!o.note && settings.handoffSummarySec > 0 && !s.turn && chat) {
+      await edit({ text: t('📝 {engine} пишет сводку для передачи дел (до {n} с)…', { engine: engineOf(s.engine).name, n: settings.handoffSummarySec }), kb: new InlineKeyboard() })
+      const meta = { event: 'handoff_summary', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }
+      s.quietTurn = true
+      summary = await askSummary(s, engine.id, text => d.deliver(s, text, meta), () => d.sessions.has(s.id), settings.handoffSummarySec * 1000)
+        .catch(err => { d.log(`handoff summary of ${s.id} failed: ${err}`); return null })
+      d.log(`handoff summary of ${s.id}: ${summary ? `${summary.length} chars` : 'none'}`)
+    }
+    handoff = await buildHandoff(s, engine.id, o.note, summary).catch(err => { d.log(`handoff of ${s.id} failed: ${err}`); return null })
     if (handoff) d.log(`handoff of ${s.id}: ${handoff.path}`)
   }
   await edit({ text: t('♻️ Закрываю сессию #{id} ({engine})…', { id: s.id, engine: engineOf(s.engine).name }), kb: new InlineKeyboard() })
@@ -211,7 +223,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
  * /compact, /clear (asked first) and /model typed into the session's pane.
  * Only between turns: typed mid-turn they would land in the prompt queue.
  */
-async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
+export async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
   if (!s.tmuxPane) return { toast: t('Сессия не в tmux — команды не отправить.') }
   if (action === 'mdl') return { screen: modelScreen(d, s) }
   if (action === 'eng') {

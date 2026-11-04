@@ -44,6 +44,38 @@ type Stream = {
   opening: Promise<void> | null
   /** The group progress message is edited as a rich message, until Telegram refuses one. */
   rich: boolean
+  /** FR-12: the model's plan (TodoWrite), shown as a checklist. */
+  plan: PlanItem[]
+}
+
+export type PlanItem = { content: string; status: 'pending' | 'in_progress' | 'completed' }
+
+const PLAN_MARK: Record<PlanItem['status'], string> = { completed: '☑️', in_progress: '▶️', pending: '⬜' }
+
+/** TodoWrite's input → plan items (anything malformed is dropped). */
+export function parsePlan(input: unknown): PlanItem[] {
+  const todos = (input as { todos?: unknown } | undefined)?.todos
+  if (!Array.isArray(todos)) return []
+  return todos.flatMap((x): PlanItem[] => {
+    const o = x as { content?: unknown; activeForm?: unknown; status?: unknown }
+    const content = typeof o?.content === 'string' ? o.content : ''
+    const status: PlanItem['status'] = o?.status === 'completed' ? 'completed' : o?.status === 'in_progress' ? 'in_progress' : 'pending'
+    return content ? [{ content: status === 'in_progress' && typeof o.activeForm === 'string' && o.activeForm ? o.activeForm : content, status }] : []
+  }).slice(0, 30)
+}
+
+/** The plan as lines: ☑️ done, ▶️ in progress, ⬜ to do, with a done/total head. */
+export function planLines(plan: PlanItem[]): string[] {
+  if (!plan.length) return []
+  const done = plan.filter(p => p.status === 'completed').length
+  return [t('📋 План: {done}/{n}', { done, n: plan.length }), ...plan.map(p => `${PLAN_MARK[p.status]} ${clip(p.content, 120)}`)]
+}
+
+/** The plan as a rich Markdown checklist. */
+export function planMarkdown(plan: PlanItem[]): string {
+  if (!plan.length) return ''
+  const done = plan.filter(p => p.status === 'completed').length
+  return [`**${escapeHtml(t('📋 План: {done}/{n}', { done, n: plan.length }))}**`, ...plan.map(p => `- [${p.status === 'completed' ? 'x' : ' '}] ${p.status === 'in_progress' ? '**' : ''}${escapeHtml(clip(p.content, 120))}${p.status === 'in_progress' ? '**' : ''}`)].join('\n')
 }
 
 /**
@@ -115,6 +147,7 @@ export class Streams {
       closed: false,
       opening: null,
       rich: true,
+      plan: [],
     }
     this.map.set(s.id, st)
     st.opening = this.start(s, st).catch(err => this.d.log(`stream open failed: ${err}`))
@@ -165,6 +198,15 @@ export class Streams {
     this.schedule(s, st)
   }
 
+  /** FR-12: TodoWrite — the plan shows as a live checklist in the progress (whatever the verbosity). */
+  onPlan(s: Session, plan: PlanItem[]): void {
+    const st = this.map.get(s.id)
+    if (!st || st.closed || !plan.length) return
+    st.plan = plan
+    st.dirty = true
+    this.schedule(s, st)
+  }
+
   onText(s: Session, delta: string): void {
     const st = this.map.get(s.id)
     if (!st || st.closed) return
@@ -189,7 +231,11 @@ export class Streams {
   private render(st: Stream): { thinking: string; body: string } {
     const lines = st.lines.slice(-MAX_LINES)
     const hidden = st.lines.length - lines.length
-    const thinking = (hidden > 0 ? t('… ещё {hidden}\n', { hidden }) : '') + lines.join('\n')
+    // FR-13: the current step first, the steps done below it (newest first).
+    const [current, ...past] = [...lines].reverse()
+    const steps = current ? [`▸ ${current}`, ...past.map(l => `· ${l}`), ...(hidden > 0 ? [t('… ещё {hidden}', { hidden })] : [])].join('\n') : ''
+    const plan = planLines(st.plan).join('\n')
+    const thinking = [plan, steps].filter(Boolean).join('\n\n')
     // The answer being written wins over the model's running commentary.
     let body = maskSecrets((st.answer || st.text).trim())
     const max = st.answer ? MAX_ANSWER : MAX_TEXT
@@ -206,8 +252,11 @@ export class Streams {
   private richProgress(st: Stream, thinking: string, body: string): string {
     const { chatId, threadId } = st.chat
     const head = `**${escapeHtml(t('⏳ Работаю…'))}** · ${verboseBadge(prefsFor(chatId, threadId).verbose)} · ${fmtDuration(Date.now() - st.startedAt)}`
-    const steps = thinking ? `<blockquote expandable>${thinking.split('\n').map(escapeHtml).join('<br>')}</blockquote>` : ''
-    return [head, steps, body ? `---\n\n${body}` : ''].filter(Boolean).join('\n\n')
+    // The plan is a checklist of its own; the steps (without the plan's lines) fold into a quote.
+    const plan = planMarkdown(st.plan)
+    const stepText = plan ? thinking.split('\n\n').slice(1).join('\n\n') : thinking
+    const steps = stepText ? `<blockquote expandable>${stepText.split('\n').map(escapeHtml).join('<br>')}</blockquote>` : ''
+    return [head, plan, steps, body ? `---\n\n${body}` : ''].filter(Boolean).join('\n\n')
   }
 
   private async flush(s: Session, st: Stream): Promise<void> {
