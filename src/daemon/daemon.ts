@@ -207,19 +207,8 @@ export class Daemon {
     return all.find(s => !s.passive) ?? all[0] ?? null
   }
 
-  /** Folder of the main session: picked with /main, else MAIN_DIR. */
-  mainKey(): string {
-    return this.store.get('main_dir') ?? settings.mainDir
-  }
-
-  isMain(s: Session): boolean {
-    const key = this.mainKey()
-    return s.projectKey === key || s.cwd === key
-  }
-
   /** The allowlisted user a session belongs to: it runs in USERS_DIR/<user_id>. */
   userIdOf(s: Session): string | null {
-    if (!settings.userSessions) return null
     const m = /^(\d+)$/.exec(relative(settings.usersDir, s.cwd))
     return m ? m[1] : null
   }
@@ -263,10 +252,9 @@ export class Daemon {
     return list[0] ?? null
   }
 
-  /** main: DMs (without user sessions), General, topics without a project; user: one user's DMs; project: its topic. */
-  roleOf(s: Session): 'main' | 'user' | 'project' {
-    if (this.userIdOf(s)) return 'user'
-    return this.isMain(s) ? 'main' : 'project'
+  /** user: one user's DMs and their own messages in General; project: its topic or group. */
+  roleOf(s: Session): 'user' | 'project' {
+    return this.userIdOf(s) ? 'user' : 'project'
   }
 
   /** Sessions ended on purpose (archive, idle timeout): the watchdog stays quiet for them. */
@@ -276,13 +264,6 @@ export class Daemon {
   readonly launching = new Map<string, number>()
   /** dir → the tmux window of its pending launch (launch.ts noteLaunch). */
   readonly launchWindows = new Map<string, string>()
-
-  /** Session for DMs, General and topics without a session of their own. */
-  mainSession(): Session | null {
-    const list = this.activeSessions().filter(s => this.isMain(s))
-    list.sort((a, b) => b.connectedAt - a.connectedAt)
-    return list[0] ?? null
-  }
 
   send(session: Session, msg: DaemonMsg): void {
     try {

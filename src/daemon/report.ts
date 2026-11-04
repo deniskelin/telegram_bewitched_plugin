@@ -49,19 +49,17 @@ export type SessionItem = { s: Session } | { offline: string }
 
 /**
  * The sessions in three sections — the owner's own (their DM session, the
- * owner's id when it is not running, and the main one), the users', the
- * projects' — empty sections left out. /sessions and the dashboard.
+ * owner's id when it is not running), the users', the projects' — empty
+ * sections left out. /sessions and the dashboard.
  */
 export function sessionSections(d: Daemon): { title: string; items: SessionItem[] }[] {
   const all = sortedSessions(d)
   const ownerId = owner()
   const ownSession = ownerId ? d.userSession(ownerId) : undefined
-  const offlineOwner = settings.userSessions && ownerId && !ownSession ? ownerId : null
-  const main = d.mainSession()
   return [
-    { title: t('👑 <b>Владелец</b>'), items: [...(ownSession ? [{ s: ownSession }] : offlineOwner ? [{ offline: offlineOwner }] : []), ...all.filter(s => s === main && s !== ownSession).map(s => ({ s }))] },
+    { title: t('👤 <b>Владелец</b>'), items: ownSession ? [{ s: ownSession }] : ownerId ? [{ offline: ownerId }] : [] },
     { title: t('👥 <b>Пользователи</b>'), items: all.filter(s => d.userIdOf(s) && s !== ownSession).map(s => ({ s })) },
-    { title: t('📂 <b>Проекты</b>'), items: all.filter(s => !d.userIdOf(s) && s !== main).map(s => ({ s })) },
+    { title: t('📂 <b>Проекты</b>'), items: all.filter(s => !d.userIdOf(s)).map(s => ({ s })) },
   ].filter(x => x.items.length)
 }
 
@@ -96,10 +94,10 @@ function shellArg(s: string): string {
   return /^[\w.:%@\/=+,-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`
 }
 
-/** Main session first, then users, then projects by name. */
+/** The owner's session first, then the users', then projects by name. */
 export function sortedSessions(d: Daemon): Session[] {
-  const main = d.mainSession()
-  const rank = (s: Session) => (s === main ? 0 : d.userIdOf(s) ? 1 : 2)
+  const o = owner()
+  const rank = (s: Session) => (o && d.userIdOf(s) === o ? 0 : d.userIdOf(s) ? 1 : 2)
   return d.activeSessions().sort((a, b) => rank(a) - rank(b) || projectTitle(a).localeCompare(projectTitle(b)))
 }
 
@@ -112,18 +110,16 @@ export function projectTitle(s: Session): string {
   return s.topic?.name.replace(/^🗄 /, '') || s.group?.title || s.projectName
 }
 
-/** Главная, the user's name or the project's title, no icon: for buttons. */
+/** The user's name or the project's title, no icon: for buttons. */
 export function sessionShortName(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
-  if (user) return d.userShortName(user)
-  return s === d.mainSession() ? t('Главная') : projectTitle(s)
+  return user ? d.userShortName(user) : projectTitle(s)
 }
 
-/** 👑 Главная, 👤 <user name> or 📂 <project> — plain text. */
+/** 👤 <user name> or 📂 <project> — plain text. */
 export function sessionLabel(d: Daemon, s: Session): string {
   const user = d.userIdOf(s)
-  if (user) return `👤 ${d.userLabel(user)}`
-  return s === d.mainSession() ? t('👑 Главная') : `📂 ${projectTitle(s)}`
+  return user ? `👤 ${d.userLabel(user)}` : `📂 ${projectTitle(s)}`
 }
 
 /** The chat the session answers in: its topic, its user's DMs or the owner's. Its prefs apply there. */
@@ -191,7 +187,6 @@ function projectModelNote(d: Daemon, s: Session, running: string | null): string
 }
 
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {
-  const isMain = s === d.mainSession()
   const now = Date.now()
   const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
   const transcript = transcriptOf(s, argv)
@@ -211,7 +206,6 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     const name = escapeHtml(s.topic.name)
     where.push(`💬 ${link ? `<a href="${link}">${name}</a>` : name}`)
   } else if (user) where.push(t('💬 личка и свои сообщения в General'))
-  else if (isMain) where.push(settings.userSessions ? t('💬 запасная: топики при TOPIC_NO_SESSION=main') : t('💬 личка и General'))
   if (where.length) head.push(where.join(' · '))
 
   const main: string[] = []
@@ -250,7 +244,7 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
   }
 
   const more = [
-    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${user ? t('пользователь {user}', { user }) : isMain ? t('главная') : t('проектная')}`,
+    `🆔 <code>#${s.id}</code>${s.claudePid ? ` · pid <code>${s.claudePid}</code>` : ''} · ${user ? t('пользователь {user}', { user }) : t('проектная')}`,
     `📁 <code>${escapeHtml(s.cwd)}</code>`,
   ]
   if (loc) more.push(t('🖥 сессия {v} · окно {v2} «{v3}» · панель {v4}', { v: escapeHtml(loc.session), v2: escapeHtml(loc.window), v3: escapeHtml(loc.windowName), v4: escapeHtml(loc.pane) }))
@@ -284,9 +278,4 @@ export async function passiveBlock(d: Daemon): Promise<string | null> {
     items.push(lines.join('\n'))
   }
   return t('👻 <b>Без канала</b> ({length}) — сообщений не получают\n', { length: list.length }) + items.join('\n')
-}
-
-/** Footer of the /sessions list. With user sessions a main one that isn't running is no news. */
-export function footer(d: Daemon): string {
-  return `👑 MAIN_DIR: <code>${escapeHtml(d.mainKey())}</code>${d.mainSession() || settings.userSessions ? '' : t(' · главная не запущена')}`
 }

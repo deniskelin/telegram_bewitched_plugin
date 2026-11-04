@@ -52,7 +52,7 @@ async function confirmInvite(d: Daemon, ctx: Context, u: Shared): Promise<void> 
     '',
     t('Что сделаю:'),
     t('• добавлю в список доступа бота (<code>access.json</code>);'),
-    settings.userSessions ? t('• создам папку <code>{v}</code> и запущу его сессию в tmux;', { v: escapeHtml(join(settings.usersDir, u.id)) }) : t('• его сообщения будет получать главная сессия (USER_SESSIONS=off);'),
+    t('• создам папку <code>{v}</code> и запущу его сессию в tmux;', { v: escapeHtml(join(settings.usersDir, u.id)) }),
     d.topicsChatId ? t('• сделаю одноразовую ссылку в группу с топиками;') : '',
     t('• пришлю приглашение, которое останется переслать.'),
     '',
@@ -91,7 +91,7 @@ export async function onUserAdded(d: Daemon, id: string): Promise<void> {
   const name = d.userLabel(id)
   const done: string[] = [t('👥 <b>{v}</b>{v2} в списке доступа.', { v: escapeHtml(name), v2: name !== id ? ` (id <code>${id}</code>)` : '' })]
   let window: string | null = null
-  if (settings.userSessions) {
+  {
     const dir = join(settings.usersDir, id)
     mkdirSync(dir, { recursive: true })
     done.push(t('📁 Папка <code>{v}</code>.', { v: escapeHtml(dir) }))
@@ -153,7 +153,7 @@ export function newUsers(d: Daemon): string[] {
   const known = knownUsers(d)
   const fresh = known
     ? allow.filter(id => !known.has(id))
-    : allow.slice(1).filter(id => settings.userSessions && !existsSync(join(settings.usersDir, id)))
+    : allow.slice(1).filter(id => !existsSync(join(settings.usersDir, id)))
   d.store.set('known_users', JSON.stringify(allow))
   return fresh
 }

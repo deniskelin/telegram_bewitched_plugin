@@ -20,7 +20,7 @@ import { isOwner, loadAccess, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import { t } from '../i18n/index.ts'
-import { MAIN_PENDING_KEY, type Daemon } from './daemon.ts'
+import { userPendingKey, type Daemon } from './daemon.ts'
 import { inChat } from './lang.ts'
 import { attachTarget, confirmHint, endSession, idProjectDir, launchOnce, manualCmd, screenKb, sessionName } from './launch.ts'
 import { show, type Screen } from './menu.ts'
@@ -99,7 +99,7 @@ function bindScreen(d: Daemon, chatId: string, title: string): Screen {
     kb: new InlineKeyboard([
       [button(clip(t('📁 Новый: {dir}', { dir: newDir(chatId).replace(process.env.HOME ?? '\0', '~') }), 40), `gp:new:${chatId}`, 'success')],
       [button(t('📂 Выбрать проект'), `gp:ask:${chatId}`)],
-      [button(t('🚫 Не проект (главная сессия)'), `gp:none:${chatId}`)],
+      [button(t('🚫 Не проект (отвечает личная сессия автора)'), `gp:none:${chatId}`)],
     ]),
   }
 }
@@ -155,22 +155,25 @@ async function bind(d: Daemon, chatId: string, dir: string | null, title: string
     } else await launchForGroup(d, chatId, dir)
     return
   }
-  const main = d.mainSession()
+  // Not a project: each waiting message goes to its author's own session (queued while it is not running).
   for (const p of waiting) {
-    if (main) d.deliver(main, p.content, p.meta, { chatId, isPrivate: false })
-    else d.store.addPending(MAIN_PENDING_KEY, p.content, p.meta)
+    const uid = p.meta.user_id
+    if (!uid) continue
+    const s = d.userSession(uid)
+    if (s) d.deliver(s, p.content, p.meta, { chatId, isPrivate: false })
+    else d.store.addPending(userPendingKey(uid), p.content, p.meta)
   }
 }
 
 export function groupsScreen(d: Daemon): Screen {
   const all = Object.entries(groupBindings(d))
-  const lines = [t('👥 <b>Группы</b>'), all.length ? t('Обычные группы без топиков: проект или главная сессия.') : t('Ни одна группа ещё не привязана. Добавьте бота в группу и разрешите её: <code>/telegram-bewitched:access group add &lt;id&gt;</code>.')]
+  const lines = [t('👥 <b>Группы</b>'), all.length ? t('Обычные группы без топиков: проект или личные сессии авторов.') : t('Ни одна группа ещё не привязана. Добавьте бота в группу и разрешите её: <code>/telegram-bewitched:access group add &lt;id&gt;</code>.')]
   const rows = []
   for (const [chatId, b] of all) {
     const s = b.dir ? d.sessionForProject(b.dir) : null
     lines.push(b.dir
       ? t('• <b>{title}</b> → <code>{dir}</code>{state}', { title: escapeHtml(b.title), dir: escapeHtml(b.dir), state: s ? t(' · сессия #{id}', { id: s.id }) : t(' · сессия не запущена') })
-      : t('• <b>{title}</b> → главная сессия', { title: escapeHtml(b.title) }))
+      : t('• <b>{title}</b> → личные сессии авторов', { title: escapeHtml(b.title) }))
     rows.push(b.dir
       ? [button(clip(`🚫 ${b.title}`, 40), `gp:unbind:${chatId}`)]
       : [button(clip(t('📁 Сделать проектом: {title}', { title: b.title }), 40), `gp:redo:${chatId}`)])
@@ -245,7 +248,7 @@ export async function handleGroupCallback(d: Daemon, ctx: Context, data: string)
     case 'none':
       await answer()
       await bind(d, chatId, null, title)
-      await done(t('✅ Группа <b>{title}</b> не проект: ей отвечает главная сессия.', { title: escapeHtml(title) }))
+      await done(t('✅ Группа <b>{title}</b> не проект: на сообщение отвечает личная сессия его автора.', { title: escapeHtml(title) }))
       return true
     case 'unbind':
       await answer()

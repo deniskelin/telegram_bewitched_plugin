@@ -11,6 +11,7 @@
 import type { Bot, Context } from 'grammy'
 import { spawn } from 'child_process'
 import { can } from '../access.ts'
+import { join } from 'path'
 import { settings } from '../config.ts'
 import { clip, maskSecrets } from '../format.ts'
 import { t } from '../i18n/index.ts'
@@ -150,9 +151,10 @@ function chatOf(ctx: Context): ChatRef {
   return { chatId: String(ctx.chat!.id), threadId, isPrivate: ctx.chat!.type === 'private' }
 }
 
-/** The folder and session of a chat: a project topic's, else the main one. */
-function placeOf(d: Daemon, c: ChatRef): { dir: string; session?: Session } {
-  const dir = c.threadId != null ? d.store.topic(c.chatId, c.threadId)?.project_key ?? d.mainKey() : d.mainKey()
+/** The folder and session of a chat: a project topic's, else the sender's own folder. */
+function placeOf(d: Daemon, c: ChatRef, fromId: string): { dir: string; session?: Session } {
+  const own = join(settings.usersDir, fromId)
+  const dir = c.threadId != null ? d.store.topic(c.chatId, c.threadId)?.project_key ?? own : own
   return { dir, session: d.activeSessions().find(s => s.cwd === dir || s.projectKey === dir) }
 }
 
@@ -163,7 +165,7 @@ export function registerOnceCommands(d: Daemon, bot: Bot): void {
     const extra = c.threadId != null ? { message_thread_id: c.threadId } : {}
     let text = String(ctx.match ?? '').trim()
     const m = /^(claude|codex)\s+([\s\S]+)$/i.exec(text)
-    const { dir } = placeOf(d, c)
+    const { dir } = placeOf(d, c, String(ctx.from.id))
     let engine: EngineId = projectEngine(d, dir).engine
     if (m) { engine = m[1].toLowerCase() as EngineId; text = m[2].trim() }
     if (!text) return void ctx.reply(t('Формат: /once [claude|codex] <вопрос> — один ход в папке топика без сессии, только чтение.'), extra)
@@ -181,7 +183,7 @@ export function registerOnceCommands(d: Daemon, bot: Bot): void {
     if (!ctx.from || !can(ctx.from.id, 'control') || !ctx.chat) return
     const c = chatOf(ctx)
     const extra = c.threadId != null ? { message_thread_id: c.threadId } : {}
-    const { session } = placeOf(d, c)
+    const { session } = placeOf(d, c, String(ctx.from.id))
     if (!session) return void ctx.reply(t('В этом чате нет подключённой сессии.'), extra)
     const err = await reviewSession(d, session, c)
     if (err) await ctx.reply(err, extra)

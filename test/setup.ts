@@ -19,11 +19,9 @@ process.env.GROUP_EDIT_INTERVAL_MS = '50'
 process.env.STREAM_MIN_INTERVAL_MS = '50'
 process.env.NOTIFY_LONG_SEC = '0'
 process.env.PROJECTS_DIR = join(root, 'projects')
-process.env.MAIN_DIR = join(root, 'main')
 process.env.USERS_DIR = join(root, 'user')
-// The 1.0.x routing; the session-types tests switch these on.
-process.env.USER_SESSIONS = 'off'
-process.env.TOPIC_NO_SESSION = 'main'
+// A project topic without a session queues its messages (no tmux in tests); the session-types tests switch to launch.
+process.env.TOPIC_NO_SESSION = 'queue'
 process.env.WATCHDOG_GRACE_SEC = '3600'
 process.env.SCREEN_REDRAW_MS = '0'
 process.env.HANDOFF_SUMMARY_SEC = '0'

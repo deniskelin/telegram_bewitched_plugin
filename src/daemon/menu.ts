@@ -14,7 +14,7 @@ import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
-import { footer, passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sessionShortName, sortedSessions, statusLabel } from './report.ts'
+import { passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sessionShortName, sortedSessions, statusLabel } from './report.ts'
 import { button } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
@@ -71,7 +71,6 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
   const passive = await passiveBlock(d)
   if (passive) blocks.push(passive)
-  blocks.push(footer(d))
   let text = blocks.join('\n\n')
   if (text.length > MAX_MESSAGE) text = text.slice(0, MAX_MESSAGE - 1) + '…'
 
@@ -111,7 +110,6 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     text += `\n\n<i>${t('Подробность прогресса и «✅ готово» {where}:', { where })}</i>`
   } else if (group === 'm') {
     const actions: Btn[] = []
-    if (s !== d.mainSession() && !user) actions.push(button(t('👑 Сделать главной'), `sm:main:${s.id}`))
     if (s.topic) actions.push(button(t('🗄 В архив'), `sm:ar:${s.id}`))
     if (s.tmuxPane) actions.push(button(t('♻️ Перезапустить'), `wd:rs:${s.id}`))
     if (actions.length) rows.push(actions)
@@ -420,7 +418,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   }
   if (action === 'owner' || action === 'ownerlaunch') {
     const ownerId = owner()
-    if (!ownerId || !settings.userSessions) { await answer(); return true }
+    if (!ownerId) { await answer(); return true }
     const current = d.userSession(ownerId)
     if (current) { await show(ctx, await sessionScreen(d, current)); await answer(); return true }
     const dir = join(settings.usersDir, ownerId)
@@ -540,9 +538,6 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     toast = t('🔐 Разрешения снова спрашиваются')
   } else if (action === 'stop') {
     toast = stopSession(d, s, 'menu') === 'interrupted' ? t('⏹ Остановлено') : t('Сейчас нечего останавливать.')
-  } else if (action === 'main') {
-    d.store.set('main_dir', s.projectKey)
-    toast = t('👑 Главная → #{id}', { id: s.id })
   } else if (action === 'ar' && s.topic) {
     await answer()
     const kb = new InlineKeyboard([[button(t('✅ Да, в архив'), `sm:arok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:m`)]])
@@ -565,7 +560,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     toast = t('✅ готово: {v}', { v: t(NOTIFY_DONE_INFO[value]) })
   }
   // Stay in the group the button was in.
-  const group: CardGroup | undefined = action === 'v' || action === 'n' ? 'n' : action === 'aar' || action === 'main' ? 'm' : ['cmp', 'clr', 'clrok', 'model'].includes(action) ? 'c' : undefined
+  const group: CardGroup | undefined = action === 'v' || action === 'n' ? 'n' : action === 'aar' ? 'm' : ['cmp', 'clr', 'clrok', 'model'].includes(action) ? 'c' : undefined
   await show(ctx, await sessionScreen(d, s, group))
   await answer(toast)
   return true
