@@ -4,7 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
@@ -289,6 +290,13 @@ describe('topics', () => {
       expect(m.content).toBe('Отчёт: Codex не применяет настройки')
       expect(m.meta.thread_id).toBe(String(thread))
       expect(m.meta.from_session_name).toBe('writer')
+      // notify by topic name (how Codex posted its review), with an attachment: heard too, the file's path included.
+      const topicName = d.sessions.get(sessionId)!.topic!.name
+      const f = join(mkdtempSync(join(tmpdir(), 'relay-')), 'review.md')
+      writeFileSync(f, '# review')
+      await other.call('notify', { topic: topicName, text: 'Ревью: 10 замечаний', files: [f] })
+      const n = await client.inbound(x => x.meta.event === 'session_message' && x.content.startsWith('Ревью'))
+      expect(n.content).toContain(`[attached files: ${f}]`)
       // A reply into its own topic goes nowhere else.
       const writerThread = Number(d.store.topicForProject(group, '/tmp/writer')!.thread_id)
       await other.call('reply', { chat_id: group, message_thread_id: String(writerThread), text: 'себе' })
