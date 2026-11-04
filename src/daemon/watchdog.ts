@@ -256,7 +256,8 @@ export async function closePhantomTurns(d: Daemon, now = Date.now()): Promise<vo
   for (const s of d.activeSessions()) {
     // Only a turn the session began (a hook came after it opened): one that never took its message is
     // the «не берёт сообщение» watch's (checkTurns), not this one's.
-    if (!s.turn || !s.tmuxPane || s.lastHookAt < s.turn.start) continue
+    // (A turn opened by a hook starts a moment after that hook was noted: a second of slack.)
+    if (!s.turn || !s.tmuxPane || s.lastHookAt < s.turn.start - 1000) continue
     const quiet = now - Math.max(s.lastHookAt, s.turn.start)
     if (quiet < PHANTOM_TURN_MS) continue
     if ([...d.permissions.values()].some(p => p.sessionId === s.id)) continue

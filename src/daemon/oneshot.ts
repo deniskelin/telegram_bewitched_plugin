@@ -25,12 +25,18 @@ import { button } from './stream.ts'
 export type OnceResult = { ok: boolean; text: string; ms: number }
 
 /** Read-only tools for a one-shot Claude turn: it may look, not change. */
+const CLAUDE_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'Bash']
 const CLAUDE_READ_TOOLS = ['Read', 'Grep', 'Glob', 'LS', 'Bash(git diff:*)', 'Bash(git log:*)', 'Bash(git status:*)', 'Bash(git show:*)']
 
 /** The command line of a one-shot turn. Never through a shell: the prompt is one argv item. */
 export function onceArgv(engine: EngineId, prompt: string, model?: string): { bin: string; args: string[] } | null {
   if (engine === 'claude') {
-    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose', '--allowedTools', CLAUDE_READ_TOOLS.join(','), '--disallowedTools', 'Edit,Write,NotebookEdit']
+    // F02: read-only by configuration, not by asking the model. --restricted ignores the user's and project's
+    // settings (no inherited allow rules) and keeps only the tools --tools names; --strict-mcp-config without
+    // --mcp-config loads no MCP server; dontAsk denies whatever is not in --allowedTools (Bash beyond git reads).
+    const args = ['-p', prompt, '--output-format', 'stream-json', '--verbose',
+      '--restricted', '--strict-mcp-config', '--tools', CLAUDE_TOOLS.join(','), '--permission-mode', 'dontAsk',
+      '--allowedTools', CLAUDE_READ_TOOLS.join(','), '--disallowedTools', 'Edit,Write,NotebookEdit']
     if (model && /^[\w.-]+$/.test(model)) args.push('--model', model)
     return { bin: settings.claudeBin, args }
   }

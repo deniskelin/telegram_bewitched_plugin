@@ -152,6 +152,38 @@ export function fmtDuration(ms: number): string {
  * At most `max` characters, cut on whole code points (a cut through an emoji's
  * surrogate pair makes Telegram reject the text as invalid UTF-8), with "…".
  */
+/**
+ * Telegram HTML cut to max characters without breaking it (F04): at a line boundary where it can be, never
+ * inside a tag, an entity or a surrogate pair; tags left open (a <pre> across lines) are closed; «…» marks the cut.
+ */
+export function clipHtml(html: string, max: number): string {
+  if (html.length <= max) return html
+  const budget = max - 80 // room for the closing tags and the mark
+  const lines = html.split('\n')
+  const kept: string[] = []
+  let len = 0
+  for (const line of lines) {
+    if (len + line.length + 1 > budget) break
+    kept.push(line)
+    len += line.length + 1
+  }
+  if (!kept.length) {
+    // One huge line: cut inside it, then drop a half tag or entity at the end.
+    const cut = Array.from(lines[0]).slice(0, budget).join('')
+    kept.push(cut.replace(/<[^>]*$/, '').replace(/&[#\w]*$/, ''))
+  }
+  let out = kept.join('\n')
+  const open: string[] = []
+  for (const m of out.matchAll(/<(\/?)([a-zA-Z][\w-]*)[^>]*?(\/?)>/g)) {
+    if (m[3]) continue
+    const tag = m[2].toLowerCase()
+    if (!m[1]) open.push(tag)
+    else { const i = open.lastIndexOf(tag); if (i >= 0) open.splice(i, 1) }
+  }
+  out += open.reverse().map(t => `</${t}>`).join('')
+  return `${out}\n…`
+}
+
 export function clip(s: string, max: number): string {
   const chars = Array.from(s)
   return chars.length <= max ? s : chars.slice(0, max - 1).join('') + '…'

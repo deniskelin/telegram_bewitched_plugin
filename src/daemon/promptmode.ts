@@ -36,13 +36,17 @@ const LABELS: Record<Preset, string> = {
 
 /** Text for the model: not translated. */
 const PRESET_TEXT: Record<Exclude<Preset, 'default' | 'custom'>, string> = {
-  review: 'Mode for this topic: REVIEW. Read code, run read-only commands and explain; never modify files, commit or push. Point at problems with file:line and suggest fixes as text.', // i18n-ignore
+  review: 'Mode for this topic: REVIEW. Read code with the file tools and explain; the shell and the editing tools are switched off here. Never modify files, commit or push by any other means. Point at problems with file:line and suggest fixes as text.', // i18n-ignore
   chat: 'Mode for this topic: CONVERSATION. Be a thoughtful conversation partner: answer from knowledge and the chat history. Do not run shell commands or edit files.', // i18n-ignore
 }
 
-/** Claude Code tools a preset takes away. */
+/**
+ * Claude Code tools a preset takes away. F02: review has no shell either — a deny rule beats any allow rule
+ * the user's settings carry, so «read only» does not rest on the model's word. The bridge's own MCP stays
+ * (the session answers through it); other MCP servers are not limited by this.
+ */
 const DISALLOWED: Partial<Record<Preset, string[]>> = {
-  review: ['Edit', 'Write', 'NotebookEdit'],
+  review: ['Bash', 'Edit', 'Write', 'NotebookEdit'],
   chat: ['Bash', 'Edit', 'Write', 'NotebookEdit'],
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { chunk, clip, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
+import { chunk, clip, clipHtml, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '../src/format.ts'
 import { isPassiveLaunch } from '../src/proc.ts'
 import { Store } from '../src/db.ts'
 import { parseOptions } from '../src/daemon/buttons.ts'
@@ -66,6 +66,17 @@ describe('passive launch detection', () => {
 })
 
 describe('store', () => {
+  test('F03: search from General (no topic) stays out of the topics; undefined searches them all', () => {
+    const s = new Store(':memory:')
+    const row = (id: number, thread: number | null) => s.addMessage({ chat_id: '-1001', thread_id: thread, message_id: id, direction: 'in', from_id: '111', from_name: 't', date: id, text: 'reviewneedle', kind: 'text', file_id: null, reply_to: null, quote: null, forward: null })
+    row(1, null)
+    row(2, 37)
+    expect(s.search('reviewneedle', 10, '-1001', null).map(m => m.thread_id)).toEqual([null])
+    expect(s.search('reviewneedle', 10, '-1001', 37).map(m => m.thread_id)).toEqual([37])
+    expect(s.search('reviewneedle', 10, '-1001').map(m => m.thread_id).sort()).toEqual([37, null].sort())
+    expect(s.search('reviewneedle', 10).length).toBe(2)
+  })
+
   test('history, search, topics, pending', () => {
     const s = new Store(':memory:')
     const base = { thread_id: 7, from_id: '1', from_name: 'den', kind: 'text', file_id: null, reply_to: null, quote: null, forward: null }
@@ -918,10 +929,10 @@ describe('FR-20: prompt modes and conversation history', async () => {
     setPromptMode(d, '/p/x', { preset: 'review' })
     const p = launchPrompt(d, '/p/x')!
     expect(readFileSync(p.file, 'utf8')).toContain('REVIEW')
-    expect(p).toMatchObject({ disallowed: ['Edit', 'Write', 'NotebookEdit'], readOnly: true })
+    expect(p).toMatchObject({ disallowed: ['Bash', 'Edit', 'Write', 'NotebookEdit'], readOnly: true })
     const cmd = claude.launchCommand({ prompt: p })
     expect(cmd).toContain(`--append-system-prompt "$(cat '${p.file}')"`)
-    expect(cmd).toContain('--disallowedTools Edit,Write,NotebookEdit')
+    expect(cmd).toContain('--disallowedTools Bash,Edit,Write,NotebookEdit')
     setPromptMode(d, '/p/x', { preset: 'custom', text: 'Отвечай как пират; $(rm -rf /)' })
     const c = launchPrompt(d, '/p/x')!
     expect(readFileSync(c.file, 'utf8')).toContain('пират')
@@ -977,6 +988,10 @@ describe('FR-17: one-shot turns', async () => {
     const c = onceArgv('claude', 'вопрос; rm -rf /', 'claude-haiku-5-5')!
     expect(c.args).toContain('вопрос; rm -rf /')
     expect(c.args).toEqual(expect.arrayContaining(['-p', '--output-format', 'stream-json', '--disallowedTools', 'Edit,Write,NotebookEdit', '--model', 'claude-haiku-5-5']))
+    // F02: read-only by configuration — no inherited settings or MCP servers, only the listed tools, the rest denied.
+    expect(c.args).toEqual(expect.arrayContaining(['--restricted', '--strict-mcp-config', '--permission-mode', 'dontAsk']))
+    expect(c.args[c.args.indexOf('--tools') + 1]).toBe('Read,Grep,Glob,LS,Bash')
+    expect(c.args).not.toContain('--mcp-config')
     expect(reviewPrompt('сделай X', '+a\n-b', 'Claude Code')).toContain('```diff\n+a\n-b\n```')
   })
 })
@@ -1080,5 +1095,130 @@ describe('buttonIcon', () => {
     expect(buttonIcon('• 🗑 Удалить')).toEqual({ label: '• Удалить', icon: expect.any(String) })
     expect(buttonIcon('🧠 opus')).toEqual({ label: '🧠 opus' })
     expect(buttonIcon('Отмена')).toEqual({ label: 'Отмена' })
+  })
+})
+
+describe('clipHtml (F04)', () => {
+  const balanced = (h: string) => {
+    const open: string[] = []
+    for (const m of h.matchAll(/<(\/?)([a-z][\w-]*)[^>]*>/g)) { if (!m[1]) open.push(m[2]); else if (open.pop() !== m[2]) return false }
+    return open.length === 0
+  }
+  test('a long list is cut between lines: every tag closed, no half entity', () => {
+    const line = (i: number) => `${i}. <tg-emoji emoji-id="5256261335682941418">🤖</tg-emoji> <b>${'x'.repeat(34)} &amp; ${i}</b> · свободна`
+    const html = Array.from({ length: 60 }, (_, i) => line(i)).join('\n')
+    const out = clipHtml(html, 4000)
+    expect(out.length).toBeLessThanOrEqual(4000)
+    expect(balanced(out)).toBe(true)
+    expect(out.endsWith('\n…')).toBe(true)
+    expect(out).not.toMatch(/&[a-z]*\n…$/)
+  })
+  test('a <pre> across lines is closed; one huge line is cut outside a tag', () => {
+    const pre = `<b>Git</b>\n<pre>${Array.from({ length: 400 }, (_, i) => `line ${i} &lt;x&gt;`).join('\n')}</pre>`
+    const out = clipHtml(pre, 1000)
+    expect(balanced(out)).toBe(true)
+    expect(out).toContain('</pre>')
+    const one = clipHtml(`<b>${'й'.repeat(5000)}</b>`, 500)
+    expect(balanced(one)).toBe(true)
+    expect(one.length).toBeLessThanOrEqual(500)
+  })
+  test('short text is unchanged', () => expect(clipHtml('<b>a</b>', 100)).toBe('<b>a</b>'))
+})
+
+describe('reminders (F05)', () => {
+  test('a failed post or delivery is kept and retried; what went through is not repeated; it gives up after five tries', async () => {
+    const { addReminder, fireDue, listReminders } = await import('../src/daemon/reminders.ts')
+    let failPost = true
+    let failRoute = false
+    const posts: string[] = []
+    const routed: string[] = []
+    const d = {
+      store: new Store(':memory:'), log: () => {},
+      bot: { api: { sendMessage: async (_c: string, text: string) => { if (failPost) throw new Error('network'); posts.push(text) } } },
+      routeText: async (_c: unknown, _u: string, text: string) => { if (failRoute) throw new Error('route'); routed.push(text) },
+    } as never
+    addReminder(d, { chatId: '111', userId: '111', text: 'note', at: 1, daily: false, mode: 'note' })
+    await fireDue(d, 1000)
+    expect(listReminders(d).length).toBe(1)
+    expect(posts).toEqual([])
+    failPost = false
+    await fireDue(d, 1000 + 61_000)
+    expect(posts.length).toBe(1)
+    expect(listReminders(d).length).toBe(0)
+
+    // A task: posted, delivery failed — the retry delivers only, no second post.
+    addReminder(d, { chatId: '111', userId: '111', text: 'task', at: 1, daily: false, mode: 'task' })
+    failRoute = true
+    await fireDue(d, 200_000)
+    expect(posts.length).toBe(2)
+    expect(routed).toEqual([])
+    failRoute = false
+    await fireDue(d, 300_000)
+    expect(posts.length).toBe(2)
+    expect(routed.length).toBe(1)
+    expect(listReminders(d).length).toBe(0)
+
+    // Never goes through: dropped after five tries.
+    failPost = true
+    addReminder(d, { chatId: '111', userId: '111', text: 'lost', at: 1, daily: false, mode: 'note' })
+    for (let i = 0; i < 6; i++) await fireDue(d, 400_000 + i * 61_000)
+    expect(listReminders(d).length).toBe(0)
+  })
+})
+
+describe('button icons fallback (F06)', () => {
+  test('a message refused for its custom icons goes again with plain emoji, and icons stay off', async () => {
+    const { FakeTelegram } = await import('./fake-telegram.ts')
+    const { createBot, buttonIcons } = await import('../src/tg.ts')
+    const { button } = await import('../src/daemon/stream.ts')
+    const tg = new FakeTelegram()
+    const bot = createBot('123:TEST', tg.apiRoot)
+    tg.failures.set('sendMessage', { code: 400, description: 'Bad Request: custom emoji not allowed', when: b => JSON.stringify(b.reply_markup ?? '').includes('icon_custom_emoji_id') })
+    try {
+      const kb = { inline_keyboard: [[button('⚙️ Settings', 'x'), button('• 🗑 Delete', 'y')]] }
+      expect(JSON.stringify(kb)).toContain('icon_custom_emoji_id')
+      await bot.api.sendMessage('111', 'menu', { reply_markup: kb })
+      const calls = tg.callsOf('sendMessage')
+      expect(calls.length).toBe(2)
+      const plain = calls[1].body.reply_markup as { inline_keyboard: { text: string; icon_custom_emoji_id?: string }[][] }
+      expect(plain.inline_keyboard[0].map(b => b.icon_custom_emoji_id)).toEqual([undefined, undefined])
+      expect(plain.inline_keyboard[0].map(b => b.text)).toEqual(['⚙️ Settings', '• 🗑️ Delete'.replace('🗑️', '🗑')])
+      expect(buttonIcons.on).toBe(false)
+      await bot.api.sendMessage('111', 'again', { reply_markup: { inline_keyboard: [[button('⚙️ Settings', 'x')]] } })
+      expect(tg.callsOf('sendMessage').length).toBe(3)
+    } finally {
+      buttonIcons.on = true
+      tg.stop?.()
+    }
+  })
+})
+
+describe('gitDiff (F07)', () => {
+  test('untracked files are in the diff; ignored, binary and large ones are not shown; a repo without commits works', async () => {
+    const { gitDiff } = await import('../src/daemon/git.ts')
+    const { execFileSync } = await import('child_process')
+    const { mkdtempSync, writeFileSync } = await import('fs')
+    const { tmpdir } = await import('os')
+    const { join } = await import('path')
+    const dir = mkdtempSync(join(tmpdir(), 'gd-'))
+    const git = (...a: string[]) => execFileSync('git', a, { cwd: dir, stdio: 'ignore' })
+    git('init', '-q')
+    writeFileSync(join(dir, '.gitignore'), 'secret.txt\n')
+    writeFileSync(join(dir, 'new-feature.ts'), 'export const x = 1\n')
+    writeFileSync(join(dir, 'secret.txt'), 'ignored\n')
+    writeFileSync(join(dir, 'blob.bin'), Buffer.from([0, 1, 2]))
+    // No HEAD yet: untracked files still show.
+    let diff = (await gitDiff(dir))!
+    expect(diff).toContain('+++ b/new-feature.ts')
+    expect(diff).toContain('+export const x = 1')
+    expect(diff).toContain('Binary file blob.bin')
+    expect(diff).not.toContain('secret.txt\n+')
+    expect(diff).not.toContain('+ignored')
+    git('add', '.gitignore')
+    git('-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-qm', 'init')
+    writeFileSync(join(dir, '.gitignore'), 'secret.txt\n*.log\n')
+    diff = (await gitDiff(dir))!
+    expect(diff).toContain('+*.log')
+    expect(diff).toContain('+++ b/new-feature.ts')
   })
 })
