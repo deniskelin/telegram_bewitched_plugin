@@ -38,6 +38,11 @@ describe('format', () => {
 
   test('summarizeTool', () => {
     expect(summarizeTool('Bash', { command: 'npm test', description: 'Run tests' })).toBe('💻 Run tests')
+    expect(summarizeTool('Bash', { command: 'cd /x && sed -n 1,80p src/daemon/remote.ts; grep -rn foo src' })).toBe('📖 чтение: daemon/remote.ts')
+    expect(summarizeTool('Bash', { command: "grep -rn 'x' src | head" })).toBe('🔎 поиск в файлах')
+    expect(summarizeTool('Bash', { command: 'git checkout -qb feat/x && python3 - <<EOF' })).toBe('🌿 git checkout')
+    expect(summarizeTool('Bash', { command: "python3 - <<'EOF'\nprint(1)\nEOF" })).toBe('✏️ правка файлов')
+    expect(summarizeTool('Bash', { command: 'bun test 2>&1 | tail' })).toBe('🧪 тесты')
     expect(summarizeTool('Read', { file_path: '/root/projects/x/src/a.ts' })).toBe('📖 src/a.ts')
     expect(summarizeTool('mcp__github__create_pr', {})).toBe('🔌 github: create_pr')
     expect(summarizeTool('mcp__plugin_telegram-bewitched_telegram__reply', { text: 'hi' })).toBe('💬 ответ в Telegram')
