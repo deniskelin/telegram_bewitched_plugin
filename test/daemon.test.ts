@@ -893,7 +893,10 @@ describe('topics', () => {
     await hook('MessageDisplay', { delta: 'Итог: всё ' })
     await hook('MessageDisplay', { delta: 'готово.' })
     const md = (c: { body: Record<string, unknown> }) => String((c.body.rich_message as { markdown?: string } | undefined)?.markdown ?? '')
-    await tg.waitFor('editMessageText', c => md(c).includes('Итог: всё') && md(c).includes('готово.') && !md(c).includes('Сейчас посмотрю'))
+    // The narration stays among the steps (💬), the answer below the divider is only the answer.
+    const answer = (c: { body: Record<string, unknown> }) => md(c).split('---').slice(1).join('---')
+    const prog = await tg.waitFor('editMessageText', c => answer(c).includes('Итог: всё') && answer(c).includes('готово.') && !answer(c).includes('Сейчас посмотрю'))
+    expect(md(prog)).toContain('💬 Сейчас посмотрю файлы.')
     const r = await client.call('reply', { chat_id: group, use_last_message: true, format: 'rich' })
     expect(r.ok).toBe(true)
     const edited = await tg.waitFor('editMessageText', c => String((c.body.rich_message as { markdown?: string } | undefined)?.markdown ?? '').startsWith('Итог: всё'))

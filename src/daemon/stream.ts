@@ -21,6 +21,15 @@ import { inChat } from './lang.ts'
 import { BUTTON_EMOJI } from './button-emoji.ts'
 
 const MAX_LINES = 12
+/** A kept explanation: one line, at most this long. */
+const MAX_NOTE = 300
+
+/** The model's text before a tool call as one 💬 step line; '' when there was none. */
+export function narration(text: string): string {
+  const one = maskSecrets(text).replace(/\s+/g, ' ').trim()
+  if (!one) return ''
+  return `💬 ${one.length > MAX_NOTE ? one.slice(0, MAX_NOTE - 1) + '…' : one}`
+}
 const MAX_TEXT = 1500
 /** The streamed answer may be longer: it becomes the reply. */
 const MAX_ANSWER = 3500
@@ -35,6 +44,8 @@ type Stream = {
   text: string
   /** Text since the last tool call: the answer as it is written. */
   answer: string
+  /** The same text for the steps: before a tool call it was the model's explanation, kept as a 💬 step. */
+  note: string
   progressMsgId: number | null
   dirty: boolean
   lastFlush: number
@@ -156,6 +167,7 @@ export class Streams {
       lines: [],
       text: '',
       answer: '',
+      note: '',
       progressMsgId: null,
       dirty: false,
       lastFlush: 0,
@@ -209,7 +221,11 @@ export class Streams {
     const st = this.map.get(s.id)
     if (!st || st.closed) return
     if (st.answer) { st.answer = ''; st.dirty = true }
+    const note = narration(st.note)
+    st.note = ''
     if (prefsFor(st.chat.chatId, st.chat.threadId).verbose < 1) return
+    // What the model said before the call stays among the steps, not only the call itself.
+    if (note) st.lines.push(note)
     st.lines.push(line)
     if (st.lines.length > 50) st.lines.splice(0, st.lines.length - 50)
     st.dirty = true
@@ -229,6 +245,7 @@ export class Streams {
     const st = this.map.get(s.id)
     if (!st || st.closed) return
     const p = prefsFor(st.chat.chatId, st.chat.threadId)
+    st.note = (st.note + delta).slice(-2000)
     if (p.streamAnswer) st.answer = (st.answer + delta).slice(-8000)
     if (p.verbose >= 2) st.text = (st.text + delta).slice(-8000)
     if (!p.streamAnswer && p.verbose < 2) return
