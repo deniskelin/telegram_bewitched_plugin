@@ -173,8 +173,7 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
 /**
  * «🔢 Расход хода» (a chat setting, off by default): what the turn cost, read
  * from the transcript — the model is not asked. FR-11: appended to the turn's
- * answer itself (a grey footer and a collapsed table); a silent line under the
- * bot's last message when there is no such answer or the edit fails. The
+ * answer itself (a grey footer and a collapsed table); when there is no such answer or the edit fails, the same block goes as a message of its own under the bot's last one. The
  * transcript lags the Stop hook a little, hence the wait.
  */
 function reportTurnCost(d: Daemon, s: Session, start: number, changes: TurnChanges | null = null): void {
@@ -203,6 +202,13 @@ function reportTurnCost(d: Daemon, s: Session, start: number, changes: TurnChang
       disable_notification: true,
       ...(target.threadId != null ? { message_thread_id: target.threadId } : {}),
       ...(last ? { reply_parameters: { message_id: last.message_id, allow_sending_without_reply: true } } : {}),
+    }
+    // The same table and footer as under an answer, as a message of its own; the one-line Markdown, then plain text, if that fails.
+    try {
+      await sendRich(d.bot, target.chatId, { html: block }, extra)
+      return
+    } catch (err) {
+      d.log(`turn cost block failed, sending a line: ${err}`)
     }
     try {
       await sendRich(d.bot, target.chatId, rich, extra)

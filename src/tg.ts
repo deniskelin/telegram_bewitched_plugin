@@ -111,8 +111,9 @@ export async function sendDraft(bot: Bot, chatId: number, draftId: number, c: Dr
 }
 
 /** Rich message from Markdown (Bot API 10.1+). Returns the message id. */
-export async function sendRich(bot: Bot, chatId: string, markdown: string, extra: Record<string, unknown> = {}): Promise<number> {
-  const res = await raw(bot).sendRichMessage({ chat_id: chatId, rich_message: { markdown: liveTimes(hardBreaks(markdown), true) }, ...extra })
+export async function sendRich(bot: Bot, chatId: string, content: string | { html: string }, extra: Record<string, unknown> = {}): Promise<number> {
+  const rich_message = typeof content === 'string' ? { markdown: liveTimes(hardBreaks(content), true) } : { html: liveTimes(content.html, true) }
+  const res = await raw(bot).sendRichMessage({ chat_id: chatId, rich_message, ...extra })
   return res.message_id as number
 }
 
