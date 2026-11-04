@@ -22,7 +22,7 @@ import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
 import type { EngineId } from './engines.ts'
-import { exitCodeSince, attachTarget, windowTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
+import { exitCodeSince, attachTarget, awaitConnect, windowTarget, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -298,9 +298,15 @@ async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: st
     await edit(l.skipped ? tr('⏳ Сессия уже запускается.') : tr('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }))
     return
   }
-  await edit(stuck
-    ? tr('🚀 Перезапускаю сессию в tmux: окно {v}. Подтвердите:{v2}\nСообщение, которое она не взяла, повторите после запуска.', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) })
-    : tr('🚀 Перезапускаю сессию в tmux с тем же разговором: окно {v}. Подтвердите:{v2}', { v: escapeHtml(attachTarget(l.window)), v2: confirmHint(l.window) }), screenKb(l.window))
+  // Nothing to confirm: the startup questions are answered here; the journal keeps where it runs.
+  await edit(tr('♻️ Перезапускаю сессию #{id} с тем же разговором…', { id }), new InlineKeyboard())
+  void sendNotice(d, 'sessions', () => tr('♻️ Сессия #{id} ({v}) перезапущена из Telegram: окно {v2}.', { id, v: escapeHtml(projectTitle(s)), v2: escapeHtml(attachTarget(l.window)) }))
+  // The notice follows the launch: the startup questions are answered here, and the message says when it is in.
+  // In the background: a launch takes up to a couple of minutes, the bot keeps handling updates meanwhile.
+  void awaitConnect(d, s.cwd, l.window, { confirm: true }).then(async r => {
+  if (r.ok) await edit(tr('✅ Сессия #{id} перезапущена и подключилась — можно писать.', { id: r.session.id }) + (stuck ? `\n${tr('Сообщение, которое она не взяла, повторите.')}` : ''), new InlineKeyboard())
+  else await edit(tr('⚠️ Сессия в окне {v} не подключилась: {why}. Посмотрите экран.', { v: escapeHtml(attachTarget(l.window)), why: r.reason === 'gone' ? tr('окно закрылось') : r.reason === 'stuck' ? tr('на экране вопрос, на который я не отвечаю сам') : tr('не подключилась за {n} с', { n: Math.round(r.ms / 1000) }) }), screenKb(l.window))
+  }).catch(err => d.log(`restart of ${id}: waiting for the connection failed: ${err}`))
 }
 
 /**
@@ -356,10 +362,8 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     const here = ctx.callbackQuery?.message
     await dropStale(d, r.dir, here ? { chat: String(here.chat.id), id: here.message_id } : undefined)
     await answer(tr('🚀 Запускаю'))
-    await ctx.editMessageText(
-      tr('🚀 Запускаю <b>{v}</b> в tmux: окно {v2}.\nПодтвердите:{v3}\n<code>{v4}</code>', { v: escapeHtml(r.name), v2: escapeHtml(attachTarget(win)), v3: confirmHint(win), v4: escapeHtml(launchCommand(o)) }),
-      { parse_mode: 'HTML', reply_markup: screenKb(win) },
-    ).catch(() => {})
+    await ctx.editMessageText(tr('🚀 Запускаю <b>{v}</b> — сообщения дойдут, когда она подключится.', { v: escapeHtml(r.name) }), { parse_mode: 'HTML', reply_markup: new InlineKeyboard() }).catch(() => {})
+    void sendNotice(d, 'sessions', () => tr('🚀 Запуск <b>{v}</b>: окно {v2}\n<code>{v3}</code>', { v: escapeHtml(r.name), v2: escapeHtml(attachTarget(win)), v3: escapeHtml(launchCommand(o)) }))
   } catch (err) {
     await answer(tr('Не удалось: {v}', { v: String(err instanceof Error ? err.message : err) }).slice(0, 190))
   }

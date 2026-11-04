@@ -262,7 +262,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
   const l = await launchOnce(d, s.cwd, { name: sessionName(d, s.projectKey, engine.id), ...conv }, false)
   if (!l.ok) { await edit({ text: l.skipped ? t('⏳ Сессия уже запускается.') : t('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }), kb: back }); return null }
   const where = escapeHtml(attachTarget(l.window))
-  await edit({ text: t('🚀 Запускаю {engine} в tmux: окно {v}. Жду подключения…', { engine: engine.name, v: where }), kb: screenKb(l.window) })
+  await edit({ text: t('🚀 Запускаю {engine} в tmux: окно {v}. Жду подключения…', { engine: engine.name, v: where }), kb: new InlineKeyboard() })
   const r = await awaitConnect(d, s.cwd, l.window, { confirm: true })
   if (!r.ok) {
     const why = r.reason === 'gone' ? t('окно закрылось') : r.reason === 'stuck' ? t('на экране вопрос, на который я не отвечаю сам') : t('не подключилась за {n} с', { n: Math.round(r.ms / 1000) })

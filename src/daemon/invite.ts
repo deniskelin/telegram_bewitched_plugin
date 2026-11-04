@@ -12,7 +12,7 @@ import { loadAccess, owner, saveAccess } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import type { Daemon } from './daemon.ts'
-import { attachTarget, screenKb, sessionName, noteLaunch } from './launch.ts'
+import { attachTarget, sessionName, noteLaunch } from './launch.ts'
 import { button } from './stream.ts'
 import { t, variants } from '../i18n/index.ts'
 
@@ -114,10 +114,9 @@ export async function onUserAdded(d: Daemon, id: string): Promise<void> {
 
   const steps = ['', t('<b>Что сделать вам:</b>')]
   let n = 1
-  if (window) steps.push(t('{v}. Подтвердите запуск сессии: «👁 Экран и клавиши» ниже → в экране каналов выберите пункт (обычно 1 и Enter).', { v: n++ }))
   steps.push(t('{v}. Перешлите {v2} приглашение из следующего сообщения.', { v: n++, v2: escapeHtml(name) }))
   steps.push(t('{v}. Когда он напишет боту, сообщение уйдёт в его сессию. Убрать доступ: <code>/telegram-bewitched:access remove {id}</code> в терминале.', { v: n++, id }))
-  await d.bot.api.sendMessage(to, [...done, ...steps].join('\n'), { parse_mode: 'HTML', ...(window ? { reply_markup: screenKb(window) } : {}) })
+  await d.bot.api.sendMessage(to, [...done, ...steps].join('\n'), { parse_mode: 'HTML' })
     .catch(err => d.log(`user-added notice failed: ${err}`))
 
   const botLink = `https://t.me/${d.botUsername}?start=hello`
