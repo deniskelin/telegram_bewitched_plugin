@@ -4,7 +4,7 @@ import type { Dict } from './index.ts'
 const dict: Dict = {
   "… ещё {n}": "… noch {n}",
   "Для этой сессии здесь ничего нет.": "Für diese Sitzung gibt es hier nichts.",
-  "🤖 Claude": "🤖 Claude",
+  "🤖 Агент": "🤖 Agent",
   "🔔 Уведомления": "🔔 Benachrichtigungen",
   "⚙️ Управление": "⚙️ Verwalten",
   " · просит сопряжение": " · möchte sich koppeln",
