@@ -120,6 +120,7 @@ export function helpScreen(): Screen {
     '',
     t('<b>Команды</b> (всё это есть и кнопками в /menu):'),
     t('/sessions — сессии, /topics — топики, /usage — лимиты'),
+    t('/economy — экономия; fast/balanced/thorough [модель] — профиль следующего запуска'),
     t('/remind &lt;когда&gt; &lt;текст&gt; — напоминание (30m, 2h, 18:30, завтра 9:00, каждый день 9:00)'),
     t('/macro add &lt;кнопка&gt; | &lt;текст&gt; — быстрая команда чата (кнопки — /menu → ⚡)'),
     t('/send &lt;топик&gt; &lt;текст&gt;, /broadcast &lt;текст&gt; — написать в сессии'),

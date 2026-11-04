@@ -266,3 +266,7 @@ bunx tsc --noEmit
 Translations: interface strings are written in Russian as `t('…', { vars })`; dictionaries are in `src/i18n/<lang>.ts`; `bun scripts/i18n-keys.ts missing en` lists untranslated strings, and a test checks that every dictionary is complete.
 
 Layout: `server.ts` — a thin MCP client per session; `src/daemon/` — the daemon (polling, routing, topics, streaming, buttons, tools, HTTP, menus and screens, statistics, reports, reminders); `src/i18n/` — interface languages; `src/voice/` and `voice/*.py` — speech recognition and synthesis; `hooks/` — Claude Code hooks → daemon; `bin/bewitched.ts` — the CLI. Syncing with upstream — [UPSTREAM.md](UPSTREAM.md).
+
+## Token economy
+
+[Configuration, batching, context budgets and measurement](docs/token-economy.md). Owner command: `/economy [fast|balanced|thorough] [model]`.

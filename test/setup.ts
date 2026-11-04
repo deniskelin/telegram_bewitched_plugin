@@ -18,6 +18,7 @@ process.env.BEWITCHED_HTTP_PORT = String(20000 + Math.floor(Math.random() * 2000
 process.env.GROUP_EDIT_INTERVAL_MS = '50'
 process.env.STREAM_MIN_INTERVAL_MS = '50'
 process.env.NOTIFY_LONG_SEC = '0'
+process.env.TEXT_BATCH_MS = '0'
 process.env.PROJECTS_DIR = join(root, 'projects')
 process.env.USERS_DIR = join(root, 'user')
 // A project topic without a session queues its messages (no tmux in tests); the session-types tests switch to launch.

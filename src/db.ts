@@ -307,12 +307,19 @@ export class Store {
     return this.db.query<{ n: number }, [string, number]>('SELECT COUNT(*) AS n FROM pending WHERE project_key = ? AND created_at >= ?').get(projectKey, cutoff)?.n ?? 0
   }
 
-  takePending(projectKey: string, ttlH: number): { content: string; meta: Record<string, string>; created_at: number }[] {
+  /** Read queued tasks without consuming them while preparing resume context. */
+  peekPending(projectKey: string, ttlH: number): { content: string; meta: Record<string, string>; created_at: number }[] {
     const cutoff = Date.now() - ttlH * 3600_000
-    const rows = this.db.query<{ id: number; content: string; meta: string; created_at: number }, [string, number]>(
-      'SELECT * FROM pending WHERE project_key = ? AND created_at >= ? ORDER BY id').all(projectKey, cutoff)
-    this.db.query('DELETE FROM pending WHERE project_key = ? OR created_at < ?').run(projectKey, cutoff)
+    const rows = this.db.query<{ content: string; meta: string; created_at: number }, [string, number]>(
+      'SELECT content, meta, created_at FROM pending WHERE project_key = ? AND created_at >= ? ORDER BY id').all(projectKey, cutoff)
     return rows.map(r => ({ content: r.content, meta: JSON.parse(r.meta), created_at: r.created_at }))
+  }
+
+  takePending(projectKey: string, ttlH: number): { content: string; meta: Record<string, string>; created_at: number }[] {
+    const rows = this.peekPending(projectKey, ttlH)
+    const cutoff = Date.now() - ttlH * 3600_000
+    this.db.query('DELETE FROM pending WHERE project_key = ? OR created_at < ?').run(projectKey, cutoff)
+    return rows
   }
 
   /** Drop every queued message for this key (a removed user's). */

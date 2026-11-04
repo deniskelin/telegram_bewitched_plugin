@@ -11,6 +11,7 @@
  * starts with them.
  */
 
+import { activateContext } from './economy.ts'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
 import { join } from 'path'
@@ -424,6 +425,7 @@ export function engineOf(id?: string | null): Engine {
  * or an idle wake-up continues it rather than starting afresh.
  */
 export function rememberConversation(d: Daemon, s: Session, id: string): void {
+  activateContext(d, s, id)
   const key = `last_conv:${s.engine}:${s.cwd}`
   if (d.store.get(key) === id) return
   d.store.set(key, id)

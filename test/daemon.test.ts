@@ -2870,3 +2870,45 @@ describe('attachments land in the session folder', () => {
     expect(existsSync(path)).toBe(true)
   })
 })
+
+
+describe('economy integration', () => {
+  test('plain messages from one sender are delivered together; explicit reply copies without a model turn', async () => {
+    const s = d.sessions.get(sessionId)!
+    const chat = s.topic!.chatId
+    const thread = s.topic!.threadId
+    process.env.TEXT_BATCH_MS = '30'
+    try {
+      tg.push(textMessage({ chat: Number(chat), thread, text: 'economy first instruction' }))
+      tg.push(textMessage({ chat: Number(chat), thread, text: 'economy second instruction' }))
+      const merged = await client.inbound(m => m.meta.batch_count === '2')
+      expect(merged.content).toContain('economy first instruction')
+      expect(merged.content).toContain('economy second instruction')
+      expect(merged.meta.user_role).toBe('owner')
+      const before = client.msgs.filter(m => m.t === 'inbound').length
+      const copies = tg.callsOf('copyMessage').length
+      tg.push(textMessage({ chat: Number(chat), thread, text: 'пришли ещё раз', replyTo: { message_id: 1234, from: { id: 999, is_bot: true, first_name: 'Bot' }, text: 'report' } }))
+      await tg.waitFor('copyMessage', c => c.body.message_id === 1234)
+      expect(tg.callsOf('copyMessage').length).toBe(copies + 1)
+      expect(client.msgs.filter(m => m.t === 'inbound').length).toBe(before)
+    } finally { process.env.TEXT_BATCH_MS = '0' }
+  })
+  test('economy metrics and effort presets use no model and preserve engine/model', async () => {
+    const s = d.sessions.get(sessionId)!
+    const chat = s.topic!.chatId
+    const thread = s.topic!.threadId
+    const key = `effort:claude:${s.projectKey}`
+    const old = d.store.get(key)
+    const before = client.msgs.filter(m => m.t === 'inbound').length
+    const oldModel = d.store.get(`engine:${s.projectKey}`)
+    try {
+      tg.push(textMessage({ chat: Number(chat), thread, text: '/economy fast' }))
+      await tg.waitFor('sendMessage', c => String(c.body.text).includes('effort=low'))
+      expect(d.store.get(key)).toBe('low')
+      expect(d.store.get(`engine:${s.projectKey}`)).toBe(oldModel)
+      tg.push(textMessage({ chat: Number(chat), thread, text: '/economy' }))
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Economy · UTC'))
+      expect(client.msgs.filter(m => m.t === 'inbound').length).toBe(before)
+    } finally { d.store.set(key, old) }
+  })
+})
