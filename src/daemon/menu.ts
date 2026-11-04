@@ -55,7 +55,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   return { text, kb: new InlineKeyboard(rows as never) }
 }
 
-/** Sub-menus of a session card: c — 🤖 Claude, n — 🔔 notifications, m — ⚙️ management. */
+/** Sub-menus of a session card: c — 🤖 Агент (the engine: Claude Code or Codex), n — 🔔 notifications, m — ⚙️ management. */
 export type CardGroup = 'c' | 'n' | 'm'
 
 /**
@@ -103,7 +103,7 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     if (s.tmuxPane && s.status === 'working') top.push(button(t('⏹ Стоп'), `sm:stop:${s.id}`, 'danger'))
     if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) top.push(button(t('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`))
     if (top.length) rows.push(top)
-    rows.push([button(t('🤖 Claude'), `sm:g:${s.id}:c`), button(t('🔔 Уведомления'), `sm:g:${s.id}:n`)])
+    rows.push([button(t('🤖 Агент'), `sm:g:${s.id}:c`), button(t('🔔 Уведомления'), `sm:g:${s.id}:n`)])
     const review = s.branch ? reviewButton(s) : null
     rows.push([...(s.branch ? [button('🌿 Git', `sm:git:${s.id}`)] : []), ...(review ? [review] : []), button(t('⚙️ Управление'), `sm:g:${s.id}:m`)])
     const link = s.topic ? topicLink(s.topic.chatId, s.topic.threadId) : null
