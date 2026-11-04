@@ -135,8 +135,9 @@ export async function handleOrphanCallback(d: Daemon, ctx: Context, data: string
     return true
   }
   const still = new Set(findOrphans(d, reads).map(o => o.pid))
+  const asked = (m[2] ?? '').split(',').filter(Boolean).map(Number)
   const done: number[] = []
-  for (const pid of (m[2] ?? '').split(',').map(Number)) {
+  for (const pid of asked) {
     if (!still.has(pid)) continue
     try {
       kill(pid)
@@ -146,9 +147,20 @@ export async function handleOrphanCallback(d: Daemon, ctx: Context, data: string
     }
   }
   d.log(`orphans: SIGTERM to ${done.join(', ') || 'none'}`)
+  // A repeat tap (or the processes already gone): say so and drop the buttons.
+  if (!done.length) {
+    await ctx.answerCallbackQuery({ text: tr('Уже неактуально.') }).catch(() => {})
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+    return true
+  }
   await ctx.answerCallbackQuery({ text: tr('🧹 Завершено: {n}', { n: done.length }) }).catch(() => {})
-  const msg = ctx.callbackQuery?.message
-  if (msg && 'text' in msg) await ctx.editMessageText(`${escapeHtml(msg.text ?? '')}\n\n${tr('🧹 Завершено: {n}', { n: done.length })}`, { parse_mode: 'HTML' }).catch(() => {})
+  // The notice went out as a rich message (its first line is a screen title), which has no `text`
+  // to append to: rebuild it from the pids. Without reply_markup the buttons go away.
+  const lines = [tr('🧹 <b>Процессы без сессии</b>: {n}', { n: asked.length }), '', ...asked.map(pid => `• <code>${pid}</code>${done.includes(pid) ? ' — SIGTERM' : ''}`), '', tr('🧹 Завершено: {n}', { n: done.length })]
+  await ctx.editMessageText(lines.join('\n'), { parse_mode: 'HTML' }).catch(async err => {
+    d.log(`orphans: notice edit failed: ${err}`)
+    await ctx.editMessageReplyMarkup({ reply_markup: undefined }).catch(() => {})
+  })
   return true
 }
 
