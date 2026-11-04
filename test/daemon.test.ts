@@ -277,6 +277,28 @@ describe('topics', () => {
     again.close()
   })
 
+  test('a session writing into another session\'s topic: that session hears it (session_message), the writer does not', async () => {
+    const thread = d.sessions.get(sessionId)!.topic!.threadId
+    const other = new FakeClient()
+    await other.connect({ cwd: '/tmp/writer', projectRoot: '/tmp/writer', claudePid: 7 })
+    await tg.waitFor('createForumTopic', c => c.body.name === 'writer')
+    try {
+      const r = await other.call('reply', { chat_id: group, message_thread_id: String(thread), text: 'Отчёт: Codex не применяет настройки' })
+      expect(r.ok).toBe(true)
+      const m = await client.inbound(x => x.meta.event === 'session_message')
+      expect(m.content).toBe('Отчёт: Codex не применяет настройки')
+      expect(m.meta.thread_id).toBe(String(thread))
+      expect(m.meta.from_session_name).toBe('writer')
+      // A reply into its own topic goes nowhere else.
+      const writerThread = Number(d.store.topicForProject(group, '/tmp/writer')!.thread_id)
+      await other.call('reply', { chat_id: group, message_thread_id: String(writerThread), text: 'себе' })
+      await Bun.sleep(50)
+      expect(other.msgs.some(x => x.t === 'inbound' && (x as Inbound).meta.event === 'session_message')).toBe(false)
+    } finally {
+      other.close()
+    }
+  })
+
   test('an offline topic queues messages again after a reconnect and delivers them on the next one', async () => {
     // The previous test's session must be gone first: wait for it, not a fixed time.
     for (let i = 0; i < 100 && d.sessionForProject('/tmp/other'); i++) await Bun.sleep(20)

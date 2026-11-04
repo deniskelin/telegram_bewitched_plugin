@@ -105,7 +105,7 @@ type Target =
   /** An ordinary group's project without a running session. */
   | { kind: 'group_launch'; chatId: string; projectKey: string }
 
-function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
+export function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
   const { chatId, threadId } = chat
   if (d.isTopicsChat(chatId) && threadId != null) {
     const t = d.store.topic(chatId, threadId)

@@ -132,7 +132,10 @@ export const codex: Engine = {
     // FR-20: a prompt mode runs with a profile of its own (the mode's text in the instructions, a read-only sandbox).
     const profile = o.prompt ? writeCodexModeProfile(o.prompt) ?? CODEX_PROFILE : CODEX_PROFILE
     // The model and the reasoning effort (-c takes a bare word as a string; only known levels get here).
-    const opts = `${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}${o.effort && codex.efforts.includes(o.effort) ? ` -c model_reasoning_effort=${o.effort}` : ''}`
+    // The sandbox and approval on the command line too: `resume` keeps the ones its thread was started with and
+    // ignores the profile's, so a thread begun read-only stayed read-only after CODEX_SANDBOX changed.
+    const perms = ` -s ${codexSandboxMode(o.prompt?.readOnly === true)} -a ${settings.codexApproval}`
+    const opts = `${perms}${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}${o.effort && codex.efforts.includes(o.effort) ? ` -c model_reasoning_effort=${o.effort}` : ''}`
     const cmd = `${codexBin() ?? 'codex'} --no-alt-screen -p ${profile}${opts}`
     if (o.resume && /^[\w-]+$/.test(o.resume)) return `${codexBin() ?? 'codex'} resume ${o.resume} --no-alt-screen -p ${profile}${opts}`
     return o.continue ? cmd.replace(' --no-alt-screen', ' resume --last --no-alt-screen') : cmd
@@ -172,6 +175,13 @@ export function codexSandboxWorks(bin = codexBin()): boolean {
     sandboxWorks = false
   }
   return sandboxWorks
+}
+
+/** The sandbox mode sessions run in: CODEX_SANDBOX, with auto resolved by whether the sandbox can start here. */
+export function codexSandboxMode(readOnly = false): string {
+  if (readOnly) return 'read-only'
+  const s = settings.codexSandbox
+  return s === 'auto' ? (codexSandboxWorks() ? 'workspace-write' : 'danger-full-access') : s
 }
 
 /**

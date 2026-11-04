@@ -607,8 +607,8 @@ describe('engines (FR-15)', () => {
     const { settings } = await import('../src/config.ts')
     expect(claude.launchCommand({ effort: 'high' })).toBe(`${settings.launchCmd} --effort high`)
     expect(claude.launchCommand({ effort: 'x; rm -rf /' })).toBe(settings.launchCmd)
-    expect(codex.launchCommand({ model: 'gpt-6.1-sol', effort: 'xhigh' })).toEndWith('-p bewitched -m gpt-6.1-sol -c model_reasoning_effort=xhigh')
-    expect(codex.launchCommand({ resume: 'r-1', effort: 'low' })).toEndWith('resume r-1 --no-alt-screen -p bewitched -c model_reasoning_effort=low')
+    expect(codex.launchCommand({ model: 'gpt-6.1-sol', effort: 'xhigh' })).toEndWith('-p bewitched -s workspace-write -a on-request -m gpt-6.1-sol -c model_reasoning_effort=xhigh')
+    expect(codex.launchCommand({ resume: 'r-1', effort: 'low' })).toEndWith('resume r-1 --no-alt-screen -p bewitched -s workspace-write -a on-request -c model_reasoning_effort=low')
     // Codex has no «max»: not passed.
     expect(codex.launchCommand({ effort: 'max' })).not.toContain('reasoning')
     const d = { store: new Store(':memory:') } as never
@@ -648,10 +648,14 @@ describe('Codex engine (FR-16)', () => {
   test('launch command with the bewitched profile, -m, resume / resume --last', async () => {
     const { codex } = await import('../src/daemon/engines.ts')
     const cmd = codex.launchCommand({ model: 'gpt-6.1-sol', name: 'ignored' })
-    expect(cmd).toMatch(/codex --no-alt-screen -p bewitched -m gpt-6\.1-sol$/)
-    expect(codex.launchCommand({ resume: '01a1-x' })).toMatch(/codex resume 01a1-x --no-alt-screen -p bewitched$/)
-    expect(codex.launchCommand({ continue: true })).toMatch(/codex resume --last --no-alt-screen -p bewitched$/)
-    expect(codex.launchCommand({ model: 'bad model' })).toMatch(/-p bewitched$/)
+    expect(cmd).toMatch(/codex --no-alt-screen -p bewitched -s workspace-write -a on-request -m gpt-6\.1-sol$/)
+    expect(codex.launchCommand({ resume: '01a1-x' })).toMatch(/codex resume 01a1-x --no-alt-screen -p bewitched -s workspace-write -a on-request$/)
+    // resume keeps its thread's own sandbox unless told on the command line: it follows CODEX_SANDBOX / CODEX_APPROVAL.
+    process.env.CODEX_SANDBOX = 'danger-full-access'; process.env.CODEX_APPROVAL = 'never'
+    expect(codex.launchCommand({ resume: '01a1-x' })).toMatch(/-s danger-full-access -a never$/)
+    process.env.CODEX_SANDBOX = 'workspace-write'; delete process.env.CODEX_APPROVAL
+    expect(codex.launchCommand({ continue: true })).toMatch(/codex resume --last --no-alt-screen -p bewitched -s workspace-write -a on-request$/)
+    expect(codex.launchCommand({ model: 'bad model' })).toMatch(/-p bewitched -s workspace-write -a on-request$/)
   })
 
   test('only a Codex started with the bewitched profile is ours; its questions use ›', async () => {

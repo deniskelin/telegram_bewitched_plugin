@@ -22,6 +22,7 @@ import { button } from './stream.ts'
 import { archiveTopic, ensureTopic, memoryPath, readMemory, renameTopic, sessionTarget } from './topics.ts'
 import { t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
+import { resolveTarget } from './inbound.ts'
 import { projectTitle } from './report.ts'
 import { sendNotice } from './journal.ts'
 
@@ -459,19 +460,53 @@ function historyChat(d: Daemon, s: Session, args: Record<string, unknown>): Chat
   return resolveChat(d, s, args)
 }
 
+/**
+ * A session wrote into a chat another session serves (a report into the
+ * project's topic, a question to it): that session hears it too, as
+ * event="session_message" — the bot's own messages never come back as updates.
+ * Never to the writer itself, so two sessions cannot echo each other through their own chats.
+ */
+function relayToChatSession(d: Daemon, s: Session, args: Record<string, unknown>, text: string, result: string): void {
+  if (!text.trim()) return
+  let c: ChatRef
+  try { c = resolveChat(d, s, args) } catch { return }
+  const o = owner()
+  const target = o ? resolveTarget(d, c, o) : null
+  if (target?.kind !== 'session' || target.session.id === s.id || target.session.passive) return
+  const ids = /\(ids?: ([\d, ]+)\)/.exec(result)?.[1]?.split(/,\s*/) ?? []
+  d.log(`session ${s.id} wrote into the chat of session ${target.session.id}, relayed`)
+  d.deliver(target.session, text, {
+    chat_id: c.chatId,
+    ...(c.threadId != null ? { thread_id: String(c.threadId) } : {}),
+    ...(ids.length ? { message_id: ids.at(-1)! } : {}),
+    event: 'session_message',
+    from_session: s.id,
+    from_session_name: projectTitle(s),
+    user: 'bot',
+  }, c)
+}
+
 export async function handleCall(d: Daemon, s: Session, name: string, args: Record<string, unknown>): Promise<string> {
   if (s.passive && !settings.passiveTools) {
     throw new Error('telegram-bewitched is not registered as a channel in this session (print mode or no --channels flag); its tools are disabled here')
   }
   switch (name) {
-    case 'reply':
-      return reply(d, s, args)
+    case 'reply': {
+      // The text before reply clears it (use_last_message): another session in that chat may need it.
+      const said = args.use_last_message === true ? s.answer.trim() : String(args.text ?? '')
+      const r = await reply(d, s, args)
+      relayToChatSession(d, s, args, said, r)
+      return r
+    }
 
     case 'reply_voice':
       return replyVoice(d, s, args)
 
-    case 'ask_user':
-      return askUser(d, s, args)
+    case 'ask_user': {
+      const r = await askUser(d, s, args)
+      relayToChatSession(d, s, args, String(args.question ?? args.text ?? ''), r)
+      return r
+    }
 
     case 'notify':
       return notify(d, s, args)
