@@ -14,7 +14,8 @@ export class FakeTelegram {
   /** Files served for getFile + /file/bot<token>/<path>, by file_id. */
   files = new Map<string, Buffer>()
   /** Methods that should fail with this description. */
-  failures = new Map<string, { code: number; description: string }>()
+  /** when: only the calls it matches fail (the raw body, before the test-side label fix-up). */
+  failures = new Map<string, { code: number; description: string; when?: (body: Record<string, unknown>) => boolean }>()
 
   constructor() {
     this.server = Bun.serve({ port: 0, fetch: req => this.handle(req) })
@@ -72,10 +73,11 @@ export class FakeTelegram {
       const form = await req.formData()
       for (const [k, v] of form.entries()) body[k] = typeof v === 'string' ? v : '(file)'
     }
+    const fail = this.failures.get(method)
+    const failing = fail && (!fail.when || fail.when(structuredClone(body)))
     if (body.reply_markup) body.reply_markup = withButtonEmoji(body.reply_markup)
     if (method !== 'getUpdates') this.calls.push({ method, body })
-    const fail = this.failures.get(method)
-    if (fail) return Response.json({ ok: false, error_code: fail.code, description: fail.description })
+    if (failing) return Response.json({ ok: false, error_code: fail.code, description: fail.description })
     return Response.json({ ok: true, result: await this.result(method, body) })
   }
 

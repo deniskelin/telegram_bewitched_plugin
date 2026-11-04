@@ -8,7 +8,7 @@ import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { can, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { join } from 'path'
 import { settings } from '../config.ts'
-import { clip, escapeHtml } from '../format.ts'
+import { clip, clipHtml, escapeHtml } from '../format.ts'
 import { locale, t } from '../i18n/index.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
@@ -72,7 +72,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   const passive = await passiveBlock(d)
   if (passive) blocks.push(passive)
   let text = blocks.join('\n\n')
-  if (text.length > MAX_MESSAGE) text = text.slice(0, MAX_MESSAGE - 1) + '…'
+  text = clipHtml(text, MAX_MESSAGE)
 
   rows.push([...(d.permissions.size ? [button(t('🔐 Разрешения ({size})', { size: d.permissions.size }), 'sm:perms')] : []), button(t('👥 Пригласить'), 'inv:start'), button(t('🔄 Обновить'), 'sm:list')])
   rows.push([button(t('« Меню'), 'hub:main')])
@@ -403,7 +403,7 @@ async function gitScreen(s: Session): Promise<Screen> {
   if (g.log) parts.push(t('Последние коммиты:\n<pre>{v}</pre>', { v: escapeHtml(g.log) }))
   if (g.pr) parts.push(`🔀 PR <a href="${escapeHtml(g.pr.url)}">#${g.pr.number}</a> · ${escapeHtml(g.pr.state.toLowerCase())} · ${escapeHtml(g.pr.title)}`)
   let text = parts.join('\n')
-  if (text.length > MAX_MESSAGE) text = text.slice(0, MAX_MESSAGE - 1) + '…'
+  text = clipHtml(text, MAX_MESSAGE)
   const rows: Btn[][] = [[button(t('📄 diff файлом'), `sm:gdf:${s.id}`)]]
   if (g.pr) rows[0].push(InlineKeyboard.url(`🔀 PR #${g.pr.number}`, g.pr.url))
   rows.push(back)

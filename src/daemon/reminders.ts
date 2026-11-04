@@ -30,7 +30,13 @@ export type Reminder = {
   by?: 'user' | 'session'
   /** task: an instruction for the session (default); note: only posted to the chat, no session is woken. */
   mode?: 'task' | 'note'
+  /** F05, a retry of a failed firing: the time it was due, the parts already done, tries so far. */
+  retry?: { due: number; posted: boolean; delivered: boolean; tries: number; repeats?: boolean }
 }
+
+/** A firing that failed is tried again after this, up to RETRY_MAX times in all. */
+const RETRY_MS = 60_000
+const RETRY_MAX = 5
 
 /** Repeat period in ms, or 0 for a one-off. */
 export function periodMs(r: Pick<Reminder, 'daily' | 'everyMin'>): number {
@@ -152,36 +158,62 @@ export async function fireDue(d: Daemon, now = Date.now()): Promise<void> {
   const due = list.filter(r => r.at <= now)
   if (!due.length) return
   const keep = list.filter(r => r.at > now)
+  // F05: every firing stays in the store as a retry until it went through — a failed post, a failed
+  // delivery or a daemon that died meanwhile no longer loses it. A repeating reminder's next time is its own row.
+  const firing = due.map(r => {
+    const retry = r.retry ?? { due: r.at, posted: false, delivered: r.mode === 'note', tries: 0, repeats: periodMs(r) > 0 }
+    return { ...r, id: r.retry ? r.id : periodMs(r) ? `${r.id}~${r.at}` : r.id, daily: false, everyMin: undefined, at: now + RETRY_MS, retry: { ...retry, tries: retry.tries + 1 } }
+  })
   for (const r of due) {
     const period = periodMs(r)
-    if (period) {
+    if (period && !r.retry) {
       let at = r.at
       while (at <= now) at += period
       keep.push({ ...r, at })
     }
   }
-  saveReminders(d, keep)
-  for (const r of due) {
+  saveReminders(d, [...keep, ...firing])
+  for (const f of firing) {
+    const r = { ...f, at: f.retry.due }
+    const ok = await fireOne(d, r, f.retry, now)
+    const left = listReminders(d).filter(x => x.id !== f.id)
+    if (ok.posted && ok.delivered) { saveReminders(d, left); continue }
+    if (f.retry.tries >= RETRY_MAX) {
+      d.log(`reminder ${f.id}: gave up after ${f.retry.tries} tries`)
+      saveReminders(d, left)
+      continue
+    }
+    d.log(`reminder ${f.id}: ${ok.posted ? 'delivery' : 'post'} failed, retry ${f.retry.tries + 1}/${RETRY_MAX} in ${RETRY_MS / 1000} s`)
+    saveReminders(d, [...left, { ...f, retry: { ...f.retry, ...ok } }])
+  }
+}
+
+/** One firing: the post in the chat, then (a task) the session. What already went through is not repeated. */
+async function fireOne(d: Daemon, r: Reminder, done: { posted: boolean; delivered: boolean }, now: number): Promise<{ posted: boolean; delivered: boolean }> {
+  let posted = done.posted
+  let delivered = done.delivered
+  {
     const lateMin = now - r.at > LATE_MS ? Math.round((now - r.at) / 60_000) : 0
     const late = () => (lateMin ? ' ' + tr('(опоздало на {n} мин: демон не работал)', { n: lateMin }) : '')
     const thread = r.threadId != null ? { message_thread_id: r.threadId } : {}
     const head = r.by === 'session' ? '⏰🤖' : '⏰'
-    const posted = inChat(d, r.chatId, r.threadId, () => `${head} ${r.text}${late()}`)
-    await d.bot.api.sendMessage(r.chatId, posted, thread).catch(err => d.log(`reminder ${r.id} post failed: ${err}`))
+    const line = inChat(d, r.chatId, r.threadId, () => `${head} ${r.text}${late()}`)
+    if (!posted) posted = await d.bot.api.sendMessage(r.chatId, line, thread).then(() => true, err => { d.log(`reminder ${r.id} post failed: ${err}`); return false })
     // A note is for the people in the chat only: no session is woken for it.
-    if (r.mode === 'note') continue
+    if (r.mode === 'note' || delivered) return { posted, delivered: true }
     const chat: ChatRef = { chatId: r.chatId, threadId: r.threadId, isPrivate: !r.chatId.startsWith('-') }
     const meta: Record<string, string> = {
       chat_id: r.chatId, ...(r.threadId != null ? { thread_id: String(r.threadId) } : {}),
-      user_id: r.userId, user: r.userId, ts: new Date(now).toISOString(), event: 'reminder', reminder_id: r.id,
+      user_id: r.userId, user: r.userId, ts: new Date(now).toISOString(), event: 'reminder', reminder_id: r.id.replace(/~\d+$/, ''),
       reminder_by: r.by ?? 'user', ...(lateMin ? { late_min: String(lateMin) } : {}),
-      ...(periodMs(r) ? { repeats: 'true' } : {}),
+      ...(periodMs(r) || r.retry?.repeats ? { repeats: 'true' } : {}),
     }
     const text = inChat(d, r.chatId, r.threadId, () => (r.by === 'session'
       ? tr('⏰ Задача, которую вы поставили себе ({when}): {text}', { when: fmtWhen(r, now), text: r.text })
       : tr('⏰ Напоминание ({when}): {text}', { when: fmtWhen(r, now), text: r.text })) + late())
-    await inChat(d, r.chatId, r.threadId, () => d.routeText(chat, r.userId, text, meta)).catch(err => d.log(`reminder ${r.id} delivery failed: ${err}`))
+    delivered = await inChat(d, r.chatId, r.threadId, () => d.routeText(chat, r.userId, text, meta)).then(() => true, err => { d.log(`reminder ${r.id} delivery failed: ${err}`); return false })
   }
+  return { posted, delivered }
 }
 
 /** Active reminders of a chat/topic, as lines for the model (session_resume; FR-7). Not translated: text for the model. */

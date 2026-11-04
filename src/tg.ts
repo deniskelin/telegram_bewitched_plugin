@@ -7,8 +7,32 @@
 import { Bot, GrammyError } from 'grammy'
 import { escapeHtml } from './format.ts'
 import { hardBreaks, liveTimes, screenToRich } from './rich.ts'
+import { BUTTON_EMOJI } from './daemon/button-emoji.ts'
 
 export type ThreadOpt = { message_thread_id?: number }
+
+/** Custom icon → the emoji it stands for (the first label emoji mapped to it; the agents' robot). */
+// Symbols that are text by default get U+FE0F back, so they show as emoji (⚙️, not ⚙).
+const asEmoji = (e: string) => ('⚠♻↩▶⚙➡⬆✏✖✍✉✈'.includes(e) ? `${e}\uFE0F` : e)
+const ICON_FALLBACK = new Map<string, string>([...Object.entries(BUTTON_EMOJI).map(([e, id]) => [id, asEmoji(e)] as [string, string]).reverse(), ['5255760585445901285', '🤖'], ['5256261335682941418', '🤖']])
+
+/** F06: custom button icons in use; off once Telegram refused them, or with BUTTON_ICONS=off. */
+export const buttonIcons = { on: process.env.BUTTON_ICONS !== 'off' }
+
+/** The keyboard with each custom icon put back as its plain emoji at the start of the label. */
+export function withoutIcons(p: Record<string, unknown>): Record<string, unknown> {
+  const kb = p.reply_markup as { inline_keyboard?: Record<string, unknown>[][] } | undefined
+  if (!kb?.inline_keyboard) return p
+  const rows = kb.inline_keyboard.map(row => row.map(b => {
+    const id = b.icon_custom_emoji_id
+    if (typeof id !== 'string') return b
+    const { icon_custom_emoji_id: _, ...rest } = b
+    const e = ICON_FALLBACK.get(id)
+    const text = String(b.text ?? '')
+    return { ...rest, text: e ? (text.startsWith('• ') ? `• ${e} ${text.slice(2)}` : `${e} ${text}`) : text }
+  }))
+  return { ...p, reply_markup: { ...kb, inline_keyboard: rows } }
+}
 
 export function createBot(token: string, apiRoot?: string): Bot {
   const bot = new Bot(token, apiRoot ? { client: { apiRoot } } : undefined)
@@ -22,6 +46,22 @@ export function createBot(token: string, apiRoot?: string): Bot {
       const wait = Math.min((retry.parameters?.retry_after ?? 1) * 1000, 30_000)
       await new Promise(r => setTimeout(r, wait))
     }
+  })
+  // F06: custom button icons need the bot owner's Premium (or a Fragment username). A call Telegram refuses
+  // while its keyboard carries them goes again with plain emoji in the labels, and icons stay off until restart.
+  bot.api.config.use(async (prev, method, payload, signal) => {
+    const p = payload as Record<string, unknown>
+    const hasIcons = p.reply_markup != null && JSON.stringify(p.reply_markup).includes('icon_custom_emoji_id')
+    if (hasIcons && !buttonIcons.on) return prev(method, withoutIcons(p) as typeof payload, signal)
+    const res = await prev(method, payload, signal)
+    const err = res as { ok: boolean; error_code?: number; description?: string }
+    if (res.ok || !hasIcons || err.error_code !== 400 || /not modified|thread not found|TOPIC_|message to edit not found/i.test(err.description ?? '')) return res
+    const again = await prev(method, withoutIcons(p) as typeof payload, signal)
+    if (again.ok) {
+      buttonIcons.on = false
+      console.error(`custom button icons refused (${err.description}): plain emoji from now on`)
+    }
+    return again
   })
   bot.api.config.use(async (prev, method, payload, signal) => {
     const rich = richScreenCall(method, payload as Record<string, unknown>)
