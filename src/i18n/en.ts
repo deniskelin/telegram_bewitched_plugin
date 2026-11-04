@@ -439,9 +439,7 @@ const dict: Dict = {
   "⏹ Стоп доступен (tmux)": "⏹ Stop is available (tmux)",
   "⏹ Стоп недоступен: сессия не в tmux": "⏹ Stop isn't available: the session is not in tmux",
   "⚪️ Сессия отключена": "⚪️ Session disconnected",
-  "🎛 Пульт Claude Code": "🎛 Claude Code control panel",
   "Нет запущенных сессий.": "No running sessions.",
-  "#{id}, активность {ago} назад": "#{id}, active {ago} ago",
   "Обновлено {time}": "Updated {time}",
   "это не супергруппа": "it is not a supergroup",
   "в группе не включены темы (Настройки группы → Темы)": "topics are not enabled in the group (Group settings → Topics)",
@@ -1030,6 +1028,12 @@ const dict: Dict = {
   "🚀 {engine}": "🚀 {engine}",
   "👑 <b>Владелец</b>": "👑 <b>Owner</b>",
   "📂 <b>Проекты</b>": "📂 <b>Projects</b>",
+  "🔹 Кратко": "🔹 Brief",
+  "🔸 Обычно": "🔸 Normal",
+  "🔶 Подробно": "🔶 Detailed",
+  "🎛 <b>Пульт</b>": "🎛 <b>Dashboard</b>",
+  "активность {ago} назад": "active {ago} ago",
+  "⏱ ход {v}": "⏱ turn {v}",
 }
 
 export default dict

@@ -22,7 +22,7 @@ import { listCodexConversations, listConversations, transcriptInfo, type Convers
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { launchUserSession, attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, effortLabel, engineOf, projectEffort, projectEngine, setProjectEffort, setProjectEngine } from './engines.ts'
-import { sessionEffort, sessionModel } from './report.ts'
+import { agentLine, AGENT_EMOJI, menuStatus, menuStatusIcon, sessionEffort, sessionSections } from './report.ts'
 import { reviewButton } from './oneshot.ts'
 import { askSummary, buildHandoff, type Handoff } from './handoff.ts'
 
@@ -31,51 +31,20 @@ export type Screen = { text: string; kb: InlineKeyboard }
 export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>
 
 /** Keep status icons whole: slicing UTF-16 breaks variation selectors and ZWJ emoji. */
-function menuStatusIcon(s: Session): string {
-  return s.status === 'waiting' ? '🔐' : s.status === 'working' ? '⚙️' : '💤'
-}
-
-function menuStatus(s: Session): string {
-  return `${menuStatusIcon(s)} ${statusLabel(s).split(' ').slice(1).join(' ')}`
-}
-
-/** The custom emoji of each agent (the owner's set): in rich text and on buttons. */
-const AGENT_EMOJI: Record<string, string> = { codex: '5255760585445901285', claude: '5256261335682941418' }
-
-/** «🤖 Claude · opus-5-5 · высокий»: the agent with its emoji, the model and the reasoning effort when known. */
-async function agentLine(s: Session): Promise<string> {
-  const { model, effort } = await sessionModel(s)
-  const name = s.engine === 'codex' ? 'Codex' : 'Claude'
-  return [`<tg-emoji emoji-id="${AGENT_EMOJI[s.engine]}">🤖</tg-emoji> ${name}`, ...(model ? [escapeHtml(model.replace(/^claude-/, ''))] : []), ...(effort ? [escapeHtml(effortLabel(effort))] : [])].join(' · ')
-}
-
 /**
  * /sessions: three sections — the owner's own (their DM session, ⏻ when it is
  * not running, and the main one), the users', the projects' — numbered
- * through, each line with the agent, model and effort; a button per session,
- * the sections apart.
+ * through, each line with the agent, model and effort; the buttons one after
+ * another, in the same order.
  */
 export async function sessionsList(d: Daemon): Promise<Screen> {
-  const all = sortedSessions(d)
-  const ownerId = owner()
-  const ownSession = ownerId ? d.userSession(ownerId) : undefined
-  const offlineOwner = settings.userSessions && ownerId && !ownSession ? ownerId : null
-  const main = d.mainSession()
-  type Item = { s: Session } | { offline: string }
-  const sections: { title: string; items: Item[] }[] = [
-    { title: t('👑 <b>Владелец</b>'), items: [...(ownSession ? [{ s: ownSession }] : offlineOwner ? [{ offline: offlineOwner }] : []), ...all.filter(s => s === main && s !== ownSession).map(s => ({ s }))] },
-    { title: t('👥 <b>Пользователи</b>'), items: all.filter(s => d.userIdOf(s) && s !== ownSession).map(s => ({ s })) },
-    { title: t('📂 <b>Проекты</b>'), items: all.filter(s => !d.userIdOf(s) && s !== main).map(s => ({ s })) },
-  ].filter(x => x.items.length)
-
+  const sections = sessionSections(d)
   let n = 0
   const textBlocks: string[] = []
   const rows: Btn[][] = []
   const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-  for (const [k, sec] of sections.entries()) {
+  for (const sec of sections) {
     const lines: string[] = []
-    // A divider row between sections on the keyboard (it does nothing).
-    if (k > 0) rows.push([button(`┈┈ ${sec.title.replace(/<\/?b>/g, '')} ┈┈`, 'sm:sep')])
     for (const item of sec.items) {
       n++
       if ('offline' in item) {
@@ -468,7 +437,6 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     await answer()
     return true
   }
-  if (action === 'sep') { await answer(); return true }
   if (action === 'perms') {
     await answer()
     await show(ctx, permissionsScreen(d))

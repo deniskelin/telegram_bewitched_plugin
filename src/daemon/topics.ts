@@ -12,8 +12,8 @@ import { join } from 'path'
 import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
-import { clip, fmtDuration, safeMeta } from '../format.ts'
-import { locale, t as tr } from '../i18n/index.ts'
+import { clip, escapeHtml, fmtDuration, safeMeta } from '../format.ts'
+import { k, locale, t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
 import { groupForProject } from './groups.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
@@ -23,10 +23,10 @@ import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProj
 import { clearIdle, idleRecord, quietConnect } from './autoresume.ts'
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
-import { fetchLimits, lastLimits, limitsBlock, limitsLine } from './usage.ts'
+import { fetchLimits, lastLimits, limitsBlock, limitsLine, sessionCostLine } from './usage.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
-import { projectTitle, sessionLabel, sortedSessions, statusLabel } from './report.ts'
+import { agentLine, menuStatus, projectTitle, sessionLabel, sessionSections, sortedSessions, statusLabel } from './report.ts'
 import { onSessionBack, onSessionStopped } from './watchdog.ts'
 import { journalChat, noticeTarget, sendNotice } from './journal.ts'
 
@@ -268,20 +268,78 @@ export function onSessionGone(d: Daemon, s: Session): void {
 let dashTimer: ReturnType<typeof setTimeout> | null = null
 let dashLast = 0
 
-export function renderDashboard(d: Daemon): string {
-  const list = sortedSessions(d)
-  const lines = [tr('🎛 Пульт Claude Code'), '']
-  if (!list.length) lines.push(tr('Нет запущенных сессий.'))
-  for (const s of list) {
-    const ago = fmtDuration(Date.now() - s.lastActivity)
-    const user = d.userIdOf(s)
-    lines.push(`${statusLabel(s)} · ${sessionLabel(d, s)}${s.branch && !user ? ` (${s.branch})` : ''} — ` + tr('#{id}, активность {ago} назад', { id: s.id, ago }))
+/** How much the dashboard shows: 1 — a line per session, 2 — with the agent, model and activity, 3 — with the turn, last action and today's cost. */
+export type DashDetail = 1 | 2 | 3
+
+const DASH_LEVELS: Record<DashDetail, string> = { 1: k('🔹 Кратко'), 2: k('🔸 Обычно'), 3: k('🔶 Подробно') }
+
+export function dashDetail(d: Daemon): DashDetail {
+  const v = Number(d.store.get('dash_detail'))
+  return v === 1 || v === 3 ? v : 2
+}
+
+/**
+ * The pinned dashboard (HTML, a rich screen): the sessions in the sections of
+ * /sessions — the owner's, the users', the projects' — numbered through, as
+ * detailed as chosen with the buttons under it, then the limits.
+ */
+export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(d)): Promise<string> {
+  const now = Date.now()
+  const blocks = [tr('🎛 <b>Пульт</b>')]
+  const sections = sessionSections(d)
+  let n = 0
+  for (const sec of sections) {
+    const lines: string[] = []
+    for (const item of sec.items) {
+      n++
+      if ('offline' in item) {
+        lines.push(`${n}. 👤 <b>${escapeHtml(d.userShortName(item.offline))}</b> · ⏻ ${tr('не запущена')}`)
+        continue
+      }
+      const s = item.s
+      const label = sessionLabel(d, s)
+      const icon = label.slice(0, label.indexOf(' '))
+      const user = d.userIdOf(s)
+      lines.push(`${n}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${menuStatus(s)}`)
+      if (level >= 2) lines.push(`    ${await agentLine(s)} · ${escapeHtml(tr('активность {ago} назад', { ago: fmtDuration(now - s.lastActivity) }))}`)
+      if (level >= 3) {
+        const extra: string[] = []
+        if (s.branch && !user) extra.push(`🌿 ${escapeHtml(s.branch)}`)
+        if (s.turn) extra.push(escapeHtml(tr('⏱ ход {v}', { v: fmtDuration(now - s.turn.start) })))
+        if (s.lastTool) extra.push(`🔧 ${escapeHtml(clip(s.lastTool.text, 60))}`)
+        const cost = sessionCostLine(s)
+        if (cost) extra.push(escapeHtml(cost))
+        if (extra.length) lines.push(`    ${extra.join(' · ')}`)
+      }
+    }
+    blocks.push(`${sec.title}\n${lines.join('\n')}`)
   }
+  if (!n) blocks.push(tr('Нет запущенных сессий.'))
   // In the journal's «📌 Статус» the limits as in /usage; in General one line.
   const limits = journalChat(d) ? limitsBlock() : limitsLine()
-  if (limits) lines.push('', limits)
-  lines.push('', tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }), '/menu · /sessions · /help')
-  return lines.join('\n')
+  if (limits) blocks.push(escapeHtml(limits))
+  blocks.push(`<i>${escapeHtml(tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }))} · /menu · /sessions · /help</i>`)
+  return blocks.join('\n\n')
+}
+
+/** The detail buttons under the dashboard; the current level marked. */
+function dashboardKb(d: Daemon): InlineKeyboard {
+  const cur = dashDetail(d)
+  return new InlineKeyboard([([1, 2, 3] as const).map(v => button(`${cur === v ? '• ' : ''}${tr(DASH_LEVELS[v])}`, `dash:lv:${v}`, cur === v ? 'primary' : undefined))])
+}
+
+/** dash:lv:<1-3> — the dashboard's detail (anyone who may control sessions). */
+export async function handleDashboardCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const m = /^dash:lv:([123])$/.exec(data)
+  if (!m) return false
+  if (!ctx.from || !can(ctx.from.id, 'control')) {
+    await ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
+    return true
+  }
+  d.store.set('dash_detail', m[1])
+  await ctx.answerCallbackQuery({ text: tr(DASH_LEVELS[Number(m[1]) as DashDetail]) }).catch(() => {})
+  await updateDashboard(d)
+  return true
 }
 
 export function scheduleDashboard(d: Daemon): void {
@@ -332,7 +390,8 @@ export async function updateDashboard(d: Daemon): Promise<void> {
   if (!at) return
   // The status shows limits: fetch them if the limit watch has not lately (it may be off).
   if (journalChat(d) && (lastLimits()?.at ?? 0) < Date.now() - 10 * 60_000) await fetchLimits().catch(() => {})
-  const text = inChat(d, at.chat, at.thread, () => renderDashboard(d))
+  const text = await inChat(d, at.chat, at.thread, () => renderDashboard(d))
+  const extra = { parse_mode: 'HTML' as const, reply_markup: inChat(d, at.chat, at.thread, () => dashboardKb(d)), link_preview_options: { is_disabled: true } }
   let cur = dashboardMsg(d)
   if (cur && (cur.chat !== at.chat || cur.thread !== at.thread)) {
     // Moved (journal switched on or off): the old message goes.
@@ -343,14 +402,14 @@ export async function updateDashboard(d: Daemon): Promise<void> {
   }
   if (cur) {
     try {
-      await d.bot.api.editMessageText(cur.chat, cur.id, text)
+      await d.bot.api.editMessageText(cur.chat, cur.id, text, extra)
       return
     } catch (err) {
       if (isMessageNotModified(err)) return
     }
   }
   try {
-    const msg = await d.bot.api.sendMessage(at.chat, text, { disable_notification: true, ...(at.thread != null ? { message_thread_id: at.thread } : {}) })
+    const msg = await d.bot.api.sendMessage(at.chat, text, { ...extra, disable_notification: true, ...(at.thread != null ? { message_thread_id: at.thread } : {}) })
     setDashboardMsg(d, { chat: at.chat, ...(at.thread != null ? { thread: at.thread } : {}), id: msg.message_id })
     await d.bot.api.pinChatMessage(at.chat, msg.message_id, { disable_notification: true }).catch(() => {})
   } catch (err) {

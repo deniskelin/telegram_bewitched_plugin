@@ -25,6 +25,46 @@ export function statusLabel(s: Session): string {
   return t('🟢 свободна')
 }
 
+/** ⚙️ working, 🔐 waiting for a permission, 💤 idle: the list's status icons. */
+export function menuStatusIcon(s: Session): string {
+  return s.status === 'waiting' ? '🔐' : s.status === 'working' ? '⚙️' : '💤'
+}
+
+/** «💤 свободна»: the icon of the list with the status word. */
+export function menuStatus(s: Session): string {
+  return `${menuStatusIcon(s)} ${statusLabel(s).split(' ').slice(1).join(' ')}`
+}
+
+/** The custom emoji of each agent (the owner's set): in rich text and on buttons. */
+export const AGENT_EMOJI: Record<string, string> = { codex: '5255760585445901285', claude: '5256261335682941418' }
+
+/** «🤖 Claude · opus-5-5 · высокий»: the agent with its emoji, the model and the reasoning effort when known. */
+export async function agentLine(s: Session): Promise<string> {
+  const { model, effort } = await sessionModel(s)
+  const name = s.engine === 'codex' ? 'Codex' : 'Claude'
+  return [`<tg-emoji emoji-id="${AGENT_EMOJI[s.engine]}">🤖</tg-emoji> ${name}`, ...(model ? [escapeHtml(model.replace(/^claude-/, ''))] : []), ...(effort ? [escapeHtml(effortLabel(effort))] : [])].join(' · ')
+}
+
+export type SessionItem = { s: Session } | { offline: string }
+
+/**
+ * The sessions in three sections — the owner's own (their DM session, the
+ * owner's id when it is not running, and the main one), the users', the
+ * projects' — empty sections left out. /sessions and the dashboard.
+ */
+export function sessionSections(d: Daemon): { title: string; items: SessionItem[] }[] {
+  const all = sortedSessions(d)
+  const ownerId = owner()
+  const ownSession = ownerId ? d.userSession(ownerId) : undefined
+  const offlineOwner = settings.userSessions && ownerId && !ownSession ? ownerId : null
+  const main = d.mainSession()
+  return [
+    { title: t('👑 <b>Владелец</b>'), items: [...(ownSession ? [{ s: ownSession }] : offlineOwner ? [{ offline: offlineOwner }] : []), ...all.filter(s => s === main && s !== ownSession).map(s => ({ s }))] },
+    { title: t('👥 <b>Пользователи</b>'), items: all.filter(s => d.userIdOf(s) && s !== ownSession).map(s => ({ s })) },
+    { title: t('📂 <b>Проекты</b>'), items: all.filter(s => !d.userIdOf(s) && s !== main).map(s => ({ s })) },
+  ].filter(x => x.items.length)
+}
+
 const PERMISSION_MODES: Record<string, string> = {
   default: k('обычный'),
   plan: 'plan',
