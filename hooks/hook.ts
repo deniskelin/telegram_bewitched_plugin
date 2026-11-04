@@ -13,6 +13,8 @@ import { findClaudePid } from '../src/proc.ts'
 const KEEP = ['hook_event_name', 'session_id', 'transcript_path', 'permission_mode', 'tool_name', 'tool_input', 'delta', 'final', 'last_assistant_message', 'cwd', 'reason']
 
 async function main(): Promise<void> {
+  // When the hook fired: hooks are separate processes and may reach the daemon out of order.
+  const at = Date.now()
   let token: string
   try {
     token = readFileSync(HTTP_TOKEN_FILE, 'utf8').trim()
@@ -34,7 +36,7 @@ async function main(): Promise<void> {
   await fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
     method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ event: raw.hook_event_name, claudePid: findClaudePid(), data }),
+    body: JSON.stringify({ event: raw.hook_event_name, claudePid: findClaudePid(), data, at }),
     signal: AbortSignal.timeout(300),
   })
 }

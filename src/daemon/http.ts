@@ -30,6 +30,18 @@ export type HookEvent = {
   event: string
   claudePid: number | null
   data: Record<string, unknown>
+  /** When the hook fired (hook.ts start), ms; absent from older hook scripts. */
+  at?: number
+}
+
+/** Without the fire time: a non-prompt hook this soon after Stop is taken for the ended turn's tail. */
+const LATE_HOOK_MS = 3000
+
+/** A hook of a turn that has already ended (it arrived after that turn's Stop). */
+export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<HookEvent, 'event' | 'at'>, now = Date.now()): boolean {
+  if (s.turn || s.turnEndedAt == null) return false
+  if (!['PreToolUse', 'PostToolUseFailure', 'MessageDisplay'].includes(h.event)) return false
+  return h.at != null ? h.at <= s.turnEndedAt : now - s.turnEndedAt < LATE_HOOK_MS
 }
 
 /**
@@ -65,6 +77,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
   // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
+  if (isLateHook(s, h)) return
   if (h.event === 'SessionStart' || h.event === 'UserPromptSubmit' || h.event === 'Stop') d.log(`hook ${h.event}: session ${s.id} (${s.engine})${s.status !== 'idle' ? ` ${s.status}` : ''}`)
   switch (h.event) {
     case 'UserPromptSubmit':
@@ -108,6 +121,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     }
     case 'Stop':
     case 'StopFailure':
+      s.turnEndedAt = h.at ?? Date.now()
       onTurnEnd(d, s, h.event === 'StopFailure', typeof data.last_assistant_message === 'string' ? data.last_assistant_message : '', String(data.error ?? ''))
       break
   }
