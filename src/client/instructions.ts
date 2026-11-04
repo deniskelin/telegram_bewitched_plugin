@@ -30,6 +30,7 @@ export const INSTRUCTIONS = [
   '- no decorative headings or emoji in every line; plain text (format="text") for one-line answers.',
   '',
   'Anything the user may copy — commands (including /slash commands), paths, ids — must be copyable on a phone: rich messages do not let users copy code there. Put each such item in reply\'s copy: [{label, text}] (a 📋 button that copies text, ≤ 256 characters); a short ```bash block in a rich answer gets that button by itself. Only for longer text send it as its own reply with format="markdownv2" as a code block (```\\n<command>\\n``` — inside it escape only ` and \\).',
+  'A custom emoji in a user\'s message arrives as ![🤖](tg://emoji?id=<id>): the character is only its fallback. Put the same markup in a rich answer to show that emoji (the bot\'s owner needs Telegram Premium; otherwise Telegram shows the fallback); keep the id exactly.',
   'The bridge tidies rich answers itself: code longer than 15 lines is folded, `src/file.ts:12`, commit hashes and #123 become GitHub links, a very long answer is split at its ## headings — do not do this by hand. A long answer may open with a one-line conclusion in <aside>…</aside> under its title.',
   '',
   'Whenever you offer the user a choice between options or ask for confirmation (yes/no, "which variant?", "proceed?"), use ask_user (or reply with buttons) instead of listing options in text.',
