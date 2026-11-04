@@ -166,7 +166,8 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
         if (id != null) { lead.push(id); recordOut(d, c, id, part) }
       }
     }
-    const q = await withTopicRetry(d, s, c, cc => postQuestion(d, s, cc, text, opts, { replyTo, ...(last ? { rich: last } : {}) }))
+    // The 📋 copy buttons go under the answer buttons: one keyboard, both kinds.
+    const q = await withTopicRetry(d, s, c, cc => postQuestion(d, s, cc, text, opts, { replyTo, ...(last ? { rich: last } : {}), ...(copies.length ? { copies } : {}) }))
     recordOut(d, c, q.messageId, last ?? text)
     const ids = [...lead, q.messageId, ...(await sendFiles(d, c, files, replyTo))]
     finishReply(d, s, c)

@@ -192,6 +192,18 @@ describe('buttons', () => {
     expect(chosen).toMatchObject({ text: '✅ Выпустить', style: 'success' })
     expect(other.style).toBeUndefined()
   })
+
+  test('reply with buttons and copy: both kinds in one keyboard; 📋 stays after the tap', async () => {
+    const r = await client.call('reply', { chat_id: '111', text: 'Слить?', buttons: ['Да', 'Нет'], copy: [{ label: '📋 Команда', text: 'gh pr merge 1' }] })
+    expect(r.ok).toBe(true)
+    const qid = /question_id: ([0-9a-f]{8})/.exec(r.text)![1]
+    const sent = await tg.waitFor('sendMessage', c => c.body.text === 'Слить?')
+    const flat = (m: unknown) => (m as { inline_keyboard: { text: string; callback_data?: string; copy_text?: { text: string } }[][] }).inline_keyboard.flat()
+    expect(flat(sent.body.reply_markup).map(b => b.callback_data ?? b.copy_text?.text)).toEqual([`q:${qid}:0`, `q:${qid}:1`, 'gh pr merge 1'])
+    tg.push(callbackQuery(`q:${qid}:0`))
+    const e = await tg.waitFor('editMessageReplyMarkup', c => JSON.stringify(c.body.reply_markup).includes(`q:${qid}:`))
+    expect(flat(e.body.reply_markup).at(-1)?.copy_text?.text).toBe('gh pr merge 1')
+  })
 })
 
 describe('topics', () => {
