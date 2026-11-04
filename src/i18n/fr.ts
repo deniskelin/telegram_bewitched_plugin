@@ -596,7 +596,6 @@ const dict: Dict = {
   "💸 сегодня ${v} · {v2} ток.": "💸 aujourd'hui ${v} · {v2} jetons",
   "Нет активности за период": "Aucune activité sur la période",
   "📋 <b>Сессии</b> ({length})": "📋 <b>Sessions</b> ({length})",
-  "Выберите сессию:": "Choisissez une session :",
   "🔐 Ждут разрешения: {size} — /permissions": "🔐 En attente d'autorisation : {size} — /permissions",
   "🔐 Разрешения ({size})": "🔐 Autorisations ({size})",
   "👑 Сделать главной": "👑 Rendre principale",
@@ -1029,6 +1028,8 @@ const dict: Dict = {
   "Агент": "Agent",
   "не запущена": "non lancée",
   "🚀 {engine}": "🚀 {engine}",
+  "👑 <b>Владелец</b>": "👑 <b>Propriétaire</b>",
+  "📂 <b>Проекты</b>": "📂 <b>Projets</b>",
 }
 
 export default dict

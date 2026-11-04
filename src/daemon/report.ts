@@ -106,6 +106,18 @@ function transcriptOf(s: Session, argv: string[]): string | null {
   return s.claude.transcript ?? guessTranscript(argv, s.cwd)
 }
 
+/** The model and reasoning effort the session runs at: its transcript's last reply (Claude Code) or its last Codex request; nulls — not recorded yet. */
+export async function sessionModel(s: Session): Promise<{ model: string | null; effort: string | null }> {
+  if (s.engine === 'codex') {
+    const last = collectCodex(Date.now(), 1).entries.filter(e => e.cwd === s.cwd).reduce<{ ts: number; model: string; effort?: string } | null>((a, e) => (!a || e.ts > a.ts ? e : a), null)
+    return { model: last?.model ?? null, effort: last?.effort ?? null }
+  }
+  const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
+  const path = transcriptOf(s, argv)
+  const info = path ? await transcriptInfo(path) : null
+  return { model: info?.model ?? null, effort: info?.effort ?? null }
+}
+
 /** The reasoning effort the session runs at: its transcript's last reply (Claude Code) or its last Codex request; null — not recorded (the CLI's default). */
 export async function sessionEffort(s: Session): Promise<string | null> {
   if (s.engine === 'codex') {
