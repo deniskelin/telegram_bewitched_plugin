@@ -237,6 +237,8 @@ A session runs on one of two agent CLIs. Claude Code talks to the daemon over th
 | `OWNER_IDLE_MIN` | `10080` | Close the owner's own session after N idle minutes (a week; 0 — never). `/menu → 💤` overrides all three |
 | `TOPIC_NO_SESSION` | `launch` | A project topic without a session: `launch` — start it, `main` — the main session answers, `queue` — only queue |
 | `WATCHDOG_GRACE_SEC` | `60` | How many seconds after a session stops to report it |
+| `CODEX_SANDBOX` | `auto` | Codex's sandbox: `auto` — `workspace-write` (the projects, users and main folders writable, network on), or none where the sandbox cannot start (an old kernel without user namespaces), since otherwise Codex asks before every command; or `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_APPROVAL` | `on-request` | When Codex asks for approval: `on-request` — only when the model needs more than the sandbox allows; `untrusted`, `never` |
 | `TURN_STUCK_SEC` | `120` | Warn when a delivered message gets no sign of life (no hook, no transcript write) for N seconds; 0 — off |
 | `MAIN_DIR` | `~` | The main session's folder (with `USER_SESSIONS=off` — DMs and General) |
 | `CONTEXT_WINDOW` | `1000000` | Context window size for the fill percentage on session cards |

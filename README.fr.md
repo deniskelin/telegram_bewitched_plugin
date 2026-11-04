@@ -224,6 +224,8 @@ Le démon fait lui-même l'intendance, sans Claude : commandes du panneau, ferme
 | `OWNER_IDLE_MIN` | `10080` | Fermer la session personnelle du propriétaire après N minutes d'inactivité (une semaine ; 0 — jamais). `/menu → 💤` remplace les trois |
 | `TOPIC_NO_SESSION` | `launch` | Sujet de projet sans session : `launch` — la lancer, `main` — la principale répond, `queue` — file d'attente seulement |
 | `WATCHDOG_GRACE_SEC` | `60` | Combien de secondes après l'arrêt d'une session la signaler |
+| `CODEX_SANDBOX` | `auto` | Bac à sable de Codex : `auto` — `workspace-write` (dossiers des projets, des utilisateurs et principal en écriture, réseau activé), sans bac à sable là où il ne démarre pas (ancien noyau sans user namespaces), sinon Codex demande avant chaque commande ; ou `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_APPROVAL` | `on-request` | Quand Codex demande une autorisation : `on-request` — seulement si le modèle a besoin de plus que le bac à sable ; `untrusted`, `never` |
 | `TURN_STUCK_SEC` | `120` | Avertir si un message livré reste N secondes sans signe de vie (ni hook, ni écriture dans le transcript) ; 0 — désactivé |
 | `MAIN_DIR` | `~` | Dossier de la session principale (avec `USER_SESSIONS=off` — messages privés et General) |
 | `CONTEXT_WINDOW` | `1000000` | Taille de la fenêtre de contexte pour le pourcentage de remplissage sur les fiches |

@@ -224,6 +224,8 @@ claude plugin update telegram-bewitched@bewitched
 | `OWNER_IDLE_MIN` | `10080` | 所有者个人会话空闲 N 分钟后关闭（一周；0——从不）。`/menu → 💤` 覆盖这三项 |
 | `TOPIC_NO_SESSION` | `launch` | 没有会话的项目话题：`launch`——启动会话，`main`——由主会话回答，`queue`——只排队 |
 | `WATCHDOG_GRACE_SEC` | `60` | 会话停止后多少秒发出通知 |
+| `CODEX_SANDBOX` | `auto` | Codex 沙箱：`auto` — `workspace-write`（项目、用户和主目录可写，开启网络）；沙箱无法启动时（旧内核不支持 user namespaces）不使用沙箱，否则 Codex 每条命令都会请求批准；或 `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_APPROVAL` | `on-request` | Codex 何时请求批准：`on-request` — 仅当模型需要超出沙箱的权限时；`untrusted`、`never` |
 | `TURN_STUCK_SEC` | `120` | 已投递的消息 N 秒没有任何活动迹象（没有 hook，也没有写入 transcript）时发出提醒；0 — 关闭 |
 | `MAIN_DIR` | `~` | 主会话的文件夹（`USER_SESSIONS=off` 时负责私聊和 General） |
 | `CONTEXT_WINDOW` | `1000000` | 会话卡片中计算上下文占用百分比的窗口大小 |
