@@ -23,7 +23,7 @@ import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProj
 import { clearIdle, idleRecord, quietConnect } from './autoresume.ts'
 import { permissionsScreen, sessionsList } from './menu.ts'
 import { topicsList } from './topicmenu.ts'
-import { fetchLimits, lastLimits, limitsBlock, limitsLine, sessionCostLine } from './usage.ts'
+import { fetchLimits, lastLimits, limitsHtml, limitsLine, sessionCostLine } from './usage.ts'
 import { sttEnabled } from '../voice/stt.ts'
 import { ttsEnabled } from '../voice/tts.ts'
 import { agentLine, menuStatus, projectTitle, sessionLabel, sessionSections, sortedSessions, statusLabel } from './report.ts'
@@ -311,9 +311,14 @@ export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(
     blocks.push(`${sec.title}\n${lines.join('\n')}`)
   }
   if (!n) blocks.push(tr('Нет запущенных сессий.'))
-  // In the journal's «📌 Статус» the limits as in /usage; in General one line.
-  const limits = journalChat(d) ? limitsBlock() : limitsLine()
-  if (limits) blocks.push(escapeHtml(limits))
+  // Limits: one line when brief; otherwise a section per subscription, as in /usage.
+  if (level === 1) {
+    const line = limitsLine()
+    if (line) blocks.push(escapeHtml(line))
+  } else {
+    const limits = limitsHtml()
+    if (limits) blocks.push(`${tr('📊 <b>Лимиты</b>')}\n\n${limits}`)
+  }
   blocks.push(`<i>${escapeHtml(tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }))} · /menu · /sessions · /help</i>`)
   return blocks.join('\n\n')
 }

@@ -621,7 +621,14 @@ describe('topics', () => {
         '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱',
         '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
       ])
-      expect(await renderDashboard(d)).toContain('📊 Claude: 5 часов 3%')
+      // Brief: the limits in one line; normal and detailed: a section per subscription.
+      expect(await renderDashboard(d, 1)).toContain('📊 Claude: 5 часов 3%')
+      const limitsPart = await renderDashboard(d, 2)
+      expect(limitsPart).toContain('📊 <b>Лимиты</b>\n\n🟠 <b>Claude</b>')
+      expect(limitsPart).toMatch(/<blockquote>5 часов: <b>3%<\/b> ▰?▱+\n {3}сброс /)
+      const { screenToRich: toRich } = await import('../src/rich.ts')
+      expect(toRich(limitsPart)).toContain('<h4>📊 Лимиты</h4>')
+      expect(toRich(limitsPart)).toContain('<h4>🟠 Claude')
       // Detail levels: brief — a line per session; normal — with the agent; detailed — with today's cost; the buttons switch them.
       const brief = await renderDashboard(d, 1)
       const full = await renderDashboard(d, 3)
@@ -637,9 +644,9 @@ describe('topics', () => {
       process.env.JOURNAL_CHAT_ID = '-5300'
       try {
         const status = await renderDashboard(d)
-        expect(status).toContain('📊 Лимиты')
-        expect(status).toContain('\n🟠 Claude')
-        expect(status).toMatch(/5 часов: 3% ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
+        expect(status).toContain('📊 <b>Лимиты</b>')
+        expect(status).toContain('\n🟠 <b>Claude</b>')
+        expect(status).toMatch(/5 часов: <b>3%<\/b> ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
       } finally {
         delete process.env.JOURNAL_CHAT_ID
       }
@@ -1268,8 +1275,8 @@ describe('topics', () => {
     expect(codex).toContain('👥 <b>Кто тратит</b>, сутки')
     expect(codex).toContain('📂 проекты: 100% токенов · 31 тыс. ток.')
     expect(text.slice(0, text.indexOf('⚫️ <b>Codex</b>'))).not.toContain('gpt-6.1-sol')
-    const { limitsBlock, limitsLine } = await import('../src/daemon/usage.ts')
-    expect(limitsBlock(now)).toContain('⚫️ Codex · plus\n5 часов: 12%')
+    const { limitsHtml, limitsLine } = await import('../src/daemon/usage.ts')
+    expect(limitsHtml(now)).toContain('⚫️ <b>Codex</b> · plus\n<blockquote>5 часов: <b>12%</b>')
     expect(limitsLine(now)).toContain('Codex: 5 часов 12% · неделя 4%')
     // The turn's cost of a Codex session: from its rollouts, tokens and cache, no $.
     const { turnCostLine, turnCostBlock, sessionCostLine } = await import('../src/daemon/usage.ts')
