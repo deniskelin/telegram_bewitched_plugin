@@ -6,6 +6,7 @@
 
 import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { can, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
+import { join } from 'path'
 import { settings } from '../config.ts'
 import { clip, escapeHtml } from '../format.ts'
 import { locale, t } from '../i18n/index.ts'
@@ -19,7 +20,7 @@ import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
 import { listCodexConversations, listConversations, transcriptInfo, type Conversation } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
-import { attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
+import { launchUserSession, attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, effortLabel, engineOf, projectEffort, projectEngine, setProjectEffort, setProjectEngine } from './engines.ts'
 import { sessionEffort } from './report.ts'
 import { reviewButton } from './oneshot.ts'
@@ -29,14 +30,29 @@ export const MAX_MESSAGE = 4000
 export type Screen = { text: string; kb: InlineKeyboard }
 export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>
 
+/** Keep status icons whole: slicing UTF-16 breaks variation selectors and ZWJ emoji. */
+function menuStatusIcon(s: Session): string {
+  return s.status === 'waiting' ? '🔐' : s.status === 'working' ? '⚙️' : '💤'
+}
+
+function menuStatus(s: Session): string {
+  return `${menuStatusIcon(s)} ${statusLabel(s).split(' ').slice(1).join(' ')}`
+}
+
 export async function sessionsList(d: Daemon): Promise<Screen> {
   const list = sortedSessions(d)
+  const ownerId = owner()
+  const offlineOwner = settings.userSessions && ownerId && !d.userSession(ownerId) ? ownerId : null
   const lines = list.map((s, i) => {
     const label = sessionLabel(d, s)
     const icon = label.slice(0, label.indexOf(' '))
-    return `${i + 1}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${statusLabel(s)}${s.group ? ' · 👥' : ''}`
+    const emojiId = s.engine === 'codex' ? '5255760585445901285' : '5256261335682941418'
+    const engineName = s.engine === 'codex' ? 'Codex' : 'Claude'
+    const engine = `<tg-emoji emoji-id="${emojiId}">🤖</tg-emoji> ${engineName}`
+    return `${i + 1}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${engine} · ${menuStatus(s)}${s.group ? ' · 👥' : ''}`
   })
-  const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
+  if (offlineOwner) lines.push(`${list.length + 1}. 👤 <b>${escapeHtml(d.userShortName(offlineOwner))}</b> · ⏻ ${t('не запущена')}`)
+  const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length + (offlineOwner ? 1 : 0) }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
   const passive = await passiveBlock(d)
   if (passive) blocks.push(passive)
@@ -46,11 +62,16 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
 
   const rows: Btn[][] = []
   for (const [i, s] of list.entries()) {
-    // The number from the list, the name and the status dot: the rest is in the text above.
-    const b = button(`${i + 1}. ${clip(sessionShortName(d, s), 30)} ${statusLabel(s).slice(0, 2)}`, `sm:s:${s.id}`)
-    if (i % 2 === 0) rows.push([b])
-    else rows.at(-1)!.push(b)
+    // One full-width row keeps the status visible on narrow phone screens.
+    const prefix = `${i + 1}. `
+    const suffix = ` ${menuStatusIcon(s)}`
+    const name = sessionShortName(d, s).replace(/\s+/g, ' ').trim()
+    const chars = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(name)].map(x => x.segment)
+    const budget = Math.max(1, 28 - Array.from(prefix + suffix).length)
+    const title = chars.length > budget ? chars.slice(0, budget - 1).join('') + '…' : name
+    rows.push([{ ...button(`${prefix}${title}${suffix}`, `sm:s:${s.id}`), icon_custom_emoji_id: s.engine === 'codex' ? '5255760585445901285' : '5256261335682941418' }])
   }
+  if (offlineOwner) rows.push([button(`${list.length + 1}. ${clip(d.userShortName(offlineOwner), 20)} ⏻`, 'sm:owner')])
   rows.push([...(d.permissions.size ? [button(t('🔐 Разрешения ({size})', { size: d.permissions.size }), 'sm:perms')] : []), button(t('👥 Пригласить'), 'inv:start'), button(t('🔄 Обновить'), 'sm:list')])
   rows.push([button(t('« Меню'), 'hub:main')])
   return { text, kb: new InlineKeyboard(rows as never) }
@@ -379,6 +400,25 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})
   if (!ctx.from || !can(ctx.from.id, 'control')) {
     await answer(t('Нет доступа.'))
+    return true
+  }
+  if (action === 'owner' || action === 'ownerlaunch') {
+    const ownerId = owner()
+    if (!ownerId || !settings.userSessions) { await answer(); return true }
+    const current = d.userSession(ownerId)
+    if (current) { await show(ctx, await sessionScreen(d, current)); await answer(); return true }
+    if (action === 'ownerlaunch') {
+      await answer()
+      await launchUserSession(d, ownerId, d.userShortName(ownerId))
+      await show(ctx, await sessionsList(d))
+      return true
+    }
+    const engine = projectEngine(d, join(settings.usersDir, ownerId)).engine
+    await show(ctx, {
+      text: `👤 <b>${escapeHtml(d.userShortName(ownerId))}</b>\n\n⏻ ${t('не запущена')} · ${engineOf(engine).name}`,
+      kb: new InlineKeyboard([[button(t('🚀 Запустить'), 'sm:ownerlaunch')], [button(t('« К списку'), 'sm:list')]]),
+    })
+    await answer()
     return true
   }
   if (action === 'perms') {
