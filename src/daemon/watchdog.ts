@@ -241,8 +241,31 @@ async function confirmPendingLaunches(d: Daemon): Promise<void> {
   }
 }
 
+/** A turn opened by a tool call alone, with nothing after it for this long, is checked against the screen. */
+const PHANTOM_TURN_MS = 60_000
+
+/**
+ * A turn that began without a prompt (a tool call between turns, a daemon
+ * restart mid-turn) and then went quiet: if the screen shows no work under
+ * way (no «esc to interrupt»), nothing is running and no Stop will come —
+ * the session is idle again, silently: no «готово», no cost.
+ */
+export async function closePhantomTurns(d: Daemon, now = Date.now()): Promise<void> {
+  for (const s of d.activeSessions()) {
+    const quiet = s.turn?.byHook ? now - Math.max(s.lastHookAt, s.turn.start) : 0
+    if (!s.turn?.byHook || !s.tmuxPane || quiet < PHANTOM_TURN_MS) continue
+    const raw = await d.tmuxCapture(s.tmuxPane)
+    if (raw == null || /esc to interrupt/i.test(raw)) continue
+    d.log(`session ${s.id}: a turn opened by a tool call, quiet for ${Math.round(quiet / 1000)} s and nothing on the screen — idle again`)
+    s.turn = null
+    s.status = 'idle'
+    d.streams.close(s, 'stop')
+  }
+}
+
 export async function checkQuestions(d: Daemon): Promise<void> {
   await confirmPendingLaunches(d).catch(err => d.log(`pending launches check failed: ${err}`))
+  await closePhantomTurns(d).catch(err => d.log(`phantom turns check failed: ${err}`))
   for (const s of d.activeSessions()) {
     const pane = s.tmuxPane
     if (!pane || !/^%\d+$/.test(pane)) continue

@@ -65,7 +65,8 @@ export type Session = {
   /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
   lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string } | null
   /** stuck: «не берёт сообщение» went out for this turn (watchdog.ts checkTurns). */
-  turn: { start: number; replied: boolean; stuck?: boolean } | null
+  /** byHook: opened by a tool call, not a prompt (a turn begun in the terminal, or a daemon restart mid-turn). */
+  turn: { start: number; replied: boolean; stuck?: boolean; byHook?: boolean } | null
   /** The last hook event of this session: a sign of life. */
   lastHookAt: number
   /** The agent CLI behind it (FR-15); everything connecting over the channel is Claude Code. */
