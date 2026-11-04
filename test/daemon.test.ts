@@ -365,7 +365,8 @@ describe('topics', () => {
     tg.push(callbackQuery(`tm:t:${otherThread}`))
     const ts = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>'))
     expect(String(ts.body.text)).toContain('<code>/tmp/other</code>')
-    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:run:${otherThread}`)
+    // One 🚀 per installed agent (Codex is installed on the test machine), or a single 🚀.
+    expect(JSON.stringify(ts.body.reply_markup)).toMatch(new RegExp(`tm:run(claude)?:${otherThread}`))
     expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:ar:${otherThread}`)
     tg.push(callbackQuery(`tm:del:${otherThread}`))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Удалить топик «other»'))
@@ -807,9 +808,9 @@ describe('topics', () => {
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))
     expect(String(r.body.text)).toMatch(/\n\d+\. 📂 <b>proj<\/b> · /)
     const kb = JSON.stringify(r.body.reply_markup)
-    // Buttons: the number, the name and the status dot only.
+    // Buttons preserve the agent and status around the project name.
     const btn = (r.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.callback_data === `sm:s:${sessionId}`)!
-    expect(btn.text).toMatch(/^\d+\. proj [🟢🔵🟡]$/u)
+    expect(btn.text).toMatch(/^\d+\. proj (💤|⚙️|🔐)$/u)
     expect(kb).toContain(`sm:s:${sessionId}`)
     expect(kb).toContain('sm:list')
 
@@ -1594,12 +1595,28 @@ describe('user labels', () => {
     const { sessionsList } = await import('../src/daemon/menu.ts')
     d.rememberUser('111', { first: 'Лиза', last: 'Келина-Длиннофамильная', username: 'lizka_kuz' })
     process.env.USER_SESSIONS = 'on'
+    const offline = await sessionsList(d)
+    expect(offline.text).toContain('⏻ не запущена')
+    expect(offline.kb.inline_keyboard.flat().some(b => 'callback_data' in b && b.callback_data === 'sm:owner')).toBe(true)
     const u = new FakeClient()
     await u.connect({ cwd: `${process.env.USERS_DIR}/111`, projectRoot: `${process.env.USERS_DIR}/111`, claudePid: 9911 })
     const list = await sessionsList(d)
+    expect(list.kb.inline_keyboard.flat().some(b => 'callback_data' in b && b.callback_data === 'sm:owner')).toBe(false)
     for (const row of (list.kb as unknown as { inline_keyboard: { text: string }[][] }).inline_keyboard) {
       for (const b of row) expect(/[\uD800-\uDBFF](?![\uDC00-\uDFFF])/.test(b.text)).toBe(false)
     }
+    const sessionRows = list.kb.inline_keyboard.filter(row => row.some(b => 'callback_data' in b && b.callback_data.startsWith('sm:s:')))
+    expect(sessionRows.length).toBeGreaterThan(0)
+    for (const row of sessionRows) {
+      expect(row).toHaveLength(1)
+      expect(row[0]!.text).toMatch(/ (💤|⚙️|🔐)$/u)
+      expect([...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(row[0]!.text)].length).toBeLessThanOrEqual(28)
+    }
+    expect(sessionRows.some(row => (row[0] as { icon_custom_emoji_id?: string }).icon_custom_emoji_id === '5256261335682941418')).toBe(true)
+    const { screenToRich } = await import('../src/rich.ts')
+    const agentEmoji = '<tg-emoji emoji-id="5256261335682941418">🤖</tg-emoji>'
+    expect(list.text).toContain(agentEmoji)
+    expect(screenToRich(list.text)).toContain(agentEmoji)
     u.close()
     process.env.USER_SESSIONS = 'off'
     tg.push(textMessage({ from: 111, text: 'кто я' }))
@@ -2518,7 +2535,8 @@ describe('session types', () => {
     const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-project-other' } })
+    // The stopped session's own engine: its conversation id is that CLI's.
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { engine: 'claude', resume: undefined, continue: true, name: 'claude-project-other' } })
   })
 
   test('💤 idle wake-up: a suspended project session wakes up on the next topic message with its conversation; only the journal hears of it', async () => {

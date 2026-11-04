@@ -21,6 +21,7 @@ import { can, owner } from '../access.ts'
 import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
+import type { EngineId } from './engines.ts'
 import { exitCodeSince, attachTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
@@ -37,7 +38,8 @@ import { isQuestion, questionSig, screenView, shownQuestions } from './screen.ts
  * them; v: 2 for records made since notices go to the owner (older ones are
  * announced again once, see renotifyStopped).
  */
-type Restart = { dir: string; resume: string | null; name: string; session?: string; user?: string; sent?: { chat: string; id: number }[]; v?: number }
+/** engine: the CLI the stopped session ran; its conversation id (resume) belongs to that engine only. */
+type Restart = { dir: string; resume: string | null; name: string; session?: string; user?: string; sent?: { chat: string; id: number }[]; v?: number; engine?: EngineId }
 
 export function onSessionStopped(d: Daemon, s: Session): void {
   if (s.passive || d.ending.delete(s.id)) return
@@ -58,7 +60,7 @@ async function notifyStopped(d: Daemon, s: Session, resume: string | null, code:
   if (role === 'main' && settings.userSessions) return
   const user = d.userIdOf(s)
   const name = user ? `👤 ${d.userLabel(user)}` : role === 'main' ? tr('👑 главная') : `📂 ${projectTitle(s)}`
-  const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey), user: user ?? undefined, v: 2 }
+  const restart: Restart = { dir: s.cwd, resume, name, session: sessionName(d, s.projectKey, s.engine), user: user ?? undefined, v: 2, engine: s.engine }
   await dropStale(d, s.cwd)
   const id = randomBytes(4).toString('hex')
 
@@ -142,7 +144,7 @@ function ownerNotice(r: Restart, head: string): string {
     '',
     tr('Запустить заново в терминале:'),
     tr('<pre>tmux attach -t {v}  # или: tmux new -s {v}</pre>', { v: escapeHtml(r.session ?? settings.tmuxSession) }),
-    manualCmd(r.dir, { resume: r.resume ?? undefined, continue: !r.resume, name: r.session }),
+    manualCmd(r.dir, { ...(r.engine ? { engine: r.engine } : {}), resume: r.resume ?? undefined, continue: !r.resume, name: r.session }),
     tr('и примите экран подтверждения каналов. Или кнопкой — запущу в новом окне tmux.'),
   ].join('\n')
 }
@@ -266,7 +268,8 @@ async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: st
     await edit(tr('❌ Сессия #{id} не закрылась ни по /exit, ни по Ctrl-C, ни по SIGTERM. Посмотрите окно в tmux.', { id }))
     return
   }
-  const o = { resume: s.claude.sessionId ?? undefined, continue: !s.claude.sessionId, name: sessionName(d, s.projectKey) }
+  // The same CLI as before: the conversation id is that engine's (a Codex thread cannot be resumed by Claude Code).
+  const o = { engine: s.engine, resume: s.claude.sessionId ?? undefined, continue: !s.claude.sessionId, name: sessionName(d, s.projectKey, s.engine) }
   const l = await launchOnce(d, s.cwd, o)
   if (!l.ok) {
     await edit(l.skipped ? tr('⏳ Сессия уже запускается.') : tr('❌ Не удалось запустить: {v}', { v: escapeHtml(l.error) }))
@@ -320,7 +323,7 @@ export async function handleWatchdogCallback(d: Daemon, ctx: Context, data: stri
     return true
   }
   try {
-    const o = { resume: r.resume ?? undefined, continue: !r.resume, name: sessionName(d, r.dir) ?? r.session }
+    const o = { ...(r.engine ? { engine: r.engine } : {}), resume: r.resume ?? undefined, continue: !r.resume, name: sessionName(d, r.dir, r.engine) ?? r.session }
     // The same lock as a message in the project topic: two launches at once left a second window waiting on the prompt.
     const l = await launchOnce(d, r.dir, o)
     if (!l.ok && l.skipped) { await answer(tr('⏳ Сессия уже запускается.')); return true }
