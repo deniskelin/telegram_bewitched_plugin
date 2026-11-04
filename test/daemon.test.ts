@@ -1221,6 +1221,13 @@ describe('topics', () => {
       for (let i = 0; i < 100 && !queued.length; i++) await Bun.sleep(20)
       expect(queued[0][0]).toBe('01a19724-efea')
       expect(queued[0][1]).toContain('\nвторое\n</channel>')
+      // After a turn interrupted with Esc Codex does not take its queue by itself: the message is pasted.
+      d.tmuxCapture = async () => '■ Conversation interrupted - use /feedback if something went wrong\n› Ask Codex to do anything\n'
+      const pasted = typed.length
+      tg.push(textMessage({ chat: Number(group), text: 'третье', thread: s.topic!.threadId }))
+      for (let i = 0; i < 100 && typed.length === pasted; i++) await Bun.sleep(20)
+      expect(typed.at(-1)).toContain('\nтретье\n</channel>')
+      expect(queued.length).toBe(1)
     } finally {
       Object.assign(d, { tmuxType: saved.type, codexQueue: saved.queue, tmuxCapture: saved.capture })
       c.close()

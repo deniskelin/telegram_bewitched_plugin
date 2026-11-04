@@ -29,6 +29,7 @@ import { t as tr } from '../i18n/index.ts'
 import { inChat, inSession } from './lang.ts'
 import { projectTitle } from './report.ts'
 import { sendNotice } from './journal.ts'
+import { endTurnQuietly } from './http.ts'
 import { sessionTarget } from './topics.ts'
 import { confirmLaunch, isQuestion, isStartupPrompt, questionSig, screenView, shownQuestions } from './screen.ts'
 
@@ -241,25 +242,28 @@ async function confirmPendingLaunches(d: Daemon): Promise<void> {
   }
 }
 
-/** A turn opened by a tool call alone, with nothing after it for this long, is checked against the screen. */
+/** A turn with nothing from its session for this long is checked against the screen. */
 const PHANTOM_TURN_MS = 60_000
 
 /**
- * A turn that began without a prompt (a tool call between turns, a daemon
- * restart mid-turn) and then went quiet: if the screen shows no work under
- * way (no «esc to interrupt»), nothing is running and no Stop will come —
- * the session is idle again, silently: no «готово», no cost.
+ * A turn that ended without a Stop hook — interrupted with Esc in the window
+ * (Codex then sends none), or opened by a stray tool call between turns — and
+ * went quiet: if the screen shows no work under way (no «esc to interrupt»),
+ * no question and no permission request, nothing is running and no Stop will
+ * come. The session is idle again, silently; Codex gets what was held for it.
  */
 export async function closePhantomTurns(d: Daemon, now = Date.now()): Promise<void> {
   for (const s of d.activeSessions()) {
-    const quiet = s.turn?.byHook ? now - Math.max(s.lastHookAt, s.turn.start) : 0
-    if (!s.turn?.byHook || !s.tmuxPane || quiet < PHANTOM_TURN_MS) continue
+    // Only a turn the session began (a hook came after it opened): one that never took its message is
+    // the «не берёт сообщение» watch's (checkTurns), not this one's.
+    if (!s.turn || !s.tmuxPane || s.lastHookAt < s.turn.start) continue
+    const quiet = now - Math.max(s.lastHookAt, s.turn.start)
+    if (quiet < PHANTOM_TURN_MS) continue
+    if ([...d.permissions.values()].some(p => p.sessionId === s.id)) continue
     const raw = await d.tmuxCapture(s.tmuxPane)
-    if (raw == null || /esc to interrupt/i.test(raw)) continue
-    d.log(`session ${s.id}: a turn opened by a tool call, quiet for ${Math.round(quiet / 1000)} s and nothing on the screen — idle again`)
-    s.turn = null
-    s.status = 'idle'
-    d.streams.close(s, 'stop')
+    if (raw == null || /esc to interrupt/i.test(raw) || isQuestion(raw)) continue
+    d.log(`session ${s.id}: a turn ${s.turn.byHook ? 'opened by a tool call' : 'without a Stop'}, quiet for ${Math.round(quiet / 1000)} s and nothing under way on the screen — idle again`)
+    endTurnQuietly(d, s)
   }
 }
 
