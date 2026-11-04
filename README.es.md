@@ -224,6 +224,8 @@ El propio demonio hace el trabajo de servicio, sin Claude: comandos del panel, c
 | `OWNER_IDLE_MIN` | `10080` | Cerrar la sesión propia del dueño tras N minutos inactiva (una semana; 0: nunca). `/menu → 💤` sustituye a las tres |
 | `TOPIC_NO_SESSION` | `launch` | Tema de proyecto sin sesión: `launch`: iniciarla, `main`: responde la principal, `queue`: solo cola |
 | `WATCHDOG_GRACE_SEC` | `60` | Cuántos segundos tras detenerse una sesión se avisa |
+| `CODEX_SANDBOX` | `auto` | Sandbox de Codex: `auto` — `workspace-write` (carpetas de proyectos, usuarios y principal con escritura, red activada), sin sandbox donde no puede arrancar (kernel antiguo sin user namespaces), si no Codex pide permiso para cada comando; o `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_APPROVAL` | `on-request` | Cuándo pide permiso Codex: `on-request` — solo si el modelo necesita más de lo que permite el sandbox; `untrusted`, `never` |
 | `TURN_STUCK_SEC` | `120` | Avisar si un mensaje entregado pasa N segundos sin señales de vida (ni hook ni escritura en el transcript); 0 — desactivado |
 | `MAIN_DIR` | `~` | Carpeta de la sesión principal (con `USER_SESSIONS=off`: privados y General) |
 | `CONTEXT_WINDOW` | `1000000` | Tamaño de la ventana de contexto para el porcentaje de llenado en las fichas |

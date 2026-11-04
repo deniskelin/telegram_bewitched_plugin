@@ -585,6 +585,17 @@ describe('engines (FR-15)', () => {
     expect(claude.isPromptReady('────\n❯ \n────')).toBe(true)
   })
 
+  test('Codex permissions: workspace-write where the sandbox works, none where it cannot start; read-only modes stay read-only', async () => {
+    const { codexPermissionLines } = await import('../src/daemon/engines.ts')
+    const roots = ['/root/projects', '/root/user']
+    expect(codexPermissionLines({ sandbox: 'auto', approval: 'on-request', works: true, readOnly: false, roots })).toEqual([
+      'sandbox_mode = "workspace-write"', 'approval_policy = "on-request"',
+      '', '[sandbox_workspace_write]', 'writable_roots = ["/root/projects","/root/user"]', 'network_access = true', '',
+    ])
+    expect(codexPermissionLines({ sandbox: 'auto', approval: 'on-request', works: false, readOnly: false, roots })).toEqual(['sandbox_mode = "danger-full-access"', 'approval_policy = "on-request"'])
+    expect(codexPermissionLines({ sandbox: 'danger-full-access', approval: 'never', works: true, readOnly: true, roots })).toEqual(['sandbox_mode = "read-only"', 'approval_policy = "never"'])
+  })
+
   test('reasoning effort: launch flags, per-project and per-engine, labels', async () => {
     const { claude, codex, projectEffort, setProjectEffort, withProjectEngine, effortLabel } = await import('../src/daemon/engines.ts')
     const { settings } = await import('../src/config.ts')

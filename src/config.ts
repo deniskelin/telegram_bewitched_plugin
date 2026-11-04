@@ -103,6 +103,14 @@ export const settings = {
   get apiRoot() { return process.env.TELEGRAM_API_ROOT || undefined },
   /** Manual topic in the group → project dir + new session. */
   get topicProjects() { return str('TOPIC_PROJECTS', 'auto', ['auto', 'ask', 'off'] as const) },
+  /**
+   * Codex's sandbox for daemon-launched sessions: auto — workspace-write (the project, user and
+   * main folders writable, network on) where the sandbox works, no sandbox where it cannot start
+   * (old kernels without user namespaces: every command would ask for approval); or a sandbox_mode.
+   */
+  get codexSandbox() { return str('CODEX_SANDBOX', 'auto', ['auto', 'read-only', 'workspace-write', 'danger-full-access'] as const) },
+  /** Codex's approval_policy: on-request — the model asks only when it needs more than the sandbox allows. */
+  get codexApproval() { return str('CODEX_APPROVAL', 'on-request', ['on-request', 'untrusted', 'never'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
   /** Folder of the main session: DMs, General and topics without a session of their own. */
   /** A session per allowlisted user for their DMs, in USERS_DIR/<user_id>. */

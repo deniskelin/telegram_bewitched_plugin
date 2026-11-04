@@ -27,6 +27,8 @@ process.env.TOPIC_NO_SESSION = 'main'
 process.env.WATCHDOG_GRACE_SEC = '3600'
 process.env.SCREEN_REDRAW_MS = '0'
 process.env.HANDOFF_SUMMARY_SEC = '0'
+// No probe of the real Codex sandbox in tests.
+process.env.CODEX_SANDBOX = 'workspace-write'
 // Screens as HTML, so tests read their text; the FR-11 test switches rich screens on.
 process.env.RICH_SCREENS = 'off'
 writeFileSync(join(stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['111'], groups: {}, pending: {} }))

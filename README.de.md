@@ -224,6 +224,8 @@ Die Verwaltungsarbeit erledigt der Daemon selbst, ohne Claude: Steuerbefehle, Sc
 | `OWNER_IDLE_MIN` | `10080` | Eigene Sitzung des Besitzers nach N Minuten Leerlauf beenden (eine Woche; 0 – nie). `/menu → 💤` überschreibt alle drei |
 | `TOPIC_NO_SESSION` | `launch` | Projektthema ohne Sitzung: `launch` – starten, `main` – die Hauptsitzung antwortet, `queue` – nur Warteschlange |
 | `WATCHDOG_GRACE_SEC` | `60` | Wie viele Sekunden nach dem Ende einer Sitzung sie gemeldet wird |
+| `CODEX_SANDBOX` | `auto` | Sandbox von Codex: `auto` — `workspace-write` (Projekt-, Nutzer- und Hauptordner beschreibbar, Netzwerk an), ohne Sandbox, wo sie nicht startet (alter Kernel ohne User-Namespaces), sonst fragt Codex vor jedem Befehl; oder `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_APPROVAL` | `on-request` | Wann Codex um Erlaubnis fragt: `on-request` — nur wenn das Modell mehr braucht, als die Sandbox erlaubt; `untrusted`, `never` |
 | `TURN_STUCK_SEC` | `120` | Warnen, wenn eine zugestellte Nachricht N Sekunden ohne Lebenszeichen bleibt (kein Hook, kein Transkript-Eintrag); 0 — aus |
 | `MAIN_DIR` | `~` | Ordner der Hauptsitzung (bei `USER_SESSIONS=off` – Privatchats und General) |
 | `CONTEXT_WINDOW` | `1000000` | Größe des Kontextfensters für die Füllanzeige auf den Sitzungskarten |

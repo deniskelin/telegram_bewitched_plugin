@@ -159,6 +159,35 @@ const CODEX_PREFACE = [
   '',
 ].join('\n')
 
+let sandboxWorks: boolean | null = null
+
+/** Whether Codex's sandbox can start here (bubblewrap needs user namespaces on Linux); checked once. */
+export function codexSandboxWorks(bin = codexBin()): boolean {
+  if (sandboxWorks != null) return sandboxWorks
+  if (!bin || process.platform !== 'linux') return (sandboxWorks = true)
+  try {
+    execFileSync(bin, ['sandbox', 'linux', '--', 'true'], { timeout: 10_000, stdio: 'ignore', cwd: homedir() })
+    sandboxWorks = true
+  } catch {
+    sandboxWorks = false
+  }
+  return sandboxWorks
+}
+
+/**
+ * The sandbox and approval lines of the profile. Without them Codex runs untrusted folders
+ * read-only and asks before most commands — and where the sandbox cannot start, before every one.
+ */
+export function codexPermissionLines(o: { sandbox: string; approval: string; works: boolean; readOnly: boolean; roots: string[] }): string[] {
+  if (o.readOnly) return ['sandbox_mode = "read-only"', `approval_policy = ${tomlString(o.approval)}`]
+  const mode = o.sandbox === 'auto' ? (o.works ? 'workspace-write' : 'danger-full-access') : o.sandbox
+  return [
+    `sandbox_mode = ${tomlString(mode)}`,
+    `approval_policy = ${tomlString(o.approval)}`,
+    ...(mode === 'workspace-write' ? ['', '[sandbox_workspace_write]', `writable_roots = ${JSON.stringify(o.roots)}`, 'network_access = true', ''] : []),
+  ]
+}
+
 /**
  * $CODEX_HOME/bewitched.config.toml: the MCP server (the same thin client as
  * Claude's, started by bun), the hooks (hooks/hook.ts posts to the daemon) and
@@ -174,12 +203,23 @@ export function writeCodexProfile(bun = process.execPath, mode?: { name: string;
   writeFileSync(wrapper, `#!/bin/sh\n# Written by the telegram-bewitched daemon on every start.\nexec ${shQuote(bun)} ${shQuote(join(PLUGIN_ROOT, 'hooks', 'hook.ts'))}\n`, { mode: 0o700 })
   const hook = `sh ${shQuote(wrapper)}`
   const events = ['SessionStart', 'UserPromptSubmit', 'PreToolUse', 'PostToolUse', 'Stop']
+  // Top-level keys first: in TOML everything after a [table] header belongs to that table.
+  const perms = codexPermissionLines({
+    sandbox: settings.codexSandbox,
+    approval: settings.codexApproval,
+    works: settings.codexSandbox === 'auto' && !mode?.readOnly ? codexSandboxWorks() : true,
+    readOnly: mode?.readOnly ?? false,
+    roots: [...new Set([settings.projectsDir, settings.usersDir, settings.mainDir])],
+  })
+  const top = perms.slice(0, 2)
+  const tables = perms.slice(2)
   const lines = [
     '# Written by the telegram-bewitched daemon on every start; edits are lost.',
     `developer_instructions = ${tomlString(CODEX_PREFACE + INSTRUCTIONS + (mode ? `\n\n${mode.text}` : ''))}`,
-    ...(mode?.readOnly ? ['sandbox_mode = "read-only"'] : []),
+    ...top,
     // One project memory for both engines: without an AGENTS.md Codex reads the project's CLAUDE.md.
     'project_doc_fallback_filenames = ["CLAUDE.md"]',
+    ...tables,
     '',
     '[mcp_servers.telegram-bewitched]',
     `command = ${tomlString(bun)}`,
