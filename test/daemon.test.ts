@@ -1829,6 +1829,10 @@ describe('convenience', () => {
       expect(pressed).toEqual(['claude:5 Down', 'claude:5 Enter', 'claude:5 Enter'])
       // Anything else is left alone: an unknown question, or no question at all.
       expect(confirmKey('Do you want to delete everything?\n❯ Yes\n  No')).toBeNull()
+      // Codex: the hooks of the bridge are trusted; its input line (› without a number) is not the focus.
+      const hooks = '› Ask Codex to do anything\n  Hooks need review\n› 1. Review hooks\n  2. Trust all and continue\n  3. Continue without trusting'
+      expect(confirmKey(hooks)).toBe('Down')
+      expect(confirmKey(hooks.replace('› 1.', '  1.').replace('  2. Trust', '› 2. Trust'))).toBe('Enter')
       screen = '╭ Claude Code\n> '
       d.tmuxPaneId = async () => '%16'
       expect((await confirmLaunch(d, 'claude:6')).result).toBe('no_prompt')

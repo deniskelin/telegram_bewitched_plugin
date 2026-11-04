@@ -22,7 +22,7 @@ import { settings } from '../config.ts'
 import { escapeHtml } from '../format.ts'
 import type { Daemon, Session } from './daemon.ts'
 import type { EngineId } from './engines.ts'
-import { exitCodeSince, attachTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
+import { exitCodeSince, attachTarget, windowTarget, confirmHint, endSession, launchCommand, launchForTopic, launchOnce, manualCmd, screenKb, sessionName, waitGone, endTiming } from './launch.ts'
 import { button } from './stream.ts'
 import { guessTranscript } from './transcript.ts'
 import { t as tr } from '../i18n/index.ts'
@@ -30,7 +30,7 @@ import { inChat, inSession } from './lang.ts'
 import { projectTitle } from './report.ts'
 import { sendNotice } from './journal.ts'
 import { sessionTarget } from './topics.ts'
-import { isQuestion, questionSig, screenView, shownQuestions } from './screen.ts'
+import { confirmLaunch, isQuestion, isStartupPrompt, questionSig, screenView, shownQuestions } from './screen.ts'
 
 /**
  * session: -n <name> and the tmux name; user: whose session it was; sent: the
@@ -217,7 +217,32 @@ export function startQuestionWatch(d: Daemon): void {
   setInterval(() => void checkQuestions(d).catch(err => d.log(`question watch failed: ${err}`)), 20_000).unref?.()
 }
 
+/** Launch windows whose startup questions are being answered now. */
+const confirmingLaunches = new Set<string>()
+
+/**
+ * A launch the daemon started itself (a restart after a disconnect, a user
+ * session for a message) that stopped on a startup question — Codex's
+ * «Hooks need review», a folder's trust: nobody waits on its window, and the
+ * session never connects. Answered here, the same questions «✅ Подтвердить
+ * запуск» answers; anything else is left to the chat.
+ */
+async function confirmPendingLaunches(d: Daemon): Promise<void> {
+  for (const [dir, win] of d.launchWindows) {
+    const target = windowTarget(win)
+    if (confirmingLaunches.has(target) || d.activeSessions().some(x => x.cwd === dir || x.projectKey === dir)) continue
+    if (!isStartupPrompt(await d.tmuxCapture(target))) continue
+    confirmingLaunches.add(target)
+    d.log(`launch ${dir}: a startup question in ${win}, answering it`)
+    void confirmLaunch(d, target)
+      .then(r => d.log(`launch ${dir}: startup questions → ${r.result}`))
+      .catch(err => d.log(`launch ${dir}: confirm failed: ${err}`))
+      .finally(() => confirmingLaunches.delete(target))
+  }
+}
+
 export async function checkQuestions(d: Daemon): Promise<void> {
+  await confirmPendingLaunches(d).catch(err => d.log(`pending launches check failed: ${err}`))
   for (const s of d.activeSessions()) {
     const pane = s.tmuxPane
     if (!pane || !/^%\d+$/.test(pane)) continue

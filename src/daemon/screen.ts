@@ -39,6 +39,8 @@ const CONFIRM_MS = 120_000
 const STARTUP_PROMPTS = [
   { title: 'Accessing workspace', confirm: 'Yes, I trust this folder' },
   { title: 'Loading development channels', confirm: 'I am using this for local development' },
+  // Codex, when the bridge's hooks are new or changed (a new hook, an update): they are the bridge's own.
+  { title: 'Hooks need review', confirm: 'Trust all and continue' },
 ] as const
 
 const KEYS: Record<string, { label: string; key: string }> = {
@@ -89,7 +91,8 @@ export function confirmKey(raw: string | null): string | null {
   const p = startupPrompt(raw)
   if (!p) return null
   const lines = raw!.split('\n')
-  const focus = lines.findIndex(l => l.includes('❯'))
+  // The focused option: ❯ in Claude Code, › in Codex (whose input line also starts with ›, without a number).
+  const focus = lines.findIndex(l => /^\s*(❯|›\s*\d+\.)/.test(l))
   const confirm = lines.findIndex(l => l.includes(p.confirm))
   if (focus < 0 || confirm < 0) return null
   return focus === confirm ? 'Enter' : confirm > focus ? 'Down' : 'Up'
