@@ -4,6 +4,8 @@
  * callback-button dispatcher.
  */
 
+import { projectEngine, setProjectEngine, setProjectEffort, engineOf } from './engines.ts'
+import { queueTextBatch, economyReport, cancelTextBatch } from './economy.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { readdirSync, rmSync } from 'fs'
@@ -417,6 +419,7 @@ async function handleInbound(
 
   // FR-20: a reply to a message of an older conversation asks where it goes.
   if (await holdIfOldConversation(d, target.session, chat, text, meta).catch(err => { d.log(`reply conversation check failed: ${err}`); return false })) return
+  if (!imagePath && !attachment && !msg.reply_to_message && !questionId && !text.startsWith('/') && queueTextBatch(d, chat, String(from.id), text, meta)) return
   d.deliver(target.session, text, meta, chat)
 }
 
@@ -514,6 +517,11 @@ async function handlePermissionCallback(d: Daemon, ctx: Context, data: string): 
 export type StopSource = 'button' | 'menu' | 'shortcut' | 'stopped_message_generation'
 
 export function stopSession(d: Daemon, s: Session, source: StopSource): 'interrupted' | 'noted' {
+  for (const key of d.store.keys('economy:batch:')) {
+    const batch = JSON.parse(d.store.get(key)!) as { chat: ChatRef; from: string }
+    const target = resolveTarget(d, batch.chat, batch.from)
+    if (target.kind === 'session' && target.session === s) cancelTextBatch(d, batch.chat, batch.from)
+  }
   s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram') // i18n-ignore: for the model
   d.streams.close(s, 'stopped')
   if (settings.stopMode === 'interrupt' && s.tmuxPane && s.status === 'working') {
@@ -536,6 +544,7 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
   if (!can(ctx.from!.id, 'stop')) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
   if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
+  if (ctx.chat) cancelTextBatch(d, { chatId: String(ctx.chat.id), threadId: ctx.callbackQuery?.message?.message_thread_id, isPrivate: ctx.chat.type === 'private' }, String(ctx.from!.id))
   const r = stopSession(d, s, 'button')
   await ctx.answerCallbackQuery({
     text: r === 'interrupted' ? tr('⏹ Остановлено') : s.tmuxPane ? tr('Сейчас нечего останавливать.') : tr('Прерывание недоступно: сессия запущена не в tmux.'),
@@ -547,6 +556,29 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
 
 export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   d.routeText = (chat, fromId, text, meta) => routeText(d, chat, fromId, text, meta)
+  bot.command('economy', async ctx => {
+    if (!ctx.from || !can(ctx.from.id, 'control')) return
+    const extra = { message_thread_id: ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined }
+    const respond = (text: string) => ctx.reply(text, extra)
+    const arg = String(ctx.match ?? '').trim()
+    if (arg) {
+      const chatId = String(ctx.chat.id)
+      const threadId = ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined
+      const target = resolveTarget(d, { chatId, threadId, isPrivate: ctx.chat.type === 'private' }, String(ctx.from.id))
+      if (target.kind !== 'session') { await respond('Connect a session first.'); return }
+      const [preset, model] = arg.split(/\s+/)
+      const choice = projectEngine(d, target.session.projectKey)
+      const engine = engineOf(choice.engine)
+      const effort = ({ fast: 'low', balanced: 'medium', thorough: 'high' } as Record<string, string>)[preset!]
+      const selected = model ? engine.models.find(m => m.id === model || m.alias === model) : undefined
+      if (!effort || arg.split(/\s+/).length > 2 || model && !selected) { await respond('Usage: /economy [fast|balanced|thorough] [model alias]. Applies at next session launch.'); return }
+      setProjectEffort(d, target.session.projectKey, choice.engine, effort)
+      if (selected) setProjectEngine(d, target.session.projectKey, { ...choice, model: selected.id })
+      await respond(`Next launch: ${engine.name}; model=${selected?.id ?? choice.model ?? 'CLI default'}; effort=${effort}.`)
+      return
+    }
+    await respond(economyReport(d))
+  })
   registerReminderCommands(d, bot)
   registerPromptCommands(d, bot)
   registerOnceCommands(d, bot)

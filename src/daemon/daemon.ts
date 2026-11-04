@@ -4,6 +4,7 @@
  * sessions connected over the unix socket.
  */
 
+import { installEconomy, restoreTextBatches, countEconomy, rememberContext } from './economy.ts'
 import { holdIfPaused } from './outoftokens.ts'
 import type { Socket } from 'bun'
 import { Bot, GrammyError } from 'grammy'
@@ -277,6 +278,8 @@ export class Daemon {
 
   /** Push a Telegram message into a session as a <channel> event. */
   deliver(session: Session, content: string, meta: Record<string, string>, from?: ChatRef): void {
+    countEconomy(this, 'delivery_requests')
+    countEconomy(this, 'bridge_input_chars', content.length)
     if (session.notes.length) {
       content = session.notes.map(n => `[${n}]`).join('\n') + '\n\n' + content
       session.notes = []
@@ -295,9 +298,14 @@ export class Daemon {
         this.log(`message from ${from?.chatId ?? '?'} held for codex session ${session.id} until its turn ends`)
         return
       }
-      void codexDeliver(this, session, channelText(content, meta)).catch(err => codexUndelivered(this, session, err, from))
+      void codexDeliver(this, session, channelText(content, meta)).then(() => {
+        if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
+      }).catch(err => codexUndelivered(this, session, err, from))
     }
-    else this.send(session, { t: 'inbound', content, meta })
+    else {
+      this.send(session, { t: 'inbound', content, meta })
+      if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
+    }
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
     session.stoppedAt = null
@@ -456,8 +464,11 @@ export class Daemon {
         s.lastActivity = Date.now()
         try {
           const text = await this.handleCall(s, msg.name, msg.args ?? {})
+          countEconomy(this, 'tool_calls')
+          countEconomy(this, 'tool_result_chars', text.length)
           this.send(s, { t: 'result', id: msg.id, ok: true, text })
         } catch (err) {
+          countEconomy(this, 'tool_errors')
           const text = err instanceof Error ? err.message : String(err)
           this.send(s, { t: 'result', id: msg.id, ok: false, text })
         }
@@ -495,7 +506,9 @@ export class Daemon {
     this.botUsername = me.username
     this.botId = me.id
     installLang(this, this.bot)
+    installEconomy(this, this.bot)
     register(this.bot)
+    restoreTextBatches(this)
     let warned = false
     for (let attempt = 1; ; attempt++) {
       if (this.legacyConflict()) {

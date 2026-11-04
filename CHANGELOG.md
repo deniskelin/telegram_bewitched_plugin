@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — token economy
+
+- Durable fixed-window text batching, replayed-update receipts, and cancellation of queued text on Stop.
+- Conversation-scoped context receipts, unchanged-memory suppression and configurable history/search budgets.
+- Copy an explicitly referenced bot message without waking the model; `ты жив?` is a local status query.
+- Owner-only `/economy` daily bridge counters and explicit fast/balanced/thorough effort/model presets for next launch.
+- Targeted-read/log instructions and a documented measurement contract; no unverified token-savings percentages.
+
+
 ## Unreleased
 
 - **Кнопки выбора и 📋 кнопки копирования в одном ответе.** Если `reply` получал и `buttons`, и `copy`, кнопки копирования терялись: вопрос строил клавиатуру только из вариантов ответа. Теперь кнопки копирования идут под вариантами и остаются после нажатия.

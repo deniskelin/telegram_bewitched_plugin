@@ -1028,6 +1028,7 @@ const dict: Dict = {
   "🚀 Запускаю <b>{v}</b> — сообщения дойдут, когда она подключится.": "🚀 正在启动 <b>{v}</b>——连接后消息即送达。",
   "🚀 Запуск <b>{v}</b>: окно {v2}\n<code>{v3}</code>": "🚀 启动 <b>{v}</b>：窗口 {v2}\n<code>{v3}</code>",
   "🚀 Группа «{title}»: запущена сессия проекта <code>{dir}</code>, окно {win}.": "🚀 群组「{title}」：已启动项目 <code>{dir}</code> 的会话，窗口 {win}。",
+  "/economy — экономия; fast/balanced/thorough [модель] — профиль следующего запуска": "/economy — 节省统计；fast/balanced/thorough [模型] — 下次启动的配置",
 }
 
 export default dict

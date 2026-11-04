@@ -253,3 +253,7 @@ bunx tsc --noEmit
 翻译：界面字符串以俄语写成 `t('…', { 变量 })`；词典位于 `src/i18n/<语言>.ts`；`bun scripts/i18n-keys.ts missing zh` 列出未翻译的字符串，测试会检查所有词典是否完整。
 
 结构：`server.ts`——每个会话一个轻量 MCP 客户端；`src/daemon/`——守护进程（轮询、路由、话题、流式输出、按钮、工具、HTTP、菜单与界面、统计、报告、提醒）；`src/i18n/`——界面语言；`src/voice/` 和 `voice/*.py`——语音识别与合成；`hooks/`——Claude Code 钩子 → 守护进程；`bin/bewitched.ts`——命令行工具。与上游同步——[UPSTREAM.md](UPSTREAM.md)。
+
+## Token economy
+
+[Configuration, batching, context budgets and measurement](docs/token-economy.md). Owner command: `/economy [fast|balanced|thorough] [model]`.

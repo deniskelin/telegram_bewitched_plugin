@@ -1028,6 +1028,7 @@ const dict: Dict = {
   "🚀 Запускаю <b>{v}</b> — сообщения дойдут, когда она подключится.": "🚀 Iniciando <b>{v}</b> — los mensajes llegarán cuando se conecte.",
   "🚀 Запуск <b>{v}</b>: окно {v2}\n<code>{v3}</code>": "🚀 Inicio de <b>{v}</b>: ventana {v2}\n<code>{v3}</code>",
   "🚀 Группа «{title}»: запущена сессия проекта <code>{dir}</code>, окно {win}.": "🚀 Grupo «{title}»: sesión del proyecto <code>{dir}</code> iniciada, ventana {win}.",
+  "/economy — экономия; fast/balanced/thorough [модель] — профиль следующего запуска": "/economy — ahorro; fast/balanced/thorough [modelo] — perfil del próximo inicio",
 }
 
 export default dict

@@ -14,6 +14,7 @@
  * are in sessionCommandScreen (menu.ts).
  */
 
+import { cancelTextBatch } from './economy.ts'
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
 import { can, owner } from '../access.ts'
@@ -31,7 +32,7 @@ import { usageReport, usageKeyboard } from './usage.ts'
 // i18n-ignore: words people type (Russian and English), matched whatever the interface language
 const STOP_RE = /^\s*(стоп|хватит|отмена|остановись|stop|cancel|halt)[\s.!]*$/i
 // i18n-ignore: as above
-const STATUS_RE = /^\s*(статус|status|ты тут|ты здесь|жив|живой|ping|пинг|are you there)[\s?!.]*$/i
+const STATUS_RE = /^\s*(статус|status|ты тут|ты здесь|ты жив|жив|живой|ping|пинг|are you there)[\s?!.]*$/i
 // i18n-ignore: as above
 const LIMITS_RE = /^\s*(лимит|лимиты|сколько лимита|limits?|usage)[\s?!.]*$/i
 // i18n-ignore: as above
@@ -49,7 +50,7 @@ function saved(d: Daemon, kind: string): void {
 export function savedLine(d: Daemon): string | null {
   const n = Number(d.store.get('fr9:saved') ?? 0)
   if (!n) return null
-  const kinds: [string, string][] = [['cmd', t('команды')], ['stop', t('стоп')], ['status', t('статус')], ['limits', t('лимиты')], ['ack', t('«ок»')], ['dup', t('повторы')]]
+  const kinds: [string, string][] = [['cmd', t('команды')], ['stop', t('стоп')], ['status', t('статус')], ['limits', t('лимиты')], ['ack', t('«ок»')], ['dup', t('повторы')], ['repeat', 'copy']]
   const parts = kinds.map(([k, name]) => [name, Number(d.store.get(`fr9:saved:${k}`) ?? 0)] as const).filter(([, v]) => v > 0).map(([name, v]) => `${name} ${v}`)
   return t('🤖 Без запроса к модели: {n} ({v})', { n, v: parts.join(', ') })
 }
@@ -88,12 +89,22 @@ export async function withoutModel(d: Daemon, ctx: Context, text: string, s: Ses
     return true
   }
 
-  if (STOP_RE.test(text) && s.status === 'working') {
+  const cancelled = STOP_RE.test(text) && can(here.from, 'stop') && cancelTextBatch(d, { chatId: here.chatId, threadId: here.threadId, isPrivate: !here.chatId.startsWith('-') }, String(here.from))
+  if (STOP_RE.test(text) && (s.status === 'working' || cancelled)) {
     if (!can(here.from, 'stop')) return false
-    stopSession(d, s, 'shortcut')
+    if (s.status === 'working') stopSession(d, s, 'shortcut')
     await react('👌')
     saved(d, 'stop')
     return true
+  }
+
+  // Only an explicit reply to a bot message: never guess which report/file the user meant.
+  if (/^\s*(повтори|повтори ответ|пришли (?:еще|ещё) раз|repeat|send again)[.!\s]*$/i.test(text) && ctx.message?.reply_to_message?.from?.id === d.botId) { // i18n-ignore
+    try {
+      await d.bot.api.copyMessage(here.chatId, here.chatId, ctx.message.reply_to_message.message_id, { ...(here.threadId != null ? { message_thread_id: here.threadId } : {}) })
+      saved(d, 'repeat')
+      return true
+    } catch (err) { d.log(`copy reply failed, handing to model: ${err}`) }
   }
 
   if (STATUS_RE.test(text)) {

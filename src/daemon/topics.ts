@@ -4,6 +4,7 @@
  * links the supergroup from the bot's DM.
  */
 
+import { contextSeen, contextMemory, rememberContext, rememberMemory, budgetHistory, countEconomy } from './economy.ts'
 import { remindersForModel } from './reminders.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
@@ -193,20 +194,30 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
 
   // The resume event is text for the model, not the interface: it is not translated (i18n-ignore).
+  const key = pendingKeyOf(d, s)
+  const queued = d.store.peekPending(key, settings.pendingTtlH)
+  const pendingIds = new Set(queued.filter(p => p.meta.chat_id === chat?.chatId).flatMap(p => (p.meta.message_ids ?? p.meta.message_id ?? '').split(',')))
   const parts: string[] = []
+  let restoredMemory: string | null = null
+  let restoredIds: string[] = []
   if (chat && !s.reconnect) {
-    const mem = readMemory(chat.chatId, chat.threadId)
+    const rawMemory = readMemory(chat.chatId, chat.threadId)
+    const mem = rawMemory ? contextMemory(d, s, rawMemory) : null
+    restoredMemory = mem
     if (mem) parts.push(`Память этого чата (save_memory):\n${mem.trim()}`) // i18n-ignore
     const rem = remindersForModel(d, chat.chatId, chat.threadId)
     if (rem) parts.push(rem)
-    const hist = d.store.history(chat.chatId, chat.threadId ?? null, settings.resumeLastN)
+    const candidate = d.store.history(chat.chatId, chat.threadId ?? null, settings.resumeLastN)
+    const unseen = candidate.filter(m => !pendingIds.has(String(m.message_id)) && !contextSeen(d, s, chat.chatId, String(m.message_id)))
+    const hist = budgetHistory(unseen, settings.resumeContextChars)
+    restoredIds = hist.map(m => String(m.message_id))
+    countEconomy(d, 'history_chars_omitted', candidate.reduce((n, m) => n + Math.min(m.text.length, 400), 0) - hist.reduce((n, m) => n + Math.min(m.text.length, 400), 0))
     if (hist.length) {
       // i18n-ignore
       parts.push('Последние сообщения:\n' + hist.map(m =>
         `[${fmtTime(m.date)}] ${m.direction === 'out' ? 'бот' : m.from_name ?? 'пользователь'}: ${m.text.slice(0, 400)}`).join('\n')) // i18n-ignore
     }
   }
-  const key = pendingKeyOf(d, s)
   const all = d.store.takePending(key, settings.pendingTtlH)
   const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}` // i18n-ignore
   const pending = all
@@ -221,6 +232,8 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
       ...(s.topic ? { topic_name: safeMeta(s.topic.name) ?? '' } : {}),
       pending_count: String(pending.length),
     }, pending.length ? chat : undefined)
+    rememberContext(d, s, chat.chatId, restoredIds)
+    if (restoredMemory) rememberMemory(d, s, restoredMemory)
   }
 }
 

@@ -3,6 +3,7 @@
  * outbound traffic shares one Bot instance (rate limits, history, streams).
  */
 
+import { rememberContext, boundedResult } from './economy.ts'
 import { execFileSync } from 'child_process'
 import { githubBase, postprocess, type Copy } from '../postprocess.ts'
 import { InputFile, InlineKeyboard, type Context } from 'grammy'
@@ -71,7 +72,8 @@ function checkFiles(files: string[]): void {
   }
 }
 
-function recordOut(d: Daemon, c: ChatRef, messageId: number, text: string, kind = 'text'): void {
+function recordOut(d: Daemon, c: ChatRef, messageId: number, text: string, kind = 'text', session?: Session): void {
+  if (session) rememberContext(d, session, c.chatId, [String(messageId)])
   d.store.addMessage({
     chat_id: c.chatId, thread_id: c.threadId ?? null, message_id: messageId, direction: 'out', from_id: String(d.botId),
     from_name: 'bot', date: Math.floor(Date.now() / 1000), text, kind, file_id: null, reply_to: null, quote: null, forward: null,
@@ -163,12 +165,12 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     if (format === 'rich') {
       for (const part of post.parts.slice(0, -1)) {
         const id = await sendRich(d.bot, c.chatId, part, threadOpt(c)).catch(() => null)
-        if (id != null) { lead.push(id); recordOut(d, c, id, part) }
+        if (id != null) { lead.push(id); recordOut(d, c, id, part, 'text', s) }
       }
     }
     // The 📋 copy buttons go under the answer buttons: one keyboard, both kinds.
     const q = await withTopicRetry(d, s, c, cc => postQuestion(d, s, cc, text, opts, { replyTo, ...(last ? { rich: last } : {}), ...(copies.length ? { copies } : {}) }))
-    recordOut(d, c, q.messageId, last ?? text)
+    recordOut(d, c, q.messageId, last ?? text, 'text', s)
     const ids = [...lead, q.messageId, ...(await sendFiles(d, c, files, replyTo))]
     finishReply(d, s, c)
     return `${idsResult(ids)}; question_id: ${q.id}`
@@ -184,7 +186,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   if (voice && settings.voiceWithText === 'caption' && format === 'text' && text.length <= 1024 && !/```/.test(text)) {
     const id = await voiceOrForbidden(d, s, c, voice, { caption: text, replyTo: replyMode !== 'off' ? replyTo : undefined })
     if (id) {
-      recordOut(d, c, id, text)
+      recordOut(d, c, id, text, 'text', s)
       ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
       finishReply(d, s, c)
       return idsResult(ids)
@@ -195,7 +197,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
   if (voice && settings.voiceWithText === 'none' && !/```/.test(text)) {
     const id = await voiceOrForbidden(d, s, c, voice, { replyTo: replyMode !== 'off' ? replyTo : undefined })
     if (id) {
-      recordOut(d, c, id, text)
+      recordOut(d, c, id, text, 'text', s)
       ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
       finishReply(d, s, c)
       return idsResult(ids)
@@ -213,7 +215,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
       else throw new Error('too long for one message')
       s.lastAnswer = { chatId: c.chatId, messageId: progress, at: Date.now(), ...(format === 'rich' ? { markdown: post.parts[0] } : { text }), ...('reply_markup' in copyKb ? { kb: copyKb.reply_markup } : {}) }
       ids.push(progress)
-      recordOut(d, c, progress, text)
+      recordOut(d, c, progress, text, 'text', s)
     } catch (err) {
       d.log(`answer into the progress message failed, sending a new one: ${err}`)
       void d.bot.api.deleteMessage(c.chatId, progress).catch(() => {})
@@ -231,7 +233,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
             ...(last ? copyKb : {}),
           })
           ids.push(id)
-          recordOut(d, cc, id, post.parts[i])
+          recordOut(d, cc, id, post.parts[i], 'text', s)
           if (last) s.lastAnswer = { chatId: cc.chatId, messageId: id, at: Date.now(), markdown: post.parts[i], ...('reply_markup' in copyKb ? { kb: copyKb.reply_markup } : {}) }
         }
         return
@@ -251,7 +253,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
           ...(parseMode ? { parse_mode: parseMode } : {}),
         })
         ids.push(sent.message_id)
-        recordOut(d, cc, sent.message_id, parts[i])
+        recordOut(d, cc, sent.message_id, parts[i], 'text', s)
         if (parts.length === 1 && !parseMode) s.lastAnswer = { chatId: cc.chatId, messageId: sent.message_id, at: Date.now(), text: parts[0] }
       } catch (err) {
         if (i === 0) {
@@ -543,7 +545,7 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
     case 'get_history': {
       const c = historyChat(d, s, args)
       const limit = Math.min(int(args.limit) ?? 30, 200)
-      return fmtRows(d.store.history(c.chatId, c.threadId ?? null, limit, int(args.before_message_id)))
+      return boundedResult(fmtRows(d.store.history(c.chatId, c.threadId ?? null, limit, int(args.before_message_id))), settings.historyResultChars)
     }
 
     case 'search_messages': {
@@ -551,7 +553,7 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       if (!q) throw new Error('query is required')
       const all = args.all_chats === true
       const c = all ? null : historyChat(d, s, args)
-      return fmtRows(d.store.search(q, Math.min(int(args.limit) ?? 20, 100), c?.chatId, c ? c.threadId ?? null : undefined))
+      return boundedResult(fmtRows(d.store.search(q, Math.min(int(args.limit) ?? 20, 100), c?.chatId, c ? c.threadId ?? null : undefined)), settings.historyResultChars)
     }
 
     case 'get_message': {
