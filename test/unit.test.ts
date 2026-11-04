@@ -971,3 +971,21 @@ describe('FR-12/13: rich answers', async () => {
     expect(parseNumstat('3\t1\tsrc/a.ts\n-\t-\timg.png\n')).toEqual([{ file: 'src/a.ts', add: 3, del: 1 }, { file: 'img.png', add: 0, del: 0 }])
   })
 })
+
+describe('late hooks after Stop', async () => {
+  const { isLateHook } = await import('../src/daemon/http.ts')
+  test('a MessageDisplay fired before Stop but arriving after it does not reopen the turn', () => {
+    const s = { turn: null, turnEndedAt: 1000 }
+    expect(isLateHook(s, { event: 'MessageDisplay', at: 990 })).toBe(true)
+    expect(isLateHook(s, { event: 'PreToolUse', at: 1000 })).toBe(true)
+    // Fired after the Stop: a turn begun in the terminal.
+    expect(isLateHook(s, { event: 'PreToolUse', at: 1500 })).toBe(false)
+    // A new prompt always counts; a running turn takes everything.
+    expect(isLateHook(s, { event: 'UserPromptSubmit', at: 990 })).toBe(false)
+    expect(isLateHook({ turn: { start: 0, replied: false }, turnEndedAt: 1000 } as never, { event: 'MessageDisplay', at: 990 })).toBe(false)
+    // Older hook scripts without the time: a short window after Stop.
+    expect(isLateHook(s, { event: 'MessageDisplay' }, 2000)).toBe(true)
+    expect(isLateHook(s, { event: 'MessageDisplay' }, 9000)).toBe(false)
+    expect(isLateHook({ turn: null }, { event: 'MessageDisplay', at: 5 })).toBe(false)
+  })
+})

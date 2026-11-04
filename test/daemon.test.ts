@@ -970,7 +970,7 @@ describe('topics', () => {
     const hook = (event: string, data: Record<string, unknown>) => fetch(`http://127.0.0.1:${settings.httpPort}/hook`, {
       method: 'POST',
       headers: { authorization: `Bearer ${httpToken()}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ event, claudePid: 424242, data }),
+      body: JSON.stringify({ event, claudePid: 424242, data, at: Date.now() }),
     })
     await hook('Stop', {}) // end the previous (replied) turn
     await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/y.ts' } })

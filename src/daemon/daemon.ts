@@ -72,6 +72,12 @@ export type Session = {
   engine: EngineId
   /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
   stoppedAt: number | null
+  /**
+   * When the last turn ended (the Stop hook fired). Each hook is a process of its own, so the
+   * turn's last MessageDisplay can reach the daemon after its Stop: such a late hook must not
+   * open a turn nobody will close («работает» while idle).
+   */
+  turnEndedAt?: number
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
   reconnect: boolean
