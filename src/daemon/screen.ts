@@ -12,6 +12,8 @@
  * screen for a minute; z — delete the message.
  */
 
+import { replacementSession } from './ux.ts'
+import { sessionScreen } from './menu.ts'
 import { InlineKeyboard, type Context } from 'grammy'
 import { can } from '../access.ts'
 import { settings } from '../config.ts'
@@ -182,15 +184,33 @@ export async function screenView(d: Daemon, code: string, liveOn = false, note =
   const head = t('🖥 <b>Экран</b> <code>{v}</code>{v2} · {time}{v3}', { v: escapeHtml(target.replace(/^=/, '')), v2: session ? ` · #${session.id}` : '', time, v3: liveOn ? t(' · ▶️ обновляется') : '' })
   const body = raw == null ? t('{head}\n\nОкно не найдено: сессия закрыта или tmux перезапущен.', { head }) : `${head}\n<pre>${escapeHtml(screenText(raw)) || ' '}</pre>`
   const text = note ? `${body}\n${note}` : body
-  const key = (c: string) => button(KEYS[c].label, `tx:${code}:${c}`)
-  const rows = raw == null ? [] : [[key('1'), key('2'), key('3'), key('e'), key('x')], [key('u'), key('d'), key('t'), button('🔄', `tx:${code}`),
-    liveOn ? button('⏸', `tx:${code}:s`) : button(t('▶️ 1 мин'), `tx:${code}:l`)]]
-  if (isStartupPrompt(raw) && !confirming.has(tmuxTarget(code)!)) rows.unshift([button(t('✅ Подтвердить запуск'), `tx:${code}:c`, 'success')])
-  rows.push([...(session ? [button(t('« К сессии'), `sm:s:${session.id}`)] : []), button(t('✖️ Закрыть'), `tx:${code}:z`)])
+  const actionCode = session ? `v${session.id}` : code
+  const key = (c: string) => button(KEYS[c].label, `tx:${actionCode}:${c}`)
+  const rows = raw == null ? [] : [[key('1'), key('2'), key('3'), key('e'), key('x')], [key('u'), key('d'), key('t'), button('🔄', `tx:${actionCode}`),
+    liveOn ? button('⏸', `tx:${actionCode}:s`) : button(t('▶️ 1 мин'), `tx:${actionCode}:l`)]]
+  if (isStartupPrompt(raw) && !confirming.has(tmuxTarget(code)!)) rows.unshift([button(t('✅ Подтвердить запуск'), `tx:${actionCode}:c`, 'success')])
+  rows.push([...(session ? [button(t('« К сессии'), `sm:s:${session.id}`)] : []), button(t('✖️ Закрыть'), `tx:${actionCode}:z`)])
   return { text, kb: new InlineKeyboard(rows), gone: raw == null }
 }
 
 export async function handleScreenCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const stable = /^tx:v([0-9a-f]+)(?::(\w))?$/.exec(data)
+  const text = ctx.callbackQuery?.message && 'text' in ctx.callbackQuery.message ? ctx.callbackQuery.message.text ?? '' : ''
+  const legacyId = data.startsWith('tx:') ? /#([0-9a-f]{4,8})\b/.exec(text)?.[1] : undefined
+  const id = stable?.[1] ?? legacyId
+  if (id && (!d.sessions.has(id) || stable && !d.sessions.get(id)?.tmuxPane)) {
+    if (!ctx.from || !can(ctx.from.id, 'control')) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }).catch(() => {}); return true }
+    const current = replacementSession(d, id)
+    await ctx.answerCallbackQuery({ text: current ? t('Сессия перезапущена: откройте актуальную карточку.') : t('Сессия уже отключена.') }).catch(() => {})
+    if (current) { const sc = await sessionScreen(d, current); await ctx.editMessageText(sc.text, { parse_mode: 'HTML', reply_markup: sc.kb }).catch(() => {}) }
+    return true
+  }
+  if (stable) {
+    const pane = d.sessions.get(stable[1])?.tmuxPane
+    if (!pane || !/^%\d+$/.test(pane)) return true
+    data = `tx:p${pane.slice(1)}${stable[2] ? `:${stable[2]}` : ''}`
+  }
+
   const m = /^tx:([pw]\d+|sclaude-[\p{L}\p{N}_-]+\.\d+)(?::(\w))?$/u.exec(data)
   if (!m) return false
   const answer = (text?: string) => ctx.answerCallbackQuery(text ? { text } : undefined).catch(() => {})

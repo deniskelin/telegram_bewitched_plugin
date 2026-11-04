@@ -12,6 +12,8 @@
  * notice says "stopped", not "crashed".
  */
 
+import { replacementSession } from './ux.ts'
+import { sessionScreen } from './menu.ts'
 import { checkCodexApproval } from './codexapproval.ts'
 import { InlineKeyboard, type Context } from 'grammy'
 import { randomBytes } from 'crypto'
@@ -309,7 +311,12 @@ async function warnQuestion(d: Daemon, s: Session, pane: string): Promise<void> 
 /** wd:re / wd:rs:<session> — close a session (with the /exit checks) and start it again with its conversation; stuck — it did not take a message. */
 async function restartStuck(d: Daemon, ctx: Context, id: string, answer: (t?: string) => Promise<unknown>, stuck = true): Promise<void> {
   const s = d.sessions.get(id)
-  if (!s) { await answer(tr('Сессия уже отключилась.')); return }
+  if (!s) {
+    const current = replacementSession(d, id)
+    await answer(current ? tr('Сессия перезапущена: откройте актуальную карточку.') : tr('Сессия уже отключилась.'))
+    if (current) { const sc = await sessionScreen(d, current); await ctx.editMessageText(sc.text, { parse_mode: 'HTML', reply_markup: sc.kb }).catch(() => {}) }
+    return
+  }
   if (!endSession(d, s)) { await answer(tr('Сессия не в tmux — перезапустите её сами.')); return }
   await answer(tr('♻️ Перезапускаю'))
   const edit = (text: string, kb?: InlineKeyboard) => ctx.editMessageText(text, { parse_mode: 'HTML', ...(kb ? { reply_markup: kb } : {}) }).catch(() => {})

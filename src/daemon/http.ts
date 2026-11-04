@@ -6,6 +6,7 @@
  *   GET  /status  — daemon state for the CLI
  */
 
+import { sessionPhase } from './ux.ts'
 import { watchApprovalSoon } from './codexapproval.ts'
 import { prefsFor } from '../access.ts'
 import { httpToken, settings } from '../config.ts'
@@ -53,7 +54,7 @@ export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<Hoo
  * would mark it working, and an Escape-interrupted turn sends no Stop hook to end it.
  */
 function touchTurn(s: Session, prompt = false): void {
-  if (prompt) s.stoppedAt = null
+  if (prompt) { s.stoppedAt = null; s.stopRequest = undefined }
   s.lastActivity = Date.now()
   if (s.stoppedAt) return
   if (!s.turn) { s.turn = { start: Date.now(), replied: false, ...(prompt ? {} : { byHook: true }) }; turnStarted(s) }
@@ -95,10 +96,12 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   if (h.event === 'SessionStart' || h.event === 'UserPromptSubmit' || h.event === 'Stop') d.log(`hook ${h.event}: session ${s.id} (${s.engine})${s.status !== 'idle' ? ` ${s.status}` : ''}`)
   switch (h.event) {
     case 'UserPromptSubmit':
+      sessionPhase(d, s, 'working')
       touchTurn(s, true)
       s.answer = ''
       break
     case 'PreToolUse': {
+      sessionPhase(d, s, 'working')
       touchTurn(s)
       const name = String(data.tool_name ?? '')
       const summary = name ? summarizeTool(name, data.tool_input as Record<string, unknown>) : ''
@@ -118,6 +121,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
       break
     }
     case 'MessageDisplay': {
+      sessionPhase(d, s, 'working')
       touchTurn(s)
       const delta = typeof data.delta === 'string' ? data.delta : ''
       if (delta) s.answer = (s.answer + (delta.endsWith('\n') ? delta : delta + '\n')).slice(-20_000)
@@ -155,6 +159,13 @@ export function endTurnQuietly(d: Daemon, s: Session): void {
 }
 
 function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, error = ''): void {
+  if (s.stoppedAt && s.stopRequest) {
+    const wasConfirmed = s.stopRequest.phase === 'confirmed'
+    s.stopRequest = { at: s.stoppedAt, phase: 'confirmed' }; s.status = 'idle'; s.turn = null
+    const c = s.lastChat ?? sessionTarget(d, s)
+    if (!wasConfirmed && c && process.env.STOP_NOTICES !== 'off') void d.bot.api.sendMessage(c.chatId, t('Остановка подтверждена'), { message_thread_id: c.threadId, disable_notification: true }).catch(err => d.log(`stop notice: ${err}`))
+    sessionPhase(d, s, 'stopped'); d.streams.close(s, 'stopped'); d.onSessionsChanged(); return
+  }
   if (failed && classify(error, lastText)) {
     // Out of tokens: the pause module tells the chat and holds what comes next.
     s.turn = null
@@ -163,6 +174,7 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
     void onLimitFailure(d, s, error, lastText).catch(err => d.log(`out-of-tokens failed: ${err}`))
     return
   }
+  sessionPhase(d, s, failed ? 'failed' : 'done')
   const turn = s.turn
   s.turn = null
   s.status = 'idle'

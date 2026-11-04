@@ -28,6 +28,7 @@ export const TOOLS = [
         chat_id: chatId,
         message_thread_id: threadId,
         text: { type: 'string', description: 'The message. Omit it with use_last_message.' },
+        result: { type: 'object', description: 'Optional work result card: factual summary, checks performed, remaining work and PR link. Never invent checks.', properties: { summary: { type: 'string' }, checks: { type: 'string' }, remaining: { type: 'string' }, pr_url: { type: 'string' } } },
         use_last_message: { type: 'boolean', description: 'Send the text you wrote since your last tool call as the reply (the user already watched it stream). Use when the inbound message has stream_answer="true".' },
         reply_to: { type: 'string', description: 'Message ID to thread under. Use message_id from the inbound <channel> block only when replying to an earlier message.' },
         files: { type: 'array', items: { type: 'string' }, description: 'Absolute file paths. Images go as photos, other types as documents. Max 50MB each.' },

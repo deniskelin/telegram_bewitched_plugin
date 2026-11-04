@@ -4,6 +4,11 @@
  * the progress settings of its chat; « Назад returns to the list.
  */
 
+import { replacementSession, lastResult, deliveryPhase, type Delivery } from './ux.ts'
+import { cancelTextBatch } from './economy.ts'
+import { codexTakeHeld, codexHeldCount } from './engines.ts'
+import { resolveTarget } from './inbound.ts'
+import { pendingKeyOf } from './topics.ts'
 import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { can, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { join } from 'path'
@@ -38,7 +43,13 @@ export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.u
  * another, in the same order.
  */
 export async function sessionsList(d: Daemon): Promise<Screen> {
-  const sections = sessionSections(d)
+  const original = sessionSections(d)
+  const own = original.find(x => x.title === t('👤 <b>Владелец</b>'))
+  const needs = d.activeSessions().filter(s => s.status === 'waiting' || s.turn?.stuck || s.stopRequest?.phase === 'failed' || d.store.get(`ux:error:${s.projectKey}`) != null || lastResult(d, s.projectKey)?.unread)
+  const ownIds = new Set(own?.items.flatMap(i => 's' in i ? [i.s.id] : []) ?? [])
+  const attention = needs.filter(s => !ownIds.has(s.id)).map(s => ({ s }))
+  const used = new Set([...ownIds, ...attention.map(i => i.s.id)])
+  const sections = [...(own ? [own] : []), ...(attention.length ? [{ title: `<b>${t('Требуют внимания')}</b>`, items: attention }] : []), ...original.filter(x => x !== own).map(sec => ({ ...sec, items: sec.items.filter(i => !('s' in i) || !used.has(i.s.id)) })).filter(x => x.items.length)]
   let n = 0
   const textBlocks: string[] = []
   const rows: Btn[][] = []
@@ -56,6 +67,12 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
       const label = sessionLabel(d, s)
       const icon = label.slice(0, label.indexOf(' '))
       lines.push(`${n}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${menuStatus(s)}${s.group ? ' · 👥' : ''}\n    ${await agentLine(s)}`)
+      const active = d.store.get(`ux:active:${s.id}`)
+      const task = active ? (JSON.parse(active) as Record<string, string>[]).at(-1) : null
+      const taskText = task?.chat_id ? (task.message_ids ?? task.message_id ?? '').split(',').map(id => d.store.getMessage(task.chat_id!, Number(id))?.text ?? '').filter(Boolean).join(' · ') : ''
+      if (taskText && s.turn) lines.push(`    ${t('Текущая задача')}: ${escapeHtml(clip(taskText.replace(/\s+/g, ' '), 100))}`)
+      if (d.store.get(`ux:error:${s.projectKey}`)) lines.push(`    ${t('Не доставлено')}`)
+      if (lastResult(d, s.projectKey)?.unread) lines.push(`    ${t('Непрочитанный результат')}`)
       // One full-width row keeps the status visible on narrow phone screens.
       const prefix = `${n}. `
       const suffix = ` ${menuStatusIcon(s)}`
@@ -75,6 +92,7 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   text = clipHtml(text, MAX_MESSAGE)
 
   rows.push([...(d.permissions.size ? [button(t('🔐 Разрешения ({size})', { size: d.permissions.size }), 'sm:perms')] : []), button(t('👥 Пригласить'), 'inv:start'), button(t('🔄 Обновить'), 'sm:list')])
+  if (d.topicsChatId) rows.push([button(t('📂 Проекты'), 'tm:list')])
   rows.push([button(t('« Меню'), 'hub:main')])
   return { text, kb: new InlineKeyboard(rows as never) }
 }
@@ -132,6 +150,13 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     if (s.tmuxPane && s.status === 'working') top.push(button(t('⏹ Стоп'), `sm:stop:${s.id}`, 'danger'))
     if (s.tmuxPane && /^%\d+$/.test(s.tmuxPane)) top.push(button(t('👁 Экран и клавиши'), `tx:p${s.tmuxPane.slice(1)}`))
     if (top.length) rows.push(top)
+    rows.push([button(t('Отменить очередь'), `sm:qclear:${s.id}`)])
+    const result = lastResult(d, s.projectKey)
+    if (result && result.chat.chatId === owner()) rows.push([button(t('Последний результат'), `urx:show:${result.id}`)])
+    else if (result?.chat.chatId.startsWith('-')) {
+      const url = topicLink(result.chat.chatId, result.card ?? result.messages[0]!)
+      if (url) rows.push([InlineKeyboard.url(t('Последний результат'), url)])
+    }
     rows.push([button(t('🤖 Агент'), `sm:g:${s.id}:c`), button(t('🔔 Уведомления'), `sm:g:${s.id}:n`)])
     const review = s.branch ? reviewButton(s) : null
     rows.push([...(s.branch ? [button('🌿 Git', `sm:git:${s.id}`)] : []), ...(review ? [review] : []), button(t('⚙️ Управление'), `sm:g:${s.id}:m`)])
@@ -455,10 +480,42 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   const s = id ? d.sessions.get(id) : undefined
+  if (!s && id) {
+    const replacement = replacementSession(d, id)
+    if (replacement) { await answer(t('Сессия перезапущена: откройте актуальную карточку.')); await show(ctx, await sessionScreen(d, replacement)); return true }
+  }
   if (!s || s.passive) {
     await answer(t('Сессия уже отключена.'))
     await show(ctx, await sessionsList(d))
     return true
+  }
+  if (action === 'qclear') {
+    let waitingCount = d.store.pendingCount(pendingKeyOf(d, s), settings.pendingTtlH) + codexHeldCount(s)
+    waitingCount += (JSON.parse(d.store.get('tokens_held') ?? '[]') as { projectKey: string }[]).filter(h => h.projectKey === s.projectKey).length
+    for (const key of d.store.keys('economy:batch:')) {
+      const b = JSON.parse(d.store.get(key)!)
+      const target = resolveTarget(d, b.chat, b.from)
+      if (target.kind === 'session' && target.session === s) waitingCount += b.items.length
+    }
+    if (value !== 'yes') { await answer(); await show(ctx, { text: `<b>${t('Отменить очередь')}</b>\n\n${escapeHtml(projectTitle(s))}\n${t('В очереди')}: ${waitingCount}`, kb: new InlineKeyboard([[button(t('✅ Да'), `sm:qclear:${s.id}:yes`, 'danger'), button(t('Отмена'), `sm:s:${s.id}`)]]) }); return true }
+    for (const key of d.store.keys('economy:batch:')) {
+      const b = JSON.parse(d.store.get(key)!)
+      const target = resolveTarget(d, b.chat, b.from)
+      if (target.kind === 'session' && target.session === s) cancelTextBatch(d, b.chat, b.from)
+    }
+    for (const key of d.store.keys('ux:delivery:')) {
+      const r: Delivery = JSON.parse(d.store.get(key)!)
+      if (!['queued', 'launching'].includes(r.phase)) continue
+      const target = resolveTarget(d, r.chat, r.userId)
+      if (target.kind === 'session' && target.session === s) deliveryPhase(d, { chat_id: r.chat.chatId, message_id: r.messageId }, 'stopped')
+    }
+    d.store.dropPending(pendingKeyOf(d, s))
+    codexTakeHeld(s)
+    const held = JSON.parse(d.store.get('tokens_held') ?? '[]') as { projectKey: string }[]
+    d.store.set('tokens_held', JSON.stringify(held.filter(h => h.projectKey !== s.projectKey)))
+    const broken = JSON.parse(d.store.get('tokens_broken') ?? '[]') as string[]
+    d.store.set('tokens_broken', JSON.stringify(broken.filter(p => p !== s.projectKey)))
+    await answer(t('Остановлено')); await show(ctx, await sessionScreen(d, s)); return true
   }
   let toast: string | undefined
   if (action === 'g' && (value === 'c' || value === 'n' || value === 'm')) {
@@ -546,7 +603,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     s.alwaysAllow.clear()
     toast = t('🔐 Разрешения снова спрашиваются')
   } else if (action === 'stop') {
-    toast = stopSession(d, s, 'menu') === 'interrupted' ? t('⏹ Остановлено') : t('Сейчас нечего останавливать.')
+    toast = stopSession(d, s, 'menu') === 'interrupted' ? t('Команда остановки отправлена') : t('Сейчас нечего останавливать.')
   } else if (action === 'ar' && s.topic) {
     await answer()
     const kb = new InlineKeyboard([[button(t('✅ Да, в архив'), `sm:arok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:m`)]])

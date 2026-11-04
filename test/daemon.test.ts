@@ -568,7 +568,7 @@ describe('topics', () => {
     await tg.waitFor('answerCallbackQuery', x => x.body.text === '➡️ /model claude-sonnet-5-5')
     const asked = await tg.waitFor('editMessageText', x => String(x.body.text).includes('❓ Claude Code спрашивает'))
     expect(String(asked.body.text)).toContain('No, go back')
-    expect(JSON.stringify(asked.body.reply_markup)).toContain('tx:p11:2')
+    expect(JSON.stringify(asked.body.reply_markup)).toContain(`tx:v${s.id}:2`)
     d.tmuxCapture = capture
     // FR-15: the chosen model stays the project's — the next launch starts on it; ↩️ forgets it.
     const { projectEngine } = await import('../src/daemon/engines.ts')
@@ -823,6 +823,8 @@ describe('topics', () => {
     await Bun.sleep(300)
     expect(s.notes.some(n => n.includes('⏹'))).toBe(true)
     s.status = 'idle'
+    s.turn = null
+    s.stopRequest = undefined
 
     const typed: string[] = []
     const ty = d.tmuxType
@@ -1201,8 +1203,14 @@ describe('topics', () => {
     await client.inbound(x => x.content.endsWith('расскажи анекдот'))
     await hook('MessageDisplay', { delta: 'Жена отправляет мужа' })
     expect(s.status).toBe('working')
+    const beforeStopAck = tg.calls.length
     tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
-    await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏹ Остановлено')
+    await tg.waitFor('answerCallbackQuery', c => tg.calls.indexOf(c) >= beforeStopAck && c.body.text === 'Команда остановки отправлена')
+    const captureStop = d.tmuxCapture
+    d.tmuxCapture = async () => '❯ '
+    const { verifyStop } = await import('../src/daemon/stopcheck.ts')
+    await verifyStop(d, s, s.stoppedAt!)
+    d.tmuxCapture = captureStop
     expect(s.status).toBe('idle')
     expect(keys).toEqual([['%9', 'Escape']])
     d.tmuxKeys = savedKeys
@@ -1283,7 +1291,7 @@ describe('topics', () => {
       tg.push(textMessage({ chat: Number(group), text: 'расскажи про лимиты', thread: s.topic!.threadId }))
       const note = await tg.waitFor('sendMessage', x => String(x.body.text).includes('Сообщение не дошло до Codex') && x.body.message_thread_id === s.topic!.threadId)
       expect(String(note.body.text)).toContain('[Pasted Content 1274 chars]')
-      expect(JSON.stringify(note.body.reply_markup)).toContain('tx:p62:e')
+      expect(JSON.stringify(note.body.reply_markup)).toContain(`tx:v${s.id}:e`)
       expect(s.status).toBe('idle')
       expect(s.turn).toBeNull()
     } finally {
@@ -1308,7 +1316,7 @@ describe('topics', () => {
       expect(tg.callsOf('sendMessage').filter(asked).length).toBe(0)
       await checkQuestions(d)
       const q = await tg.waitFor('sendMessage', asked)
-      expect(JSON.stringify(q.body.reply_markup)).toContain('tx:p71:2')
+      expect(JSON.stringify(q.body.reply_markup)).toContain(`tx:v${s.id}:2`)
       await checkQuestions(d)
       expect(tg.callsOf('sendMessage').filter(asked).length).toBe(1)
       screen = '› Ask Codex to do anything'
@@ -2910,5 +2918,24 @@ describe('economy integration', () => {
       await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Economy · UTC'))
       expect(client.msgs.filter(m => m.t === 'inbound').length).toBe(before)
     } finally { d.store.set(key, old) }
+  })
+})
+
+describe('stable UX controls', () => {
+  test('an old destructive session button only opens the replacement card', async () => {
+    const { handleSessionMenu } = await import('../src/daemon/menu.ts')
+    const s = d.sessions.get(sessionId)!
+    const old = 'faded123'
+    d.store.set(`ux:alias:${old}`, JSON.stringify({ projectKey: s.projectKey, cwd: s.cwd, topic: s.topic }))
+    const typed: string[] = []
+    const saved = d.tmuxType
+    const notices: string[] = []
+    d.tmuxType = async (_p, text) => { typed.push(text) }
+    try {
+      const ctx = { from: { id: 111 }, answerCallbackQuery: async (p?: { text?: string }) => { notices.push(p?.text ?? '') }, editMessageText: async () => {} } as never
+      expect(await handleSessionMenu(d, ctx, `sm:clrok:${old}`)).toBe(true)
+      expect(typed).toHaveLength(0)
+      expect(notices[0]).toContain('перезапущена')
+    } finally { d.tmuxType = saved }
   })
 })
