@@ -17,7 +17,7 @@ import { k, locale, t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
 import { groupForProject } from './groups.ts'
 import { isMessageNotModified, isThreadNotFound, topicLink } from '../tg.ts'
-import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
+import { userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { endSession, launchForTopic, onLaunchConnected, onManualTopic, startProject } from './launch.ts'
 import { clearIdle, idleRecord, quietConnect } from './autoresume.ts'
@@ -209,11 +209,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   const key = pendingKeyOf(d, s)
   const all = d.store.takePending(key, settings.pendingTtlH)
   const line = (p: typeof all[number]) => `[${new Date(p.created_at).toLocaleString('ru-RU')}] ${p.meta.user ?? 'пользователь'}${pendingWhere(d, p.meta)}: ${p.content}` // i18n-ignore
-  const handled = all.filter(p => p.meta.handled_by === 'main')
-  const pending = all.filter(p => p.meta.handled_by !== 'main')
-  if (handled.length) {
-    parts.push(`Пока сессия была offline, на эти сообщения уже ответила главная сессия (для контекста, повторно не отвечай):\n` + handled.map(line).join('\n')) // i18n-ignore
-  }
+  const pending = all
   if (pending.length) {
     parts.push(`Пока сессия была offline, пришло сообщений: ${pending.length}. Ответь на них:\n` + pending.map(line).join('\n')) // i18n-ignore
   }
@@ -231,7 +227,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
 /** The queue a session takes its offline messages from. */
 export function pendingKeyOf(d: Daemon, s: Session): string {
   const role = d.roleOf(s)
-  return role === 'user' ? userPendingKey(d.userIdOf(s)!) : role === 'main' ? MAIN_PENDING_KEY : topicKey(s).key
+  return role === 'user' ? userPendingKey(d.userIdOf(s)!) : topicKey(s).key
 }
 
 /** Where a queued message came from, when it is not the session's own DM: General or a topic. */
@@ -632,13 +628,11 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
       await ctx.reply(tr('🚀 Сессия не запущена — запускаю её, сообщение дойдёт после подключения.'))
       return void launchForTopic(d, chat, t.thread_id, t.project_key).catch(err => d.log(`topic launch failed: ${err}`))
     }
-    const main = s || settings.topicNoSession !== 'main' ? null : d.mainSession()
-    if (!s && !main) {
+    if (!s) {
       if (t.project_key) d.store.addPending(t.project_key, parsed[1], meta)
       return void ctx.reply(tr('💤 Сессия не запущена — сообщение доставлю при запуске.'))
     }
-    if (main && t.project_key) d.store.addPending(t.project_key, parsed[1], { ...meta, handled_by: 'main' })
-    d.deliver((s ?? main)!, parsed[1], meta, { chatId: chat, threadId: t.thread_id, isPrivate: false })
+    d.deliver(s, parsed[1], meta, { chatId: chat, threadId: t.thread_id, isPrivate: false })
     await ctx.reply(tr('📨 Отправлено в «{name}».', { name: t.name }))
   })
 
@@ -676,25 +670,6 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!chat || !t) return void ctx.reply(tr('Формат: /delete <топик>'))
     await ctx.reply(tr('Удалить топик «{name}» вместе со всеми сообщениями?', { name: t.name }), { reply_markup: confirmKb(`tp:delok:${t.thread_id}`, 'tp:cancel:0') })
   })
-
-  const mainCommand = async (ctx: Context) => {
-    if (ctx.chat?.type !== 'private' || !can(ctx.from!.id, 'control')) return
-    const arg = String(ctx.match ?? '').trim().replace(/^#/, '')
-    if (arg === 'reset') {
-      d.store.set('main_dir', null)
-      return void ctx.reply(tr('👑 Главная сессия — снова по MAIN_DIR: {dir}', { dir: d.mainKey() }))
-    }
-    if (!arg) {
-      const m = d.mainSession()
-      return void ctx.reply(tr('👑 Главная сессия: {dir}', { dir: d.mainKey() }) + (m ? ` · #${m.id}` : tr(' · не запущена')) + '\n' + tr('/main <id> — сделать главной другую, /main reset — вернуть MAIN_DIR.'))
-    }
-    const s = d.sessions.get(arg)
-    if (!s || s.passive) return void ctx.reply(tr('Сессия не найдена. /sessions — список.'))
-    d.store.set('main_dir', s.projectKey)
-    await ctx.reply(tr('👑 Главная сессия теперь #{id} · {name} ({dir}).', { id: s.id, name: projectTitle(s), dir: s.projectKey }))
-  }
-  bot.command('main', mainCommand)
-  bot.command('use', mainCommand)
 
   bot.command('verbose', async ctx => {
     if (!ctx.from || !can(ctx.from.id, 'control')) return
@@ -755,8 +730,8 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
     if (!ctx.from || !can(ctx.from.id, 'write')) return
     const chat = String(ctx.chat!.id)
     const thread = threadOf(ctx)
-    const own = settings.userSessions ? d.userSession(String(ctx.from.id)) : null
-    const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? own ?? d.mainSession()
+    const own = d.userSession(String(ctx.from.id))
+    const s = (thread != null ? d.sessionForThread(chat, thread) : null) ?? own
     if (!s) return void ctx.reply(tr('Сессия не запущена.'), { message_thread_id: thread })
     // i18n-ignore
     d.deliver(s, 'Пользователь просит сохранить память этого чата: вызови save_memory с краткой сводкой важного (цели, решения, договорённости, открытые задачи). Предыдущая сводка перезапишется — включи в новую всё нужное из старой.',
@@ -894,11 +869,6 @@ export async function handleTopicCallback(d: Daemon, ctx: Context, data: string)
     if (ns === 'ses' && action === 'info') {
       const s = d.sessions.get(arg)
       await answer(s ? `#${s.id} · ${s.cwd}` : tr('Сессия уже отключена.'))
-    } else if (ns === 'ses' && action === 'dm') {
-      const s = d.sessions.get(arg)
-      if (!s) { await answer(tr('Сессия уже отключена.')); return true }
-      d.store.set('main_dir', s.projectKey)
-      await answer(tr('👑 Главная → #{id}', { id: s.id }))
     } else if (ns === 'ses' && (action === 'ar' || action === 'arok')) {
       const s = d.sessions.get(arg)
       if (!s?.topic) { await answer(tr('Сессия уже отключена или без топика.')); return true }

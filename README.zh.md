@@ -57,7 +57,7 @@ tmux 中的 Claude Code 会话：👤 每人一个（~/user/<id>）· 📂 每�
 | 快捷命令 | ❌ | ✅ `/macro`：自定义按钮，把文字发给本聊天的会话 |
 | 提醒 | ❌ | ✅ `/remind` 和 `remind` 工具，一次性或每天 |
 | 成员 | 仅配对码 | ✅ 从通讯录 `/invite`，`/users`，连同全部数据一起移除 |
-| 普通群组 | 通过主会话 | ✅ 无话题的群组 = 一个项目：在所有者私聊中绑定，其会话在群组中回复 |
+| 普通群组 | 通过唯一的会话 | ✅ 无话题的群组 = 一个项目：在所有者私聊中绑定，其会话在群组中回复 |
 | 界面语言 | 英语 | ✅ 俄语、英语、西班牙语、中文、法语、德语——`/lang`，默认跟随 Telegram 语言 |
 | 测试 | ❌ | ✅ 基于模拟 Bot API 的单元测试和集成测试 |
 
@@ -147,7 +147,7 @@ claude plugin update telegram-bewitched@bewitched
 
 权限按角色划分（FR-4）：👑 所有者——第一个配对的用户——可以做任何事；👤 成员可以给会话发消息、回答按钮、按 ⏹；👁 观察者只能查看。批准权限、控制面板、归档、设置以及邀请或移除成员仅限所有者；角色在 `/users` 中切换。群组其他成员会被忽略。Telegram 的原生草稿只在私聊中可用，因此在话题中进度以不断更新的消息显示。
 
-`/sessions` 是像 BotFather 那样的单消息菜单：带编号的会话列表，每个会话一个简短按钮（「1. 名称 ●」）；按钮打开会话卡片：⏹ 停止（回合进行中）、👁 屏幕、🌿 Git、💬 打开话题，以及三个分组——「🤖 智能体」（/compact、/clear、模型、过往对话、快捷命令）、「🔔 通知」（其聊天的 🔕0/🔔1/📢2 和「✅ 完成」）、「⚙️ 管理」（👑 设为主会话、🗄 归档、解绑群组、移除用户、权限规则）；每个分组都有「« 返回」，「« 返回列表」返回。项目以其话题或群组命名。`/topics` 是同样的话题菜单：每个话题的状态（会话、💤 无会话、队列），话题页面有 💬 打开、📋 会话卡片、🚀 启动会话、🗄 归档 / ↩️ 恢复、🗑 删除；归档单独一页。「👁 屏幕与按键」（在卡片和启动消息中）发送 tmux 窗口的当前画面，附 1/2/3、Enter、Esc、↑/↓、Tab 按钮——无需 `tmux attach` 就能回答窗口中的任何问题。「🌿 Git」显示状态、最近提交和分支的 PR（通过 `gh`）；「📄 以文件发送 diff」发送 `git diff HEAD`。权限请求下方有「♾ 本会话中始终允许 <工具>」（直到会话重新连接；可在卡片中重置）和「📌 本项目中始终允许 <工具>」（机器人按项目文件夹保存规则；可在卡片中移除）。🧹 `/compact`、🆕 `/clear` 和 🧠 模型按钮会在会话窗口中输入命令（仅在两轮之间）。🧠 中还可选择 🎚 推理强度：Claude Code 为低、中、高、很高和最高（通过 `/effort` 立即生效），Codex 为低…很高（下次启动起生效，`model_reasoning_effort`）。强度按项目保存，并在卡片、「🔢 本轮消耗」、`/usage` 和每日总结中显示在模型旁：「opus-5-5 · 高」。卡片显示：类型（👑 主会话或项目会话）、状态、`#id` 和 pid、工作目录、分支、话题、在 tmux 中的位置（会话、窗口、窗格）及现成的 `tmux attach -t <会话>:<窗口>`、能否「⏹ 停止」、权限模式、模型和上下文大小、当前一轮和最后一个操作、`claude --resume <id>` 命令、`/rename` 名称、📱 Remote Control 是否开启及 claude.ai 上的会话链接（根据对话记录中的 `remote_session_change` 事件；在第一次该事件之前，根据 `--remote-control`/`--rc` 标志或 `remoteControlAtStartup`），以及启动以来和最后一次活动以来的时间。未带频道标志启动的会话单独列在「👻 无频道」中，并附重启命令：它们收不到消息，以前也看不到。
+`/sessions` 是像 BotFather 那样的单消息菜单：带编号的会话列表，每个会话一个简短按钮（「1. 名称 ●」）；按钮打开会话卡片：⏹ 停止（回合进行中）、👁 屏幕、🌿 Git、💬 打开话题，以及三个分组——「🤖 智能体」（/compact、/clear、模型、过往对话、快捷命令）、「🔔 通知」（其聊天的 🔕0/🔔1/📢2 和「✅ 完成」）、「⚙️ 管理」（🗄 归档、解绑群组、移除用户、权限规则）；每个分组都有「« 返回」，「« 返回列表」返回。项目以其话题或群组命名。`/topics` 是同样的话题菜单：每个话题的状态（会话、💤 无会话、队列），话题页面有 💬 打开、📋 会话卡片、🚀 启动会话、🗄 归档 / ↩️ 恢复、🗑 删除；归档单独一页。「👁 屏幕与按键」（在卡片和启动消息中）发送 tmux 窗口的当前画面，附 1/2/3、Enter、Esc、↑/↓、Tab 按钮——无需 `tmux attach` 就能回答窗口中的任何问题。「🌿 Git」显示状态、最近提交和分支的 PR（通过 `gh`）；「📄 以文件发送 diff」发送 `git diff HEAD`。权限请求下方有「♾ 本会话中始终允许 <工具>」（直到会话重新连接；可在卡片中重置）和「📌 本项目中始终允许 <工具>」（机器人按项目文件夹保存规则；可在卡片中移除）。🧹 `/compact`、🆕 `/clear` 和 🧠 模型按钮会在会话窗口中输入命令（仅在两轮之间）。🧠 中还可选择 🎚 推理强度：Claude Code 为低、中、高、很高和最高（通过 `/effort` 立即生效），Codex 为低…很高（下次启动起生效，`model_reasoning_effort`）。强度按项目保存，并在卡片、「🔢 本轮消耗」、`/usage` 和每日总结中显示在模型旁：「opus-5-5 · 高」。卡片显示：类型（👤 个人会话或 📂 项目会话）、状态、`#id` 和 pid、工作目录、分支、话题、在 tmux 中的位置（会话、窗口、窗格）及现成的 `tmux attach -t <会话>:<窗口>`、能否「⏹ 停止」、权限模式、模型和上下文大小、当前一轮和最后一个操作、`claude --resume <id>` 命令、`/rename` 名称、📱 Remote Control 是否开启及 claude.ai 上的会话链接（根据对话记录中的 `remote_session_change` 事件；在第一次该事件之前，根据 `--remote-control`/`--rc` 标志或 `remoteControlAtStartup`），以及启动以来和最后一次活动以来的时间。未带频道标志启动的会话单独列在「👻 无频道」中，并附重启命令：它们收不到消息，以前也看不到。
 
 以下所有功能在 **`/menu`** 中都有按钮（Telegram 命令菜单只有 `/menu`、`/sessions`、`/usage`、`/help`）。控制命令（私聊或 General）：`/sessions`、`/topics`、`/permissions`（所有会话中待处理的权限请求）、`/send <话题> <内容>`、`/broadcast <内容>`、`/rename <话题> | <名称>`、`/archive <话题>`、`/delete <话题>`、`/new_session <名称|路径>`。任何聊天中：`/verbose [0|1|2]`（🔕0 仅回答，🔔1 + 操作，📢2 + 模型文字；不带参数时显示当前级别）、`/notify_done [off|long|always]`、`/lang ru|en|es|zh|fr|de|auto`、`/remember`、`/forget`、`/voice off|mirror|always`、`/transcript on|off`、`/macro add <按钮> | <文字>` 和 `/macro del <n>`（本聊天的快捷命令）、`/remind <时间> <内容>`（30m、1h30m、«in 2 hours»、18:30、«tomorrow 9:00»、«every day 9:00»；也支持俄语写法；到时文字会发到聊天并交给该聊天的会话，会话未运行时会被启动）、`/reminders`。 重复：«every 2h …»。在项目话题中：`/prompt [文本|off]`（话题的提示词模式：普通、🔍 审查——不改文件、💬 对话——不用 shell 也不改文件，或自定义文本；下次启动起生效），`/once [claude|codex] <问题>`（在话题文件夹中不用会话执行一次只读回合），`/review`（另一个引擎审查会话未提交的改动；会话卡片上的「🔍 审查」也一样）。`/server` → 「⬆️ 更新 CLI」执行 `claude update` / `codex update`。详细级别显示在会话卡片中（📣 行），可在那里用按钮修改，也显示在「⏳ 工作中… · 🔔1」标题中。私聊中：`/server`（CPU、内存、磁盘、Claude Code 和语音进程；「📜 守护进程日志」、「♻️ 重启守护进程」）、`/users`（所有有权限的人；🚫 删除用户：访问权限、会话和 tmux 窗口、文件夹、对话记录和私聊历史——需确认）、`/invite`（邀请用户：选择联系人 → 确认 → 机器人授予访问权限、启动其会话并发送一条可转发的邀请）、`/usage`、`/digest`、`/reports`（日、周、月报告，附按小时/天/周的消耗图表和统计；每种报告可用按钮单独开启，在周期结束时发送）、`/main [id|reset]`、`/group`、`/disconnect_group`、`/status`。
 
@@ -162,7 +162,7 @@ claude plugin update telegram-bewitched@bewitched
 没有话题的群组也可以是一个独立项目——比如关于某个网站的家庭群，关于某个服务的工作群。
 
 1. 把机器人加入群组，并在终端中允许它：`/telegram-bewitched:access group add <id>`（加入时机器人会把 id 告诉您；在此之前它在群里保持沉默）。默认机器人只在被提及时回复——`--no-mention` 可关闭此限制（还需在 @BotFather 关闭 privacy mode，见 [ACCESS.md](ACCESS.zh.md)）。
-2. 群组发来第一条消息时，所有者会在私聊中收到卡片：「📁 新建」（`~/projects/<群组 id>`）、「📂 选择项目」（现有文件夹）或「🚫 不是项目」（与以前一样由主会话回复）。在此期间群组中的消息在队列中等待。
+2. 群组发来第一条消息时，所有者会在私聊中收到卡片：「📁 新建」（`~/projects/<群组 id>`）、「📂 选择项目」（现有文件夹）或「🚫 不是项目」（每条消息交给其作者的个人会话）。在此期间群组中的消息在队列中等待。
 3. 项目会话在 tmux 中启动（在您私聊中点「✅ 确认启动」确认），直接在群组中回复并在那里显示进度。它没有话题。
 
 其他一切都在所有者私聊中完成：`/sessions` 中的会话卡片（带「👥 解绑群组」）、「/menu → 👥 群组」中的列表。群组会话的权限请求只发给所有者。提醒、`/macro`、`/event` 和 CI 通知在群组中与在话题中一样可用。
@@ -175,7 +175,6 @@ claude plugin update telegram-bewitched@bewitched
 |---|---|---|
 | 👤 **用户会话** | `~/user/<user_id>`（`USERS_DIR`） | 该用户的私聊及其在 General 中的消息；也在那里回复 |
 | 📂 **项目会话** | 项目文件夹 | 自己的话题 |
-| 👑 **主会话** | `MAIN_DIR`（默认 `~`） | 仅当 `USER_SESSIONS=off`（所有人的私聊和 General，与 1.0 相同）或作为 `TOPIC_NO_SESSION=main` 的备用 |
 
 日常事务由守护进程自己完成，不需要 Claude：控制命令、关闭和打开话题、启动会话、看门狗。
 
@@ -199,7 +198,6 @@ claude plugin update telegram-bewitched@bewitched
 - 在终端中有意执行 `/exit` 后也会收到看门狗通知——从外部无法与崩溃区分。
 - `--continue` 会继续该文件夹中最近的对话，包括在其中手动启动的对话。
 
-`USER_SESSIONS=off` 恢复 1.0 的行为：所有人的私聊和 General 都交给 `MAIN_DIR` 中的主会话；`/main <id>`、`/main reset` 和 `/sessions` 卡片中的「👑 设为主会话」可以重新指定它。
 
 ## 设置（`~/.claude/channels/telegram-bewitched/.env`）
 
@@ -217,17 +215,15 @@ claude plugin update telegram-bewitched@bewitched
 | `PASSIVE_TOOLS` | `false` | 允许无频道会话（`claude -p`）使用工具 |
 | `TOPIC_PROJECTS` | `auto` | 所有者创建的话题 → 项目和会话：`auto`、`ask`（按钮）、`off` |
 | `PROJECTS_DIR` | `~/projects` | 项目文件夹的创建位置 |
-| `USER_SESSIONS` | `on` | allowlist 中每个用户一个会话；`off`——与 1.0 相同（全部交给主会话） |
 | `USERS_DIR` | `~/user` | 用户会话文件夹所在位置（`<USERS_DIR>/<user_id>`） |
 | `USER_IDLE_MIN` | `0` | 用户会话空闲 N 分钟后关闭（0——从不） |
 | `PROJECT_IDLE_MIN` | `0` | 项目会话空闲 N 分钟后关闭（0——从不） |
 | `OWNER_IDLE_MIN` | `10080` | 所有者个人会话空闲 N 分钟后关闭（一周；0——从不）。`/menu → 💤` 覆盖这三项 |
-| `TOPIC_NO_SESSION` | `launch` | 没有会话的项目话题：`launch`——启动会话，`main`——由主会话回答，`queue`——只排队 |
+| `TOPIC_NO_SESSION` | `launch` | 没有会话的项目话题：`launch`——启动会话，`queue`——只排队 |
 | `WATCHDOG_GRACE_SEC` | `60` | 会话停止后多少秒发出通知 |
-| `CODEX_SANDBOX` | `auto` | Codex 沙箱：`auto` — `workspace-write`（项目、用户和主目录可写，开启网络）；沙箱无法启动时（旧内核不支持 user namespaces）不使用沙箱，否则 Codex 每条命令都会请求批准；或 `read-only` / `workspace-write` / `danger-full-access` |
+| `CODEX_SANDBOX` | `auto` | Codex 沙箱：`auto` — `workspace-write`（项目和用户目录可写，开启网络）；沙箱无法启动时（旧内核不支持 user namespaces）不使用沙箱，否则 Codex 每条命令都会请求批准；或 `read-only` / `workspace-write` / `danger-full-access` |
 | `CODEX_APPROVAL` | `on-request` | Codex 何时请求批准：`on-request` — 仅当模型需要超出沙箱的权限时；`untrusted`、`never` |
 | `TURN_STUCK_SEC` | `120` | 已投递的消息 N 秒没有任何活动迹象（没有 hook，也没有写入 transcript）时发出提醒；0 — 关闭 |
-| `MAIN_DIR` | `~` | 主会话的文件夹（`USER_SESSIONS=off` 时负责私聊和 General） |
 | `CONTEXT_WINDOW` | `1000000` | 会话卡片中计算上下文占用百分比的窗口大小 |
 | `CONTEXT_WARN_PCT` | `80` | 上下文占用达到此值时，在会话聊天中建议 `/compact`（0——从不） |
 | `DIGEST_AT` | `21:00` | 何时给所有者发送「🌙 每日总结」（消耗、提交、额度）；`off`——不发送。按需：`/digest` |
@@ -240,7 +236,7 @@ claude plugin update telegram-bewitched@bewitched
 | `QUIET_HOURS` | `off` | 免打扰时段，例如 `23:00-08:00`：机器人发送的一切都静音送达。「/menu → ⚙️」中的按钮优先于 `.env` |
 | `SKIP_ACKS` | `on` | 在未提问的回复之后立即发送的「好」「👍」「谢谢」只得到 👌 反应，不唤醒会话；`off`——照常发送。同样无需模型：回合中的「停止」（⏹）、「状态」、「限额」、10 秒内的重复发送、Claude Code 命令（`/clear`、`/compact`、`/model`、`/cost`，其余——「⌨️ 在窗口中输入」）；计数见 `/usage`。「🔢 回合消耗」——`/menu → ⚙️` 中的聊天设置（默认关闭） |
 | `BOT_LANGUAGE` | `ru` | 默认界面语言（`ru`、`en`、`es`、`zh`、`fr`、`de`），在聊天和所有者都未选择、且不知道用户 Telegram 语言时使用 |
-| `TMUX_SESSION` | `claude` | 主会话所在的 tmux 会话（用户和项目会话各有自己的） |
+| `TMUX_SESSION` | `claude` | 没有自己名称的启动所用的备用 tmux 会话（用户和项目会话各有自己的） |
 | `JOURNAL_CHAT_ID` | — | 用于接收机器人通知的群组（id，例如 `-100…`），代替私聊，每类通知在各自的话题中：📌 状态（一条置顶且始终最新的消息：所有会话和与 `/usage` 相同的限额——无需命令）、🛡 访问（机器人被加入/移出群组、非用户发来消息）、🖥 会话、📊 限额、📰 报告、⚙️ 守护进程。需要你处理的——权限、待确认的启动、用户请求、你预约的提醒——仍在私聊。群组需开启话题，机器人需为可管理话题的管理员. 开启话题会改变群组 id——机器人会自动跟随新 id。 |
 | `STT_PROVIDER` / `TTS_PROVIDER` | `off` | 语音：转写传入消息和语音回复——见 [docs/voice.md](docs/voice.md)，用 `bewitched voice install` 安装 |
 | `CLAUDE_LAUNCH_CMD` | `claude --dangerously-load-development-channels plugin:telegram-bewitched@bewitched` | 启动新会话的命令。机器人会追加 `-n claude-user-<telegram id>`（用户会话）或 `-n claude-project-<群组 id>-<话题 id>`（项目，与文件夹同名）；各自独立的 tmux 会话和窗口使用相同名称，`tmux ls` 一眼可见类型 |

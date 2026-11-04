@@ -17,7 +17,7 @@ import { toWav16k } from '../voice/audio.ts'
 import { sttEnabled, transcribe, type SttResult } from '../voice/stt.ts'
 import { downloadToInbox } from './media.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
-import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
+import { userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
 import { handleDashboardCallback, handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
@@ -93,13 +93,11 @@ export function enrichMeta(d: Daemon, msg: Message): Record<string, string> {
 }
 
 type Target =
-  /** fallback: a topic without a project, handled by the main session. */
-  | { kind: 'session'; session: Session; projectKey?: string; fallback?: boolean }
+  | { kind: 'session'; session: Session; projectKey?: string }
   | { kind: 'offline'; projectKey: string }
   | { kind: 'launch'; projectKey: string; threadId: number }
   | { kind: 'waiting'; projectKey: string }
   | { kind: 'user_offline'; userId: string }
-  | { kind: 'main_offline' }
   | { kind: 'unbound' }
   | { kind: 'archived'; projectKey: string | null; threadId: number }
   /** An ordinary group the owner hasn't decided about yet (groups.ts). */
@@ -108,7 +106,6 @@ type Target =
   | { kind: 'group_launch'; chatId: string; projectKey: string }
 
 function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
-  const main = d.mainSession()
   const { chatId, threadId } = chat
   if (d.isTopicsChat(chatId) && threadId != null) {
     const t = d.store.topic(chatId, threadId)
@@ -119,15 +116,11 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
       // Suspended for idling: it wakes up on the message, whatever TOPIC_NO_SESSION says.
       if (idleRecord(d, t.project_key)) return { kind: 'launch', projectKey: t.project_key, threadId }
       if (t.status === 'waiting') return { kind: 'waiting', projectKey: t.project_key }
-      const mode = settings.topicNoSession
-      if (mode === 'launch') return { kind: 'launch', projectKey: t.project_key, threadId }
-      if (mode === 'main' && main) return { kind: 'session', session: main, projectKey: t.project_key, fallback: true }
+      if (settings.topicNoSession === 'launch') return { kind: 'launch', projectKey: t.project_key, threadId }
       return { kind: 'offline', projectKey: t.project_key }
     }
-    // A topic without a project: the author's own session (or the main one without user sessions).
-    if (settings.userSessions) return userTarget(d, fromId)
-    if (main) return { kind: 'session', session: main, fallback: true }
-    return { kind: 'unbound' }
+    // A topic without a project: the author's own session.
+    return userTarget(d, fromId)
   }
   // An ordinary group: its project's session, or ask the owner what it is.
   if (!chat.isPrivate && isProjectGroup(d, chatId)) {
@@ -138,9 +131,9 @@ function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target {
       return s ? { kind: 'session', session: s, projectKey: g.dir } : { kind: 'group_launch', chatId, projectKey: g.dir }
     }
   }
-  // DMs and General: the author's own session; without user sessions, the main one.
-  if (settings.userSessions && (chat.isPrivate || d.isTopicsChat(chatId))) return userTarget(d, fromId)
-  return main ? { kind: 'session', session: main } : { kind: 'main_offline' }
+  // DMs, General and a group that is not a project: the author's own session.
+  if (chat.isPrivate || d.isTopicsChat(chatId) || isProjectGroup(d, chatId)) return userTarget(d, fromId)
+  return { kind: 'unbound' }
 }
 
 /**
@@ -151,7 +144,6 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
   const target = resolveTarget(d, chat, fromId)
   switch (target.kind) {
     case 'session':
-      if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
       return d.deliver(target.session, text, meta, chat)
     case 'launch':
       d.store.addPending(target.projectKey, text, meta)
@@ -162,9 +154,6 @@ export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: 
     case 'offline':
     case 'waiting':
       d.store.addPending(target.projectKey, text, meta)
-      return
-    case 'main_offline':
-      d.store.addPending(MAIN_PENDING_KEY, text, meta)
       return
     case 'archived':
       if (target.projectKey) d.store.addPending(target.projectKey, text, meta)
@@ -187,7 +176,6 @@ function targetDir(d: Daemon, t: Target): string | undefined {
     case 'launch': case 'offline': case 'waiting': case 'group_launch': return t.projectKey
     case 'archived': return t.projectKey ?? undefined
     case 'user_offline': return join(settings.usersDir, t.userId)
-    case 'main_offline': return d.mainKey()
     default: return undefined
   }
 }
@@ -300,7 +288,7 @@ async function handleInbound(
   // Claude Code's own commands are for the session's window, not for the model: answer here, no turn spent.
   const sc = SESSION_COMMAND_RE.exec(text)
   if (sc && !attachment) {
-    const s = target.kind === 'session' && !target.fallback ? target.session : null
+    const s = target.kind === 'session' ? target.session : null
     if (!can(from.id, 'control')) await reply(tr('Команды окна сессии — у владельца.'))
     else if (!s) await reply(tr('Сессия здесь не запущена — команду некуда отправить.'))
     else {
@@ -312,7 +300,7 @@ async function handleInbound(
   // Unknown commands in General are not for Claude.
   if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
   if (target.kind === 'unbound') {
-    await reply(tr('Этот топик не привязан к проекту, а главная сессия не запущена.'))
+    await reply(tr('Этот чат не привязан ни к проекту, ни к пользователю — сообщение некуда доставить.'))
     return
   }
   if (target.kind === 'archived') {
@@ -392,11 +380,6 @@ async function handleInbound(
     await reply(tr('💤 Сессия этого проекта не запущена. Сообщение доставлю, когда она подключится.'))
     return
   }
-  if (target.kind === 'main_offline') {
-    d.store.addPending(MAIN_PENDING_KEY, text, meta)
-    await reply(tr('💤 Главная сессия не запущена (папка {v}). Сообщение доставлю, когда она подключится.', { v: d.mainKey() }))
-    return
-  }
   if (target.kind === 'user_offline') {
     d.store.addPending(userPendingKey(target.userId), text, meta)
     void launchUserSession(d, target.userId, d.userLabel(target.userId), { chatId, threadId }).catch(err => d.log(`user launch failed: ${err}`))
@@ -415,12 +398,10 @@ async function handleInbound(
     return
   }
   // FR-9: what the daemon can answer itself never wakes the session.
-  if (!target.fallback && !msg.forward_origin && !imagePath && !(attachment && !isSpeech(attachment.kind))) {
+  if (!msg.forward_origin && !imagePath && !(attachment && !isSpeech(attachment.kind))) {
     const handled = await withoutModel(d, ctx, text, target.session, { chatId, threadId, messageId: msg.message_id, from: from.id }, (s2, t2) => d.deliver(s2, t2, meta, chat))
     if (handled) return
   }
-  // The project session will see what the main session answered for it.
-  if (target.fallback && target.projectKey) d.store.addPending(target.projectKey, text, { ...meta, handled_by: 'main' })
 
   if (msg.forward_origin) {
     const key = `${chatId}:${threadId ?? 0}:${from.id}`
@@ -436,7 +417,7 @@ async function handleInbound(
   }
 
   // FR-20: a reply to a message of an older conversation asks where it goes.
-  if (!target.fallback && await holdIfOldConversation(d, target.session, chat, text, meta).catch(err => { d.log(`reply conversation check failed: ${err}`); return false })) return
+  if (await holdIfOldConversation(d, target.session, chat, text, meta).catch(err => { d.log(`reply conversation check failed: ${err}`); return false })) return
   d.deliver(target.session, text, meta, chat)
 }
 

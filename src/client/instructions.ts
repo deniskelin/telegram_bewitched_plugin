@@ -5,7 +5,7 @@ export const INSTRUCTIONS = [
   '',
   'Messages from Telegram arrive as <channel source="telegram-bewitched" chat_id="..." message_id="..." user="..." ts="...">. Extra attributes:',
   '- thread_id / topic_name: the forum topic the message came from. This session usually owns one topic (its project). Replies default to the right chat and topic; pass chat_id anyway.',
-  '- Session roles: a user session (launched in USERS_DIR/<user_id>) gets that user\'s DMs and their own messages in the group\'s General topic; a project session gets its topic; the main session (MAIN_DIR) gets what has no other owner. Always reply where the message came from: pass its chat_id (and message_thread_id when present).',
+  '- Session roles: a user session (launched in USERS_DIR/<user_id>) gets that user\'s DMs and their own messages in the group\'s General topic; a project session gets its topic or group. Always reply where the message came from: pass its chat_id (and message_thread_id when present).',
   '- The group (General and topics) is seen by everyone in it. In a user session, never bring the user\'s private DM conversation or memory into a group reply unless they explicitly ask for it there.',
   '- reply_to_message_id, reply_to_from ("bot" = your own earlier message), reply_to_text: the message the user replied to. quote_text: the part they quoted.',
   '- forward_from / forward_date: the message was forwarded from someone else — it is not the user\'s own words. Several forwards arrive batched with forward_count.',

@@ -35,11 +35,9 @@ export function idleMin(d: Daemon, kind: IdleKind): number {
   return kind === 'user' ? envMin('USER_IDLE_MIN', 0) : kind === 'owner' ? envMin('OWNER_IDLE_MIN', 10080) : envMin('PROJECT_IDLE_MIN', 0)
 }
 
-/** Which setting applies to a session; the main session is never suspended. */
+/** Which setting applies to a session. */
 export function idleKind(d: Daemon, s: Session): IdleKind | null {
-  const role = d.roleOf(s)
-  if (role === 'project') return 'project'
-  if (role !== 'user') return null
+  if (d.roleOf(s) === 'project') return 'project'
   return d.userIdOf(s) === owner() ? 'owner' : 'user'
 }
 
@@ -51,7 +49,7 @@ export function idleName(min: number): string {
 
 export function idleScreen(d: Daemon): Screen {
   const rows: ReturnType<typeof button>[][] = []
-  const lines = [t('💤 <b>Приостановка сессий</b>'), t('Сессия без дела дольше выбранного закрывается; следующее сообщение запускает её снова и продолжает разговор. Главная не приостанавливается.'), '']
+  const lines = [t('💤 <b>Приостановка сессий</b>'), t('Сессия без дела дольше выбранного закрывается; следующее сообщение запускает её снова и продолжает разговор.'), '']
   for (const kind of KINDS) {
     const cur = idleMin(d, kind)
     lines.push(`${t(KIND_NAME[kind])}: <b>${idleName(cur)}</b>`)

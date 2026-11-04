@@ -209,7 +209,7 @@ export function writeCodexProfile(bun = process.execPath, mode?: { name: string;
     approval: settings.codexApproval,
     works: settings.codexSandbox === 'auto' && !mode?.readOnly ? codexSandboxWorks() : true,
     readOnly: mode?.readOnly ?? false,
-    roots: [...new Set([settings.projectsDir, settings.usersDir, settings.mainDir])],
+    roots: [...new Set([settings.projectsDir, settings.usersDir])],
   })
   const top = perms.slice(0, 2)
   const tables = perms.slice(2)

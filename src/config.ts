@@ -112,9 +112,7 @@ export const settings = {
   /** Codex's approval_policy: on-request — the model asks only when it needs more than the sandbox allows. */
   get codexApproval() { return str('CODEX_APPROVAL', 'on-request', ['on-request', 'untrusted', 'never'] as const) },
   get projectsDir() { return process.env.PROJECTS_DIR || join(homedir(), 'projects') },
-  /** Folder of the main session: DMs, General and topics without a session of their own. */
-  /** A session per allowlisted user for their DMs, in USERS_DIR/<user_id>. */
-  get userSessions() { return process.env.USER_SESSIONS !== 'off' },
+  /** Each allowlisted user has a session of their own for their DMs, in USERS_DIR/<user_id>. */
   get usersDir() { return resolve(process.env.USERS_DIR || join(homedir(), 'user')) },
   /** Close an idle user session after this many minutes (0 = never). */
   get userIdleMin() { return num('USER_IDLE_MIN', 0) },
@@ -122,8 +120,8 @@ export const settings = {
   get projectIdleMin() { return num('PROJECT_IDLE_MIN', 0) },
   /** Wait this long after a session stops before reporting it (it may be restarted by hand). */
   get watchdogGraceSec() { return num('WATCHDOG_GRACE_SEC', 60) },
-  /** A project topic without a running session: launch it, let the main session answer, or only queue. */
-  get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'main', 'queue'] as const) },
+  /** A project topic without a running session: launch it, or only queue its messages. */
+  get topicNoSession() { return str('TOPIC_NO_SESSION', 'launch', ['launch', 'queue'] as const) },
   /** Context window used for the fill percentage in session cards. */
   get contextWindow() { return num('CONTEXT_WINDOW', 1_000_000) },
   /** Offer /compact once the context is this full (percent, 0 = never). */
@@ -188,7 +186,6 @@ export const settings = {
   get ttsCacheMb() { return num('TTS_CACHE_MB', 200) },
   get ffmpegBin() { return process.env.FFMPEG_BIN || 'ffmpeg' },
 
-  get mainDir() { return resolve(process.env.MAIN_DIR || homedir()) },
   get tmuxSession() { return process.env.TMUX_SESSION || 'claude' },
   /** JOURNAL_CHAT_ID: a group for the daemon's notices and events instead of the owner's DM (see journal.ts). */
   get journalChatId() { const v = process.env.JOURNAL_CHAT_ID?.trim(); return v && /^-\d+$/.test(v) ? v : null },

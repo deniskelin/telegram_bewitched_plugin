@@ -334,13 +334,12 @@ export function bar(percent: number): string {
   return '▰'.repeat(n) + '▱'.repeat(20 - n)
 }
 
-/** 👤 user, 👑 main or 📂 project — by the folder the reply was made in. */
+/** 👤 user or 📂 project — by the folder the reply was made in. */
 export function ownerOf(d: Daemon, cwd: string): string {
   if (!cwd) return tr('❔ неизвестно')
   const rel = relative(settings.usersDir, cwd)
   const user = /^(\d+)(\/|$)/.exec(rel)?.[1]
   if (user) return `👤 ${d.userLabel(user)}`
-  if (cwd === d.mainKey()) return `👑 ${basename(cwd) || cwd}`
   return `📂 ${basename(cwd) || cwd}`
 }
 
@@ -369,7 +368,7 @@ export function sharesSince(d: Daemon, entries: Entry[], start: number, scale = 
     const tokens = e.input + e.output + e.write5m + e.write1h + e.read
     const userId = /^(\d+)(\/|$)/.exec(relative(settings.usersDir, e.cwd))?.[1] ?? null
     const key = userId ?? 'projects'
-    const sh = groups.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : tr('📂 проекты и главная'), userId, cost: 0, tokens: 0, percent: 0 }
+    const sh = groups.get(key) ?? { who: userId ? `👤 ${d.userLabel(userId)}` : tr('📂 проекты'), userId, cost: 0, tokens: 0, percent: 0 }
     sh.cost += cost
     sh.tokens += tokens
     total += by === 'cost' ? cost : tokens

@@ -89,7 +89,6 @@ export function sessionName(d: Daemon, dir: string, engine: EngineId = projectEn
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
   // The Telegram id: always there and never changes, unlike a username.
   if (user) return `${prefix}-user-${user}`
-  if (dir === d.mainKey()) return undefined
   const slug = slugify(basename(dir))
   return slug ? `${prefix}-project-${slug}` : undefined
 }
