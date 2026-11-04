@@ -932,6 +932,11 @@ describe('topics', () => {
     const kb = JSON.stringify(sent.body.reply_markup)
     expect(kb).toContain('"copy_text":{"text":"abc-123"}')
     expect(kb).toContain('"copy_text":{"text":"bun test"}')
+    // With buttons too: a rich message (tables, custom emoji), the buttons under it.
+    const q = await client.call('reply', { chat_id: group, format: 'rich', text: '| a | b |\n|---|---|\n| x | ![🤖](tg://emoji?id=123) |', buttons: ['Да', 'Нет'] })
+    expect(q.ok).toBe(true)
+    const rq = await tg.waitFor('sendRichMessage', c => md(c).includes('tg://emoji?id=123'))
+    expect(JSON.stringify(rq.body.reply_markup)).toContain('Да')
     setPref(`${group}:${thread}`, { streamFinal: 'edit' })
   })
 
