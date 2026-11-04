@@ -1018,6 +1018,16 @@ const dict: Dict = {
   "📊 <b>Лимиты</b>": "📊 <b>Límites</b>",
   "🟠 <b>Claude</b> · {v}": "🟠 <b>Claude</b> · {v}",
   "⚫️ <b>Codex</b> · {v}": "⚫️ <b>Codex</b> · {v}",
+  "📱 Открыть Remote Control": "📱 Abrir Remote Control",
+  "📱 Включить Remote Control": "📱 Activar Remote Control",
+  "Remote Control есть только у Claude Code.": "Remote Control solo existe en Claude Code.",
+  "🔎 поиск в файлах": "🔎 búsqueda en archivos",
+  "✏️ правка файлов": "✏️ edición de archivos",
+  "📖 чтение: {v}": "📖 lectura: {v}",
+  "📖 просмотр файлов": "📖 revisando archivos",
+  "🧪 тесты": "🧪 pruebas",
+  "🧪 проверка типов": "🧪 comprobación de tipos",
+  "💻 команда {v}": "💻 comando {v}",
 }
 
 export default dict

@@ -67,6 +67,26 @@ function fileName(p: unknown): string {
   return typeof p === 'string' ? p.split('/').slice(-2).join('/') : '?'
 }
 
+/**
+ * A shell command without a description (Codex, or a call that skipped it),
+ * told by what it does instead of its raw text: files read, a search, git,
+ * tests. Only the first command of a chain counts, after a leading `cd …&&`.
+ */
+export function describeCommand(cmd: string): string {
+  const first = cmd.replace(/^\s*cd\s+\S+\s*(&&|;)\s*/, '').split(/\s*(?:&&|\|\||;|\|)\s*/)[0]?.trim() ?? ''
+  const words = first.split(/\s+/)
+  const [bin, sub] = [words[0]?.replace(/^.*\//, '') ?? '', words[1] ?? '']
+  const files = () => words.slice(1).filter(w => /[\w-]\.\w+$/.test(w) && !w.startsWith('-')).map(fileName).slice(0, 2).join(', ')
+  if (bin === 'git' || bin === 'gh') return `🌿 ${bin} ${/^[\w-]+$/.test(sub) ? sub : ''}`.trim()
+  if (/^(grep|rg|ag|find|fd)$/.test(bin)) return t('🔎 поиск в файлах')
+  if (bin === 'sed' && /-i/.test(first) || /^(python3?|perl)$/.test(bin) && /<</.test(first)) return t('✏️ правка файлов')
+  if (/^(cat|head|tail|sed|less|wc|ls|tree)$/.test(bin)) return files() ? t('📖 чтение: {v}', { v: files() }) : t('📖 просмотр файлов')
+  if (/\b(test|pytest|vitest|jest)\b/.test(first)) return t('🧪 тесты')
+  if (/\btsc\b/.test(first)) return t('🧪 проверка типов')
+  if (/^(bun|npm|pnpm|yarn|npx|bunx)$/.test(bin)) return `📦 ${bin} ${/^[\w:-]+$/.test(sub) ? sub : ''}`.trim()
+  return t('💻 команда {v}', { v: short(bin, 30) })
+}
+
 /** This plugin's own tools, as people would say it. */
 const OWN_TOOLS: Record<string, string> = {
   reply: k('💬 ответ в Telegram'),
@@ -92,7 +112,7 @@ export function summarizeTool(name: string, input: Record<string, unknown> | und
   const i = input ?? {}
   let line: string
   switch (name) {
-    case 'Bash': line = `💻 ${short(i.description ?? i.command, 80)}`; break
+    case 'Bash': line = i.description ? `💻 ${short(i.description, 80)}` : describeCommand(String(i.command ?? '')); break
     case 'Read': line = `📖 ${fileName(i.file_path)}`; break
     case 'Write': line = `📝 ${fileName(i.file_path)}`; break
     case 'Edit': case 'MultiEdit': line = `✏️ ${fileName(i.file_path)}`; break

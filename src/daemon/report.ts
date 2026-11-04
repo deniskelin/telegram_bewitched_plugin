@@ -12,7 +12,7 @@ import { cmdlineOf } from '../proc.ts'
 import { effortLabel, engineOf, projectEngine } from './engines.ts'
 import { collectCodex } from './codexusage.ts'
 import type { Daemon, Session } from './daemon.ts'
-import { remoteControl } from './remote.ts'
+import { remoteControl, type RemoteControl } from './remote.ts'
 import { projectRules } from './permrules.ts'
 import { sessionCostLine } from './usage.ts'
 import { guessTranscript, transcriptInfo } from './transcript.ts'
@@ -184,6 +184,15 @@ function engineLabel(s: Session): string {
 function projectModelNote(d: Daemon, s: Session, running: string | null): string {
   const want = projectEngine(d, s.projectKey).model
   return want && want !== running ? t(' · для проекта: {m}', { m: escapeHtml(want.replace(/^claude-/, '')) }) : ''
+}
+
+/** Remote Control of a session right now: the transcript, launch flags, settings, the pane. */
+export async function sessionRc(d: Daemon, s: Session): Promise<RemoteControl> {
+  const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
+  const transcript = transcriptOf(s, argv)
+  const tr = transcript ? await transcriptInfo(transcript) : null
+  const loc = s.tmuxPane ? await d.tmuxLocation(s.tmuxPane) : null
+  return remoteControl(argv, s.cwd, loc?.tail ?? null, tr ? tr.remoteUrl : undefined)
 }
 
 export async function sessionCard(d: Daemon, s: Session): Promise<string> {

@@ -15,14 +15,14 @@ import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
 import { stopSession } from './inbound.ts'
 import { passiveBlock, sessionCard, sessionChat, projectTitle, sessionLabel, sessionShortName, sortedSessions, statusLabel } from './report.ts'
-import { button } from './stream.ts'
+import { button, urlButton } from './stream.ts'
 import { archiveTopic, sessionTarget } from './topics.ts'
 import { projectRules, removeProjectRule } from './permrules.ts'
 import { listCodexConversations, listConversations, transcriptInfo, type Conversation } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { launchUserSession, attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, effortLabel, engineOf, projectEffort, projectEngine, setProjectEffort, setProjectEngine } from './engines.ts'
-import { agentLine, AGENT_EMOJI, menuStatus, menuStatusIcon, sessionEffort, sessionSections } from './report.ts'
+import { agentLine, AGENT_EMOJI, menuStatus, menuStatusIcon, sessionEffort, sessionRc, sessionSections } from './report.ts'
 import { reviewButton } from './oneshot.ts'
 import { askSummary, buildHandoff, type Handoff } from './handoff.ts'
 
@@ -99,6 +99,12 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     if (s.tmuxPane) {
       rows.push([button('🧹 /compact', `sm:cmp:${s.id}`), button('🆕 /clear', `sm:clr:${s.id}`), button(t('🧠 Модель'), `sm:mdl:${s.id}`)])
       rows.push([button(t('🕘 Прошлые разговоры'), `sm:hist:${s.id}`), button(t('⚡ Быстрые команды'), `mc:list:${s.id}`)])
+      // 📱 Remote Control is Claude Code's: on — a link to it (when known), off — /remote-control typed in.
+      if (s.engine === 'claude') {
+        const rc = await sessionRc(d, s)
+        if (rc.url) rows.push([urlButton(t('📱 Открыть Remote Control'), rc.url)])
+        else if (!rc.on) rows.push([button(t('📱 Включить Remote Control'), `sm:rc:${s.id}`)])
+      }
     } else text += `\n\n<i>${t('Сессия не в tmux — команды не отправить.')}</i>`
     rows.push(back)
   } else if (group === 'n') {
@@ -280,6 +286,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
  */
 export async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
   if (!s.tmuxPane) return { toast: t('Сессия не в tmux — команды не отправить.') }
+  if (action === 'rc' && s.engine !== 'claude') return { toast: t('Remote Control есть только у Claude Code.') }
   if (action === 'mdl') return { screen: await modelScreen(d, s) }
   if (action === 'eng') {
     const engine = ENGINES[value as keyof typeof ENGINES]
@@ -334,7 +341,7 @@ export async function controlAction(d: Daemon, s: Session, action: string, value
     return { toast: `🧠 ${model}`, screen: { text: t('🧠 {engine} меняет модель только перезапуском. Перезапустить сессию #{id} на <b>{model}</b>? Разговор продолжится.', { engine: engineOf(s.engine).name, id: s.id, model: escapeHtml(model) }), kb } }
   }
   // Codex names a fresh conversation /new; /compact is the same in both.
-  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? (s.engine === 'codex' ? '/new' : '/clear') : action === 'resume' ? `/resume ${value}` : action === 'eff' ? `/effort ${value}` : `/model ${model}`
+  const line = action === 'rc' ? '/remote-control' : action === 'cmp' ? '/compact' : action === 'clrok' ? (s.engine === 'codex' ? '/new' : '/clear') : action === 'resume' ? `/resume ${value}` : action === 'eff' ? `/effort ${value}` : `/model ${model}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
   try {
     await d.tmuxType(s.tmuxPane, line)
@@ -408,7 +415,7 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:eff:<id>:<level>, sm:effdef:<id>, sm:eng:<id>:<engine>, sm:engre:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|rc|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:eff:<id>:<level>, sm:effdef:<id>, sm:eng:<id>:<engine>, sm:engre:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -527,7 +534,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
       .catch(err => d.log(`switch session ${s.id} failed: ${err instanceof Error ? err.stack ?? err.message : err}`))
     return true
   }
-  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng', 'eff', 'effdef'].includes(action)) {
+  if (['rc', 'cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng', 'eff', 'effdef'].includes(action)) {
     const r = await controlAction(d, s, action, value)
     if (r.screen) {
       await answer(r.toast)
