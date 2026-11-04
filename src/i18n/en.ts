@@ -1028,6 +1028,7 @@ const dict: Dict = {
   "максимальный": "max",
   "Агент": "Agent",
   "не запущена": "not running",
+  "🚀 {engine}": "🚀 {engine}",
 }
 
 export default dict

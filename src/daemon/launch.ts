@@ -574,8 +574,9 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
   mkdirSync(dir, { recursive: true })
   // Suspended for idling: it wakes up by itself, the chat hears nothing (autoresume.ts).
   if (await autoResume(d, dir, name, where)) return
-  const cont = hasTranscripts(dir)
-  const r = await launchOnce(d, dir, { continue: cont, name: sessionName(d, dir) })
+  // The last conversation of the engine it starts on (a Codex thread, or Claude's --continue).
+  const conv = continueOptions(d, dir, projectEngine(d, dir).engine)
+  const r = await launchOnce(d, dir, { ...conv, name: sessionName(d, dir) })
   const o = owner()
   if (!r.ok && r.skipped) {
     await say(d, where.chatId, where.threadId, tr('⏳ Ваша сессия уже запускается — сообщение дойдёт, как только она подключится.'))
@@ -583,9 +584,9 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
   }
   if (!r.ok) {
     await say(d, where.chatId, where.threadId, o === userId
-      ? tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) })
+      ? tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено. Запустить вручную:{v2}', { v: escapeHtml(r.error), v2: manualCmd(dir, { ...conv, name: sessionName(d, dir) }) })
       : tr('❌ Не удалось запустить вашу сессию: {v}\nСообщение сохранено, владелец бота получил уведомление.', { v: escapeHtml(r.error) }))
-    if (o !== userId) await sendNotice(d, 'sessions', () => tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { continue: cont, name: sessionName(d, dir) }) }))
+    if (o !== userId) await sendNotice(d, 'sessions', () => tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { ...conv, name: sessionName(d, dir) }) }))
     return
   }
   const self = o === userId

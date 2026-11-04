@@ -151,6 +151,19 @@ export async function sessionCommandScreen(d: Daemon, s: Session, cmd: 'clear' |
 }
 
 /**
+ * 🚀 per installed agent — «🚀 Claude Code», «🚀 Codex» — the folder's own one
+ * first and marked; one 🚀 when only one is installed.
+ */
+export function launchEngineKb(d: Daemon, dir: string, data: (engine: string) => string, tail: Btn[][] = []): InlineKeyboard {
+  const cur = projectEngine(d, dir).engine
+  const engines = Object.values(ENGINES).filter(e => e.available()).sort((a, b) => Number(b.id === cur) - Number(a.id === cur))
+  const rows = engines.length > 1
+    ? [engines.map(e => button(t('🚀 {engine}', { engine: e.name }), data(e.id), e.id === cur ? 'primary' : undefined))]
+    : [[button(t('🚀 Запустить'), data(cur))]]
+  return new InlineKeyboard([...rows, ...tail] as never)
+}
+
+/**
  * 🧠: the session's engine, its models and the reasoning effort; the chosen
  * model and effort go in now (/model, /effort) where the engine can, and stay
  * the project's (FR-15).
@@ -407,17 +420,17 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     if (!ownerId || !settings.userSessions) { await answer(); return true }
     const current = d.userSession(ownerId)
     if (current) { await show(ctx, await sessionScreen(d, current)); await answer(); return true }
+    const dir = join(settings.usersDir, ownerId)
     if (action === 'ownerlaunch') {
-      await answer()
+      // 🚀 <engine>: the chosen CLI becomes the folder's and starts with its own last conversation.
+      const chosen = ENGINES[value as keyof typeof ENGINES]
+      if (chosen?.available() && chosen.id !== projectEngine(d, dir).engine) setProjectEngine(d, dir, { engine: chosen.id })
+      await answer(t('🚀 Запускаю'))
       await launchUserSession(d, ownerId, d.userShortName(ownerId))
       await show(ctx, await sessionsList(d))
       return true
     }
-    const engine = projectEngine(d, join(settings.usersDir, ownerId)).engine
-    await show(ctx, {
-      text: `👤 <b>${escapeHtml(d.userShortName(ownerId))}</b>\n\n⏻ ${t('не запущена')} · ${engineOf(engine).name}`,
-      kb: new InlineKeyboard([[button(t('🚀 Запустить'), 'sm:ownerlaunch')], [button(t('« К списку'), 'sm:list')]]),
-    })
+    await show(ctx, { text: `👤 <b>${escapeHtml(d.userShortName(ownerId))}</b>\n\n⏻ ${t('не запущена')}`, kb: launchEngineKb(d, dir, e => `sm:ownerlaunch:${e}`, [[button(t('« К списку'), 'sm:list')]]) })
     await answer()
     return true
   }

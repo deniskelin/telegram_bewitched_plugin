@@ -365,7 +365,8 @@ describe('topics', () => {
     tg.push(callbackQuery(`tm:t:${otherThread}`))
     const ts = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📁 <b>other</b>'))
     expect(String(ts.body.text)).toContain('<code>/tmp/other</code>')
-    expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:run:${otherThread}`)
+    // One 🚀 per installed agent (Codex is installed on the test machine), or a single 🚀.
+    expect(JSON.stringify(ts.body.reply_markup)).toMatch(new RegExp(`tm:run(claude)?:${otherThread}`))
     expect(JSON.stringify(ts.body.reply_markup)).toContain(`tm:ar:${otherThread}`)
     tg.push(callbackQuery(`tm:del:${otherThread}`))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('Удалить топик «other»'))
@@ -2534,7 +2535,8 @@ describe('session types', () => {
     const id = /wd:run:([0-9a-f]+)/.exec(JSON.stringify(notice.body.reply_markup))![1]
     tg.push(callbackQuery(`wd:run:${id}`, { chat: Number(group) }))
     await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю'))
-    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { resume: undefined, continue: true, name: 'claude-project-other' } })
+    // The stopped session's own engine: its conversation id is that CLI's.
+    expect(calls.at(-1)).toEqual({ dir: '/tmp/other', o: { engine: 'claude', resume: undefined, continue: true, name: 'claude-project-other' } })
   })
 
   test('💤 idle wake-up: a suspended project session wakes up on the next topic message with its conversation; only the journal hears of it', async () => {

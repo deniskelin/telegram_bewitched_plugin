@@ -483,7 +483,10 @@ export function setProjectEffort(d: Daemon, projectKey: string, engine: EngineId
 /** Launch options with the project's engine, model and effort, unless the caller chose them. */
 export function withProjectEngine(d: Daemon, dir: string, o: LaunchOptions = {}): LaunchOptions {
   const c = projectEngine(d, dir)
-  const effort = projectEffort(d, dir, o.engine ?? c.engine)
+  const engine = o.engine ?? c.engine
+  const effort = projectEffort(d, dir, engine)
   const prompt = launchPrompt(d, dir)
-  return { engine: c.engine, ...(c.model ? { model: c.model } : {}), ...(effort ? { effort } : {}), ...(prompt ? { prompt } : {}), ...o }
+  // The project's model only for its own engine: a restart on another CLI does not get a model it does not have.
+  const model = engine === c.engine ? c.model : undefined
+  return { engine, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(prompt ? { prompt } : {}), ...o }
 }

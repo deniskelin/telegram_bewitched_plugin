@@ -18,6 +18,7 @@ import { settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
 import { clip, escapeHtml } from '../format.ts'
 import { topicLink } from '../tg.ts'
+import { ENGINES, projectEngine, setProjectEngine } from './engines.ts'
 import type { Daemon } from './daemon.ts'
 import { launchForTopic } from './launch.ts'
 import { MAX_MESSAGE, show, type Btn, type Screen } from './menu.ts'
@@ -101,7 +102,13 @@ export function topicScreen(d: Daemon, t: TopicRow): Screen {
   const g = gs(d, t.chat_id)
   if (link) first.push(InlineKeyboard.url(tr('💬 Открыть'), link))
   for (const s of live.slice(0, 2)) first.push(button(tr('📋 Сессия #{id}', { id: s.id }), `sm:s:${s.id}`))
-  if (!live.length && !archived && t.project_key && !t.project_key.includes('#')) first.push(button(tr('🚀 Запустить сессию'), `tm:run:${t.thread_id}${g}`, 'success'))
+  if (!live.length && !archived && t.project_key && !t.project_key.includes('#')) {
+    // One 🚀 per installed agent (tm:runclaude / tm:runcodex), the project's own one marked; a single 🚀 otherwise.
+    const cur = projectEngine(d, t.project_key).engine
+    const engines = Object.values(ENGINES).filter(e => e.available()).sort((a, b) => Number(b.id === cur) - Number(a.id === cur))
+    if (engines.length > 1) for (const e of engines) first.push(button(tr('🚀 {engine}', { engine: e.name }), `tm:run${e.id}:${t.thread_id}${g}`, e.id === cur ? 'success' : undefined))
+    else first.push(button(tr('🚀 Запустить сессию'), `tm:run:${t.thread_id}${g}`, 'success'))
+  }
   if (first.length) kb.push(first)
   kb.push(archived
     ? [button(tr('↩️ Восстановить'), `tm:unar:${t.thread_id}${g}`), button(tr('🗑 Удалить'), `tm:del:${t.thread_id}${g}`, 'danger')]
@@ -197,7 +204,9 @@ export async function handleTopicMenu(d: Daemon, ctx: Context, data: string): Pr
     await show(ctx, { text: question, kb: new InlineKeyboard([[button(label, yes, 'danger'), button(tr('Отмена'), `tm:t:${thread}${gs(d, chat)}`)]]) })
   }
   let toast: string | undefined
-  if (action === 'run' && t.project_key) {
+  if (/^run(claude|codex)?$/.test(action) && t.project_key) {
+    const chosen = ENGINES[action.slice(3) as keyof typeof ENGINES]
+    if (chosen?.available() && chosen.id !== projectEngine(d, t.project_key).engine) setProjectEngine(d, t.project_key, { engine: chosen.id })
     void launchForTopic(d, chat, thread, t.project_key).catch(err => d.log(`topic launch failed: ${err}`))
     toast = tr('🚀 Запускаю — подтверждение придёт в топик')
   } else if (action === 'ar') {

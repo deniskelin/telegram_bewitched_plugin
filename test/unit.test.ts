@@ -613,6 +613,11 @@ describe('engines (FR-15)', () => {
     expect(withProjectEngine(d, '/p', { name: 'n' })).toEqual({ engine: 'claude', effort: 'max', name: 'n' })
     setProjectEffort(d, '/p', 'claude', null)
     expect(withProjectEngine(d, '/p', {})).toEqual({ engine: 'claude' })
+    // A restart on the session's own engine (Codex) when the folder's record says Claude with a model: no Claude model for Codex.
+    const { setProjectEngine } = await import('../src/daemon/engines.ts')
+    setProjectEngine(d, '/p', { engine: 'claude', model: 'claude-opus-5-5' })
+    expect(withProjectEngine(d, '/p', { engine: 'codex', resume: 'thread-1' })).toEqual({ engine: 'codex', resume: 'thread-1' })
+    expect(withProjectEngine(d, '/p', {}).model).toBe('claude-opus-5-5')
     expect(effortLabel('high')).toBe('высокий')
     expect(effortLabel('odd')).toBe('odd')
   })
