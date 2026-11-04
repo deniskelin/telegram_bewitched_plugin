@@ -1,3 +1,4 @@
+import { BUTTON_EMOJI } from '../src/daemon/button-emoji.ts'
 /** Minimal fake Bot API server for integration tests. Records every call. */
 
 export type Call = { method: string; body: Record<string, unknown> }
@@ -71,6 +72,7 @@ export class FakeTelegram {
       const form = await req.formData()
       for (const [k, v] of form.entries()) body[k] = typeof v === 'string' ? v : '(file)'
     }
+    if (body.reply_markup) body.reply_markup = withButtonEmoji(body.reply_markup)
     if (method !== 'getUpdates') this.calls.push({ method, body })
     const fail = this.failures.get(method)
     if (fail) return Response.json({ ok: false, error_code: fail.code, description: fail.description })
@@ -154,4 +156,16 @@ export function callbackQuery(data: string, o: { from?: number; chat?: number; m
       message: { message_id: o.messageId ?? 1, date: 0, chat: { id: chat, type: chat < 0 ? 'supergroup' : 'private' }, text: 'q' },
     },
   }
+}
+
+/** Custom button icons back into the label, so tests read buttons as written in the source («⏹ Стоп»). */
+const ICON_EMOJI = new Map<string, string>()
+for (const [e, id] of Object.entries(BUTTON_EMOJI)) if (!ICON_EMOJI.has(id)) ICON_EMOJI.set(id, '⚠♻↩▶⚙➡⬆✏✖✍✉✈'.includes(e) ? `${e}\uFE0F` : e)
+function withButtonEmoji(markup: unknown): unknown {
+  const m = (typeof markup === 'string' ? JSON.parse(markup) : markup) as { inline_keyboard?: { text: string; icon_custom_emoji_id?: string }[][] }
+  for (const b of m?.inline_keyboard?.flat() ?? []) {
+    const e = b.icon_custom_emoji_id && ICON_EMOJI.get(b.icon_custom_emoji_id)
+    if (e) b.text = b.text.startsWith('• ') ? `• ${e} ${b.text.slice(2)}` : `${e} ${b.text}`
+  }
+  return typeof markup === 'string' ? JSON.stringify(m) : m
 }

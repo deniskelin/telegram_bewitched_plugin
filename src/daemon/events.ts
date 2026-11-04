@@ -18,7 +18,7 @@ import { can } from '../access.ts'
 import { settings } from '../config.ts'
 import { clip, escapeHtml, maskSecrets } from '../format.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
-import { button } from './stream.ts'
+import { button, urlButton } from './stream.ts'
 import { t as tr } from '../i18n/index.ts'
 
 export type ExternalEvent = { topic?: string; project?: string; text: string; source?: string; silent?: boolean; deliver?: boolean }
@@ -101,7 +101,7 @@ export async function checkCi(d: Daemon): Promise<void> {
 async function announce(d: Daemon, s: Session, run: CiRun, failed: boolean): Promise<void> {
   const head = failed ? tr('❌ <b>CI упал</b> на <code>{v}</code>', { v: escapeHtml(s.branch!) }) : tr('✅ <b>CI снова зелёный</b> на <code>{v}</code>', { v: escapeHtml(s.branch!) })
   const text = `${head}\n${escapeHtml(run.name)} · ${escapeHtml(clip(run.displayTitle, 120))}`
-  const row: (ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.url>)[] = [InlineKeyboard.url('🔗 Run', run.url)]
+  const row: (ReturnType<typeof button> | ReturnType<typeof urlButton>)[] = [urlButton('🔗 Run', run.url)]
   if (failed) {
     failures.set(s.id, run)
     row.unshift(button(tr('🛠 Починить'), `ci:fix:${s.id}`, 'primary'))
@@ -134,7 +134,7 @@ export async function handleCiCallback(d: Daemon, ctx: Context, data: string): P
   }
   failures.delete(m[1])
   await ctx.answerCallbackQuery({ text: tr('🛠 Отправил сессии') }).catch(() => {})
-  await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard([[InlineKeyboard.url('🔗 Run', run.url)]]) }).catch(() => {})
+  await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard([[urlButton('🔗 Run', run.url)]]) }).catch(() => {})
   const chat: ChatRef = { ...where, isPrivate: false }
   const text = tr('CI упал на ветке {branch}: «{name}» ({url}). Посмотри `gh run view {databaseId} --log-failed`, найди причину, почини и запушь.', { branch: s.branch ?? '', name: run.name, url: run.url, databaseId: run.databaseId })
   await d.routeText(chat, String(ctx.from.id), text, {

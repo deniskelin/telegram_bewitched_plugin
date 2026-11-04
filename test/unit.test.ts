@@ -3,6 +3,7 @@ import { chunk, clip, maskSecrets, safeMeta, summarizeTool, isOwnTool } from '..
 import { isPassiveLaunch } from '../src/proc.ts'
 import { Store } from '../src/db.ts'
 import { parseOptions } from '../src/daemon/buttons.ts'
+import { buttonIcon } from '../src/daemon/stream.ts'
 import { LineDecoder, encode } from '../src/ipc.ts'
 
 describe('format', () => {
@@ -1061,5 +1062,14 @@ describe('custom emoji in inbound messages', async () => {
     ])).toBe('агенты ![🤖](tg://emoji?id=111) и ![🤖](tg://emoji?id=222)')
     expect(withCustomEmoji('x', undefined)).toBe('x')
     expect(withCustomEmoji('🤖', [{ type: 'custom_emoji', offset: 0, length: 2, custom_emoji_id: '1) evil' }])).toBe('🤖')
+  })
+})
+
+describe('buttonIcon', () => {
+  test('a leading emoji with a custom one becomes the icon; «• » stays; others untouched', () => {
+    expect(buttonIcon('⚙️ Настройки')).toEqual({ label: 'Настройки', icon: expect.any(String) })
+    expect(buttonIcon('• 🗑 Удалить')).toEqual({ label: '• Удалить', icon: expect.any(String) })
+    expect(buttonIcon('🧠 opus')).toEqual({ label: '🧠 opus' })
+    expect(buttonIcon('Отмена')).toEqual({ label: 'Отмена' })
   })
 })

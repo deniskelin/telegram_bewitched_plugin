@@ -2612,7 +2612,7 @@ describe('session types', () => {
       d.store.set('last_conv:codex:/tmp/sw', 'thr-sw-1')
       tg.push(callbackQuery(`sm:mdl:${s.id}`))
       const sc = await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🧠 <b>Движок и модель</b>') && String(c.body.text).includes(`#${s.id}`))
-      expect(JSON.stringify(sc.body.reply_markup)).toContain(`"♻️ Переключить на Codex сейчас","callback_data":"sm:engre:${s.id}"`)
+      expect(JSON.stringify(sc.body.reply_markup)).toContain(`Переключить на Codex сейчас","callback_data":"sm:engre:${s.id}"`)
       tg.push(callbackQuery(`sm:engre:${s.id}`))
       await tg.waitFor('answerCallbackQuery', c => c.body.text === '♻️ Перезапускаю')
       await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('🚀 Запускаю Codex в tmux'))

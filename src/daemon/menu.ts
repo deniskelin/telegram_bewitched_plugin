@@ -186,7 +186,9 @@ async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
   const effort = projectEffort(d, s.projectKey, engine.id)
   const running = engine.id === s.engine ? await sessionEffort(s) : null
   if (engine.efforts.length) {
-    const btns = engine.efforts.map(e => button(`${effort === e ? '• ' : ''}${effortLabel(e)}`, `sm:eff:${s.id}:${e}`, effort === e ? 'primary' : undefined))
+    // The dot: the project's choice, or — with the CLI default — the level the session runs at.
+    const marked = effort ?? running
+    const btns = engine.efforts.map(e => button(`${marked === e ? '• ' : ''}${effortLabel(e)}`, `sm:eff:${s.id}:${e}`, marked === e ? 'primary' : undefined))
     // Five levels do not fit one row on a phone: 3 + 2.
     rows.push(btns.slice(0, 3), ...(btns.length > 3 ? [btns.slice(3)] : []))
     if (effort) rows.push([button(t('↩️ Уровень по умолчанию CLI'), `sm:effdef:${s.id}`)])
