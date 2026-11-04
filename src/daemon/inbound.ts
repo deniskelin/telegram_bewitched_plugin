@@ -19,7 +19,7 @@ import { downloadToInbox } from './media.ts'
 import { closeByTextReply, handleQuestionCallback } from './buttons.ts'
 import { MAIN_PENDING_KEY, userPendingKey, type ChatRef, type Daemon, type Session } from './daemon.ts'
 import { button } from './stream.ts'
-import { handleTopicCallback, sessionTarget } from './topics.ts'
+import { handleDashboardCallback, handleTopicCallback, sessionTarget } from './topics.ts'
 import { handleLaunchCallback, launchForTopic, launchUserSession } from './launch.ts'
 import { idleRecord } from './autoresume.ts'
 import { handleWatchdogCallback } from './watchdog.ts'
@@ -653,6 +653,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     if (await handleTokensCallback(d, ctx, data)) return
     if (await handleReminderCallback(d, ctx, data)) return
     if (await handleOrphanCallback(d, ctx, data)) return
+    if (await handleDashboardCallback(d, ctx, data)) return
     if (await handleReportCallback(d, ctx, data)) return
     if (await handleInviteCallback(d, ctx, data)) return
     if (await handleUserCallback(d, ctx, data)) return

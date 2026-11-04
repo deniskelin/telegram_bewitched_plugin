@@ -638,11 +638,22 @@ describe('topics', () => {
         '🚨 Лимит «5 часов»: <b>96%</b> ▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▰▱',
         '✅ Лимит «5 часов» восстановился: 4% ▰▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱▱',
       ])
-      expect(renderDashboard(d)).toContain('📊 Claude: 5 часов 3%')
+      expect(await renderDashboard(d)).toContain('📊 Claude: 5 часов 3%')
+      // Detail levels: brief — a line per session; normal — with the agent; detailed — with today's cost; the buttons switch them.
+      const brief = await renderDashboard(d, 1)
+      const full = await renderDashboard(d, 3)
+      expect(brief.startsWith('🎛 <b>Пульт</b>')).toBe(true)
+      expect(brief).not.toContain('</tg-emoji>')
+      expect(await renderDashboard(d, 2)).toContain('</tg-emoji> Claude')
+      expect(full.length).toBeGreaterThanOrEqual((await renderDashboard(d, 2)).length)
+      tg.push(callbackQuery('dash:lv:3'))
+      await tg.waitFor('answerCallbackQuery', c => c.body.text === '🔶 Подробно')
+      expect(d.store.get('dash_detail')).toBe('3')
+      d.store.set('dash_detail', null)
       // With a journal the status shows them as in /usage: percent, bar, reset.
       process.env.JOURNAL_CHAT_ID = '-5300'
       try {
-        const status = renderDashboard(d)
+        const status = await renderDashboard(d)
         expect(status).toContain('📊 Лимиты')
         expect(status).toContain('\n🟠 Claude')
         expect(status).toMatch(/5 часов: 3% ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
