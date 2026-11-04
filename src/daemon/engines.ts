@@ -271,6 +271,11 @@ export function codexQueue(thread: string, text: string): Promise<void> {
   })
 }
 
+/** Codex idle after «Conversation interrupted»: nothing under way, and its queue does not move by itself. */
+export function isQueuePaused(screen: string): boolean {
+  return /Conversation interrupted/.test(screen) && codex.isPromptReady(screen) && !/esc to interrupt/i.test(screen)
+}
+
 /** How long a fresh Codex gets to show its input line before a message is pasted anyway. Replaced in tests. */
 export const codexTiming = { readyMs: 30_000, pollMs: 500 }
 
@@ -296,7 +301,11 @@ async function codexDeliverNow(d: Daemon, s: Session, text: string): Promise<voi
   const started = Date.now()
   const chars = [...text].length
   const thread = s.claude.sessionId
-  if (thread) {
+  // After a turn interrupted with Esc, Codex holds its queue until the next prompt: a queued message would sit
+  // there unseen. An idle window after an interruption gets the message pasted instead.
+  const pausedQueue = thread && s.tmuxPane ? isQueuePaused((await d.tmuxCapture(s.tmuxPane)) ?? '') : false
+  if (pausedQueue) d.log(`codex ${s.id}: its turn was interrupted and its queue waits — pasting instead of queueing`)
+  if (thread && !pausedQueue) {
     try {
       await d.codexQueue(thread, text)
       d.log(`codex ${s.id}: queued ${chars} chars into thread ${thread} (${Date.now() - started} ms)`)

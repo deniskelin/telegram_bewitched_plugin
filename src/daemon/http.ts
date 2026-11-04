@@ -142,6 +142,18 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   scheduleDashboard(d)
 }
 
+/**
+ * A turn that ended without a Stop hook (interrupted with Esc in the window, a background tool call
+ * that opened one): idle again, silently — no «готово», no cost; for Codex, what was held for it goes in now.
+ */
+export function endTurnQuietly(d: Daemon, s: Session): void {
+  s.turn = null
+  s.status = 'idle'
+  s.turnEndedAt = Date.now()
+  d.streams.close(s, 'stop')
+  if (s.engine === 'codex') codexFlushHeld(d, s)
+}
+
 function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, error = ''): void {
   if (failed && classify(error, lastText)) {
     // Out of tokens: the pause module tells the chat and holds what comes next.
