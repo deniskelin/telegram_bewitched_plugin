@@ -44,7 +44,7 @@ export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<Hoo
   // Claude Code shows the turn's final text after its Stop hook has fired: text alone never starts a turn
   // (a turn begins with a prompt, a delivered message or a tool call).
   if (h.event === 'MessageDisplay') return true
-  return h.at != null ? h.at <= s.turnEndedAt : now - s.turnEndedAt < LATE_HOOK_MS
+  return h.at != null ? h.at < s.turnEndedAt : now - s.turnEndedAt < LATE_HOOK_MS
 }
 
 /**

@@ -215,7 +215,7 @@ describe('transcript', async () => {
       ...Array(300).fill(filler),
     ].join('\n') + '\n')
     const info = await transcriptInfo(f)
-    expect(info).toEqual({ model: 'm', tokens: 3, remoteUrl: null, title: 'srv' })
+    expect(info).toEqual({ model: 'm', effort: null, tokens: 3, remoteUrl: null, title: 'srv' })
   })
 
   test('transcript wins over other signals; nothing recorded falls back to flags', () => {
@@ -585,6 +585,27 @@ describe('engines (FR-15)', () => {
     expect(claude.isPromptReady('────\n❯ \n────')).toBe(true)
   })
 
+  test('reasoning effort: launch flags, per-project and per-engine, labels', async () => {
+    const { claude, codex, projectEffort, setProjectEffort, withProjectEngine, effortLabel } = await import('../src/daemon/engines.ts')
+    const { settings } = await import('../src/config.ts')
+    expect(claude.launchCommand({ effort: 'high' })).toBe(`${settings.launchCmd} --effort high`)
+    expect(claude.launchCommand({ effort: 'x; rm -rf /' })).toBe(settings.launchCmd)
+    expect(codex.launchCommand({ model: 'gpt-6.1-sol', effort: 'xhigh' })).toEndWith('-p bewitched -m gpt-6.1-sol -c model_reasoning_effort=xhigh')
+    expect(codex.launchCommand({ resume: 'r-1', effort: 'low' })).toEndWith('resume r-1 --no-alt-screen -p bewitched -c model_reasoning_effort=low')
+    // Codex has no «max»: not passed.
+    expect(codex.launchCommand({ effort: 'max' })).not.toContain('reasoning')
+    const d = { store: new Store(':memory:') } as never
+    expect(projectEffort(d, '/p', 'claude')).toBeNull()
+    setProjectEffort(d, '/p', 'claude', 'max')
+    expect(projectEffort(d, '/p', 'claude')).toBe('max')
+    expect(projectEffort(d, '/p', 'codex')).toBeNull()
+    expect(withProjectEngine(d, '/p', { name: 'n' })).toEqual({ engine: 'claude', effort: 'max', name: 'n' })
+    setProjectEffort(d, '/p', 'claude', null)
+    expect(withProjectEngine(d, '/p', {})).toEqual({ engine: 'claude' })
+    expect(effortLabel('high')).toBe('высокий')
+    expect(effortLabel('odd')).toBe('odd')
+  })
+
   test('a project remembers its engine and model; launches take them unless the caller chose', async () => {
     const { projectEngine, setProjectEngine, withProjectEngine } = await import('../src/daemon/engines.ts')
     const d = { store: new Store(':memory:') } as never
@@ -655,6 +676,23 @@ describe('Codex usage', () => {
     expect(entries.map(e => [e.model, e.cwd, e.input, e.read, e.output])).toEqual([['gpt-6.1-sol', '/p', 4_000, 12_000, 100], ['gpt-6.1-sol', '/p', 6_000, 18_000, 50]])
     expect(limits?.plan).toBe('plus')
     expect(limits?.items.map(i => [i.label, i.percent])).toEqual([['Codex: 5 часов', 3], ['Codex: неделя', 0]])
+    expect(entries[0].effort).toBeUndefined()
+  })
+
+  test('the reasoning effort of a Codex turn goes with its requests', async () => {
+    const { parseRollout } = await import('../src/daemon/codexusage.ts')
+    const { modelKey } = await import('../src/daemon/usage.ts')
+    const text = [
+      line({ timestamp: '2026-11-01T14:02:20Z', type: 'session_meta', payload: { cwd: '/p' } }),
+      line({ timestamp: '2026-11-01T14:02:21Z', type: 'turn_context', payload: { model: 'gpt-6.1-sol', effort: 'high' } }),
+      tc('2026-11-01T14:02:29Z', 16_000, 12_000, 100),
+      line({ timestamp: '2026-11-01T14:03:21Z', type: 'turn_context', payload: { model: 'gpt-6.1-sol', collaboration_mode: { settings: { reasoning_effort: 'low' } } } }),
+      tc('2026-11-01T14:03:29Z', 40_000, 30_000, 150),
+    ].join('\n')
+    const { entries } = parseRollout(text, 'f', 0)
+    expect(entries.map(e => e.effort)).toEqual(['high', 'low'])
+    expect(modelKey(entries[0])).toBe('gpt-6.1-sol · высокий')
+    expect(modelKey({ model: 'claude-opus-5-5' })).toBe('opus-5-5')
   })
 
   test('a window that has reset since the last request shows empty', async () => {
@@ -977,7 +1015,7 @@ describe('late hooks after Stop', async () => {
   test('a MessageDisplay fired before Stop but arriving after it does not reopen the turn', () => {
     const s = { turn: null, turnEndedAt: 1000 }
     expect(isLateHook(s, { event: 'MessageDisplay', at: 990 })).toBe(true)
-    expect(isLateHook(s, { event: 'PreToolUse', at: 1000 })).toBe(true)
+    expect(isLateHook(s, { event: 'PreToolUse', at: 999 })).toBe(true)
     // Fired after the Stop: a turn begun in the terminal.
     expect(isLateHook(s, { event: 'PreToolUse', at: 1500 })).toBe(false)
     // A new prompt always counts; a running turn takes everything.

@@ -12,7 +12,7 @@ import { columnChartSvg, svgToPng, type Column } from './chart.ts'
 import type { Daemon } from './daemon.ts'
 import { commitsSince } from './git.ts'
 import { button } from './stream.ts'
-import { add, collectEntries, fmtSum, fmtTok, limitsLine, ownerOf, type Entry, type Sum } from './usage.ts'
+import { add, collectEntries, fmtSum, fmtTok, limitsLine, modelKey, ownerOf, type Entry, type Sum } from './usage.ts'
 import { locale, k, t } from '../i18n/index.ts'
 import { noticeTarget } from './journal.ts'
 import { inChat } from './lang.ts'
@@ -159,7 +159,7 @@ export async function buildReport(d: Daemon, p: Period): Promise<Report> {
       : [t('Активных недель'), t('Пик'), (l: string) => t('{l} числа', { l })] as const
     lines.push(t('⏱ {v}: {active} из {length} · {v2}: {v3} (${v4})', { v: unit[0], active, length: cols.length, v2: unit[1], v3: escapeHtml(unit[2](peak.label)), v4: peak.value.toFixed(2) }))
 
-    const models = groupBy(inP, e => e.model.replace(/^claude-/, ''))
+    const models = groupBy(inP, modelKey)
     lines.push('', t('🧠 <b>Модели</b>'), ...models.map(([k, s]) => `• ${escapeHtml(k)}: $${s.cost.toFixed(2)} · ${fmtTok(s.tokens)} · ${share(s.cost, total.cost)}`))
     const sessions = groupBy(inP, e => e.cwd)
     lines.push('', t('🗂 <b>Сессии</b>'))

@@ -13,7 +13,7 @@ import { collectCodex } from './codexusage.ts'
 import { columnChartSvg, svgToPng, type Column } from './chart.ts'
 import type { Daemon } from './daemon.ts'
 import { commitsSince } from './git.ts'
-import { add, collectEntries, fmtTok, limitsLine, ownerOf, type Entry, type Sum } from './usage.ts'
+import { add, collectEntries, fmtTok, limitsLine, modelKey, ownerOf, type Entry, type Sum } from './usage.ts'
 import { buckets, midnight, type Period } from './reports.ts'
 import { locale, t } from '../i18n/index.ts'
 import { hardBreaks } from '../rich.ts'
@@ -97,7 +97,7 @@ export async function buildDaily(d: Daemon, p: Period): Promise<Daily> {
       t('🔁 Ответов модели: {n} · ⏱ активных часов: {active} из 24', { n: claude.length, active }),
       t('📈 Пик: {from}:00–{to}:00 (${v}) · 📦 из кэша {cache}% токенов', { from: peak.label, to: Number(peak.label) + 1, v: peak.value.toFixed(2), cache: Math.round((read / (total.tokens || 1)) * 100) }),
     ].join('\n'))
-    const models = groupBy(claude, e => e.model.replace(/^claude-/, ''))
+    const models = groupBy(claude, modelKey)
     out.push([`| ${t('Модель')} | $ | ${t('Токены')} | ${t('Доля')} |`, '|---|---:|---:|---:|',
       ...models.map(([m, s]) => `| ${md(m)} | ${s.cost.toFixed(2)} | ${fmtTok(s.tokens)} | ${pct(s.cost, total.cost)} |`)].join('\n'))
   }
@@ -106,7 +106,7 @@ export async function buildDaily(d: Daemon, p: Period): Promise<Daily> {
   if (codex.length) {
     out.push(t('## ⚫️ Codex'))
     out.push(t('**{v} ток.** · ответов модели: {n} · цены API для Codex нет', { v: fmtTok(cxTotal.tokens), n: codex.length }))
-    const models = groupBy(codex, e => e.model)
+    const models = groupBy(codex, modelKey)
     out.push([`| ${t('Модель')} | ${t('Токены')} | ${t('Доля')} |`, '|---|---:|---:|',
       ...models.map(([m, s]) => `| ${md(m)} | ${fmtTok(s.tokens)} | ${pct(s.tokens, cxTotal.tokens)} |`)].join('\n'))
   }

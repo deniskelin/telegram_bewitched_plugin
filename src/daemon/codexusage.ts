@@ -34,6 +34,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
   const entries: Entry[] = []
   let cwd = ''
   let model = 'codex'
+  let effort: string | undefined
   let prev = { input: 0, cached: 0, output: 0 }
   let limits: CodexLimits | null = null
   for (const [n, line] of text.split('\n').entries()) {
@@ -46,7 +47,13 @@ export function parseRollout(text: string, file: string, since: number): { entri
     }
     const p = m.payload ?? {}
     if (m.type === 'session_meta' && typeof p.cwd === 'string') cwd = p.cwd
-    else if (m.type === 'turn_context' && typeof p.model === 'string') model = p.model
+    else if (m.type === 'turn_context' && typeof p.model === 'string') {
+      model = p.model
+      // The effort of the turn: set explicitly (-c model_reasoning_effort) or the collaboration mode's; none — the model's default.
+      const mode = (p.collaboration_mode as { settings?: { reasoning_effort?: unknown } } | undefined)?.settings?.reasoning_effort
+      const e = typeof p.effort === 'string' ? p.effort : typeof mode === 'string' ? mode : undefined
+      effort = e && /^[a-z]{1,12}$/.test(e) ? e : undefined
+    }
     else if (m.type === 'event_msg' && p.type === 'token_count') {
       const ts = Date.parse(m.timestamp ?? '')
       const total = (p.info as { total_token_usage?: Totals } | null)?.total_token_usage
@@ -56,7 +63,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
         if (grew && ts >= since) {
           const cached = Math.max(0, now.cached - prev.cached)
           entries.push({
-            id: `codex:${file}:${n}`, ts, model, cwd,
+            id: `codex:${file}:${n}`, ts, model, cwd, ...(effort ? { effort } : {}),
             input: Math.max(0, now.input - prev.input - cached),
             output: Math.max(0, now.output - prev.output),
             write5m: 0, write1h: 0, read: cached,

@@ -9,7 +9,8 @@ import { settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
-import { engineOf, projectEngine } from './engines.ts'
+import { effortLabel, engineOf, projectEngine } from './engines.ts'
+import { collectCodex } from './codexusage.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl } from './remote.ts'
 import { projectRules } from './permrules.ts'
@@ -105,6 +106,22 @@ function transcriptOf(s: Session, argv: string[]): string | null {
   return s.claude.transcript ?? guessTranscript(argv, s.cwd)
 }
 
+/** The reasoning effort the session runs at: its transcript's last reply (Claude Code) or its last Codex request; null — not recorded (the CLI's default). */
+export async function sessionEffort(s: Session): Promise<string | null> {
+  if (s.engine === 'codex') {
+    const last = collectCodex(Date.now(), 1).entries.filter(e => e.cwd === s.cwd).reduce<{ ts: number; effort?: string } | null>((a, e) => (!a || e.ts > a.ts ? e : a), null)
+    return last?.effort ?? null
+  }
+  const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
+  const path = transcriptOf(s, argv)
+  return path ? (await transcriptInfo(path))?.effort ?? null : null
+}
+
+/** « · высокий» after a model name; nothing when the effort is unknown. */
+export function effortNote(effort: string | null | undefined): string {
+  return effort ? ` · ${escapeHtml(effortLabel(effort))}` : ''
+}
+
 /**
  * One card per session, in three layers: a header (name, status, branch and
  * topic), the essentials in a quote (how to attach, mode/stop/RC, model and
@@ -164,10 +181,11 @@ export async function sessionCard(d: Daemon, s: Session): Promise<string> {
     // Over the configured window means the real one is bigger: show the size only.
     const win = settings.contextWindow
     const fill = tr.tokens <= win ? t(' из {v} ({v2}%)', { v: fmtTokens(win), v2: Math.round((tr.tokens / win) * 100) }) : ''
-    main.push(`🧠 ${engineLabel(s)}${escapeHtml(tr.model.replace(/^claude-/, ''))} · ${fmtTokens(tr.tokens)}${fill}${projectModelNote(d, s, tr.model)}`)
+    main.push(`🧠 ${engineLabel(s)}${escapeHtml(tr.model.replace(/^claude-/, ''))}${effortNote(tr.effort)} · ${fmtTokens(tr.tokens)}${fill}${projectModelNote(d, s, tr.model)}`)
   } else {
     const note = projectModelNote(d, s, null)
-    if (note || s.engine !== 'claude') main.push(`🧠 ${engineLabel(s)}${note.replace(/^ · /, '')}`.replace(/ · $/, ''))
+    const effort = s.engine === 'codex' ? await sessionEffort(s) : null
+    if (note || s.engine !== 'claude') main.push(`🧠 ${engineLabel(s)}${effort ? `${escapeHtml(effortLabel(effort))} · ` : ''}${note.replace(/^ · /, '')}`.replace(/ · $/, ''))
   }
   if (s.alwaysAllow.size) main.push(t('♾ без вопросов: {v}', { v: [...s.alwaysAllow].map(escapeHtml).join(', ') }))
   const rules = projectRules(d, s.projectKey)

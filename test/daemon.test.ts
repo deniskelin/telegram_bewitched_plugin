@@ -456,7 +456,7 @@ describe('topics', () => {
       const { turnCostBlock } = await import('../src/daemon/usage.ts')
       const block = turnCostBlock(ses, Date.now() - 60_000)!
       expect(block).toStartWith('<details><summary>🔢 Расход хода</summary><table bordered striped compact>')
-      expect(block).toContain('<tr><td>Запросов к модели</td><td align="right">3</td></tr>')
+      expect(block).toContain('<tr><td>Запросов к модели</td><td align="right">3</td></tr><tr><td>Агент</td><td align="right">Claude Code</td></tr><tr><td>Модель</td>')
       expect(block).toMatch(/<td>Модель<\/td><td align="right">[^<]*opus-5-5 ×2/)
       expect(block).toContain('haiku-5-5 ×1')
       expect(block).toEndWith('</table></details><footer>🔢 1 мин · 3.0 млн ток. · кэш 100% · $0.50</footer>')
