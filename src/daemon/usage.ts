@@ -21,6 +21,7 @@ import { noticeTarget, sendNotice } from './journal.ts'
 import { inChat } from './lang.ts'
 import { savedLine } from './shortcuts.ts'
 import { collectCodex, type CodexLimits } from './codexusage.ts'
+import { effortLabel, engineOf } from './engines.ts'
 
 // --------------------------------------------------------------------------
 // Plan
@@ -146,17 +147,26 @@ const PRICES: [RegExp, Price][] = [
 /** Claude Haiku 5.5 bills prompts over 100K tokens at the higher card. */
 const HAIKU_LONG: Price = [0.5, 2.5, 0.625, 1, 0.05]
 
+const EFFORT = /^[a-z]{1,12}$/
+
 export type Entry = {
   /** message id + request id: the same reply can sit in a session's and a subagent's transcript. */
   id: string
   ts: number
   model: string
+  /** Reasoning effort of the request (low … max), when the transcript has it. */
+  effort?: string
   input: number
   output: number
   write5m: number
   write1h: number
   read: number
   cwd: string
+}
+
+/** A request's model as shown everywhere: without «claude-», with its reasoning effort — «opus-5-5 · высокий». */
+export function modelKey(e: Pick<Entry, 'model' | 'effort'>): string {
+  return e.model.replace(/^claude-/, '') + (e.effort ? ` · ${effortLabel(e.effort)}` : '')
 }
 
 /** Dollars at API rates; null for a model we have no price for. */
@@ -190,7 +200,7 @@ export function parseTranscript(text: string, since: number): Entry[] {
   const seen = new Map<string, Entry>()
   for (const [n, line] of text.split('\n').entries()) {
     if (!line.includes('"usage"') || !line.includes('"assistant"')) continue
-    let m: { type?: string; timestamp?: string; cwd?: string; requestId?: string; message?: { id?: string; model?: string; usage?: Usage } }
+    let m: { type?: string; timestamp?: string; cwd?: string; requestId?: string; effort?: string; message?: { id?: string; model?: string; usage?: Usage } }
     try {
       m = JSON.parse(line)
     } catch {
@@ -206,6 +216,7 @@ export function parseTranscript(text: string, since: number): Entry[] {
     const id = m.message?.id ? `${m.message.id}:${m.requestId ?? ''}` : `line:${n}`
     const e: Entry = {
       id, ts, model,
+      ...(typeof m.effort === 'string' && EFFORT.test(m.effort) ? { effort: m.effort } : {}),
       input: u.input_tokens ?? 0,
       output: u.output_tokens ?? 0,
       write1h: w1,
@@ -410,7 +421,7 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
   /** «По моделям» and «По сессиям» of one subscription, for the chosen period. */
   const breakdown = (list: Entry[]) => {
     if (!list.some(e => e.ts >= since)) return []
-    const models = group(list, e => e.model.replace(/^claude-/, ''))
+    const models = group(list, modelKey)
     const owners = group(list, e => ownerOf(d, e.cwd))
     return [
       tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
@@ -876,7 +887,7 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
     if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
     add(sum, e)
     for (const f of ['input', 'output', 'read', 'write5m', 'write1h'] as const) k[f] += e[f]
-    const m = e.model.replace(/^claude-/, '')
+    const m = modelKey(e)
     models.set(m, (models.get(m) ?? 0) + 1)
     requests++
   }
@@ -887,6 +898,7 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
   const rows = [
     row(tr('Время'), took),
     row(tr('Запросов к модели'), String(requests)),
+    row(tr('Агент'), escapeHtml(engineOf(s.engine).name)),
     row(tr('Модель'), escapeHtml([...models.entries()].map(([m, n]) => models.size > 1 ? `${m} ×${n}` : m).join(', '))),
     row(tr('Ввод'), fmtTok(k.input)),
     row(tr('Вывод'), fmtTok(k.output)),

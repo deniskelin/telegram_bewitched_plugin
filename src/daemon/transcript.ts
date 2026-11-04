@@ -14,6 +14,8 @@ const CHUNK = 1024 * 1024
 
 export type TranscriptInfo = {
   model: string | null
+  /** The reasoning effort of the last reply (low … max), when recorded. */
+  effort: string | null
   tokens: number | null
   /** undefined: the transcript never mentions Remote Control. */
   remoteUrl: string | null | undefined
@@ -55,7 +57,7 @@ function parse(line: string): Line | null {
 }
 
 export async function transcriptInfo(path: string): Promise<TranscriptInfo | null> {
-  const info: TranscriptInfo = { model: null, tokens: null, remoteUrl: undefined, title: null }
+  const info: TranscriptInfo = { model: null, effort: null, tokens: null, remoteUrl: undefined, title: null }
   let usage = false
   try {
     await scanBackwards(path, line => {
@@ -64,6 +66,7 @@ export async function transcriptInfo(path: string): Promise<TranscriptInfo | nul
         const u = m?.message?.usage
         if (m?.type === 'assistant' && !m.isSidechain && u && m.message?.model) {
           info.model = m.message.model
+          info.effort = typeof m.effort === 'string' && /^[a-z]{1,12}$/.test(m.effort) ? m.effort : null
           info.tokens = (u.input_tokens ?? 0) + (u.cache_creation_input_tokens ?? 0) + (u.cache_read_input_tokens ?? 0) + (u.output_tokens ?? 0)
           usage = true
         }

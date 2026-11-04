@@ -21,7 +21,7 @@ import type { Daemon, Session } from './daemon.ts'
 import type { LaunchOptions } from './launch.ts'
 import { isQuestion, screenView } from './screen.ts'
 import { inChat } from './lang.ts'
-import { t } from '../i18n/index.ts'
+import { k, t } from '../i18n/index.ts'
 import type { ChatRef } from './daemon.ts'
 import { projectTranscriptDir } from './transcript.ts'
 import { launchPrompt } from './promptmode.ts'
@@ -48,6 +48,10 @@ export type Engine = {
   exitCommand: string
   /** /model <id> switches the running session; otherwise a model applies from the next launch. */
   liveModelSwitch: boolean
+  /** Reasoning effort levels, lowest first; empty — not selectable. */
+  efforts: string[]
+  /** /effort <level> switches the running session; otherwise the effort applies from the next launch. */
+  liveEffortSwitch: boolean
   /** Installed on this machine. */
   available(): boolean
 }
@@ -71,6 +75,7 @@ export const claude: Engine = {
     let cmd = settings.launchCmd
     if (o.name && NAME.test(o.name)) cmd += ` -n ${o.name}`
     if (o.model && MODEL.test(o.model)) cmd += ` --model ${o.model}`
+    if (o.effort && claude.efforts.includes(o.effort)) cmd += ` --effort ${o.effort}`
     // FR-20: the prompt is read from the daemon's file by the shell, never put on the command line as text.
     if (o.prompt && SAFE_PATH.test(o.prompt.file)) cmd += ` --append-system-prompt "$(cat '${o.prompt.file}')"`
     const tools = (o.prompt?.disallowed ?? []).filter(x => /^\w+$/.test(x))
@@ -83,6 +88,8 @@ export const claude: Engine = {
   transcriptDir: cwd => projectTranscriptDir(cwd),
   exitCommand: '/exit',
   liveModelSwitch: true,
+  efforts: ['low', 'medium', 'high', 'xhigh', 'max'],
+  liveEffortSwitch: true,
   available: () => true,
 }
 
@@ -124,9 +131,10 @@ export const codex: Engine = {
   launchCommand(o) {
     // FR-20: a prompt mode runs with a profile of its own (the mode's text in the instructions, a read-only sandbox).
     const profile = o.prompt ? writeCodexModeProfile(o.prompt) ?? CODEX_PROFILE : CODEX_PROFILE
-    let cmd = `${codexBin() ?? 'codex'} --no-alt-screen -p ${profile}`
-    if (o.model && MODEL.test(o.model)) cmd += ` -m ${o.model}`
-    if (o.resume && /^[\w-]+$/.test(o.resume)) return `${codexBin() ?? 'codex'} resume ${o.resume} --no-alt-screen -p ${profile}${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}`
+    // The model and the reasoning effort (-c takes a bare word as a string; only known levels get here).
+    const opts = `${o.model && MODEL.test(o.model) ? ` -m ${o.model}` : ''}${o.effort && codex.efforts.includes(o.effort) ? ` -c model_reasoning_effort=${o.effort}` : ''}`
+    const cmd = `${codexBin() ?? 'codex'} --no-alt-screen -p ${profile}${opts}`
+    if (o.resume && /^[\w-]+$/.test(o.resume)) return `${codexBin() ?? 'codex'} resume ${o.resume} --no-alt-screen -p ${profile}${opts}`
     return o.continue ? cmd.replace(' --no-alt-screen', ' resume --last --no-alt-screen') : cmd
   },
   isPromptReady: screen => /^\s*›/m.test(screen) && !isQuestion(screen),
@@ -134,6 +142,8 @@ export const codex: Engine = {
   transcriptDir: () => join(CODEX_HOME, 'sessions'),
   exitCommand: '/quit',
   liveModelSwitch: false,
+  efforts: ['low', 'medium', 'high', 'xhigh'],
+  liveEffortSwitch: false,
   available: () => codexBin() != null,
 }
 
@@ -407,9 +417,33 @@ export function setProjectEngine(d: Daemon, projectKey: string, c: EngineChoice)
   d.store.set(`engine:${projectKey}`, JSON.stringify(c.model ? c : { engine: c.engine }))
 }
 
-/** Launch options with the project's engine and model, unless the caller chose them. */
+const EFFORT_LABELS: Record<string, string> = {
+  low: k('низкий'),
+  medium: k('средний'),
+  high: k('высокий'),
+  xhigh: k('очень высокий'),
+  max: k('максимальный'),
+}
+
+/** «высокий» for high; an unknown level as it is. */
+export function effortLabel(effort: string): string {
+  return EFFORT_LABELS[effort] ? t(EFFORT_LABELS[effort]) : effort
+}
+
+/** The reasoning effort a project's sessions of an engine start with; null — the CLI's default. Kept per engine: the levels differ. */
+export function projectEffort(d: Daemon, projectKey: string, engine: EngineId): string | null {
+  const v = d.store.get(`effort:${engine}:${projectKey}`)
+  return v && engineOf(engine).efforts.includes(v) ? v : null
+}
+
+export function setProjectEffort(d: Daemon, projectKey: string, engine: EngineId, effort: string | null): void {
+  d.store.set(`effort:${engine}:${projectKey}`, effort && engineOf(engine).efforts.includes(effort) ? effort : null)
+}
+
+/** Launch options with the project's engine, model and effort, unless the caller chose them. */
 export function withProjectEngine(d: Daemon, dir: string, o: LaunchOptions = {}): LaunchOptions {
   const c = projectEngine(d, dir)
+  const effort = projectEffort(d, dir, o.engine ?? c.engine)
   const prompt = launchPrompt(d, dir)
-  return { engine: c.engine, ...(c.model ? { model: c.model } : {}), ...(prompt ? { prompt } : {}), ...o }
+  return { engine: c.engine, ...(c.model ? { model: c.model } : {}), ...(effort ? { effort } : {}), ...(prompt ? { prompt } : {}), ...o }
 }

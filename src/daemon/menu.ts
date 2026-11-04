@@ -20,7 +20,8 @@ import { projectRules, removeProjectRule } from './permrules.ts'
 import { listCodexConversations, listConversations, transcriptInfo, type Conversation } from './transcript.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
-import { ENGINES, engineOf, projectEngine, setProjectEngine } from './engines.ts'
+import { ENGINES, effortLabel, engineOf, projectEffort, projectEngine, setProjectEffort, setProjectEngine } from './engines.ts'
+import { sessionEffort } from './report.ts'
 import { reviewButton } from './oneshot.ts'
 import { askSummary, buildHandoff, type Handoff } from './handoff.ts'
 
@@ -128,8 +129,12 @@ export async function sessionCommandScreen(d: Daemon, s: Session, cmd: 'clear' |
   return { text: t('Сжать разговор сессии #{id} ({v})? {engine} перескажет его коротко, место в контексте освободится.', { id: s.id, v: escapeHtml(projectTitle(s)), engine: engineOf(s.engine).name }), kb }
 }
 
-/** 🧠: the session's engine and its models; the chosen one goes in now (/model) and stays the project's (FR-15). */
-function modelScreen(d: Daemon, s: Session): Screen {
+/**
+ * 🧠: the session's engine, its models and the reasoning effort; the chosen
+ * model and effort go in now (/model, /effort) where the engine can, and stay
+ * the project's (FR-15).
+ */
+async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
   const choice = projectEngine(d, s.projectKey)
   const engine = engineOf(choice.engine)
   const cur = choice.model
@@ -142,11 +147,24 @@ function modelScreen(d: Daemon, s: Session): Screen {
   if (engines.length > 1) rows.push(engines.map(e => button(`${e.id === engine.id ? '• ' : ''}${e.name}`, `sm:eng:${s.id}:${e.id}`)))
   rows.push(...engine.models.map(m => [button(`${cur === m.id ? '• ' : ''}🧠 ${m.id.replace(/^claude-/, '')}`, `sm:model:${s.id}:${m.alias}`, cur === m.id ? 'primary' : undefined)]))
   if (cur) rows.push([button(t('↩️ Модель по умолчанию CLI'), `sm:mdldef:${s.id}`)])
+  // The effort: the levels of the project's engine; the project's choice is marked.
+  const effort = projectEffort(d, s.projectKey, engine.id)
+  const running = engine.id === s.engine ? await sessionEffort(s) : null
+  if (engine.efforts.length) {
+    const btns = engine.efforts.map(e => button(`${effort === e ? '• ' : ''}${effortLabel(e)}`, `sm:eff:${s.id}:${e}`, effort === e ? 'primary' : undefined))
+    // Five levels do not fit one row on a phone: 3 + 2.
+    rows.push(btns.slice(0, 3), ...(btns.length > 3 ? [btns.slice(3)] : []))
+    if (effort) rows.push([button(t('↩️ Уровень по умолчанию CLI'), `sm:effdef:${s.id}`)])
+  }
   rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
   const text = [
     t('🧠 <b>Движок и модель</b> · сессия #{id} ({v})', { id: s.id, v: escapeHtml(projectTitle(s)) }),
     t('Сейчас работает: <b>{engine}</b>', { engine: engineOf(s.engine).name }),
     t('Для проекта: <b>{engine}</b> · модель <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
+    ...(engine.efforts.length ? [t('🎚 Уровень рассуждений: <b>{effort}</b>{now}', {
+      effort: effort ? escapeHtml(effortLabel(effort)) : t('по умолчанию CLI'),
+      now: running && running !== effort ? t(' (сейчас: {v})', { v: escapeHtml(effortLabel(running)) }) : '',
+    })] : []),
     '',
     switching
       ? t('<i>«♻️ Переключить» закроет сессию и сразу запустит её на {engine} с передачей дел: {running} оставит последние реплики и состояние git в .telegram/handoff.md, {engine} продолжит с них. Подтверждать в терминале ничего не нужно.</i>', { running: engineOf(s.engine).name, engine: engine.name })
@@ -225,7 +243,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
  */
 export async function controlAction(d: Daemon, s: Session, action: string, value: string | undefined): Promise<{ toast?: string; screen?: Screen; sent?: boolean }> {
   if (!s.tmuxPane) return { toast: t('Сессия не в tmux — команды не отправить.') }
-  if (action === 'mdl') return { screen: modelScreen(d, s) }
+  if (action === 'mdl') return { screen: await modelScreen(d, s) }
   if (action === 'eng') {
     const engine = ENGINES[value as keyof typeof ENGINES]
     if (!engine?.available()) return { toast: t('Этот движок не установлен.') }
@@ -233,11 +251,31 @@ export async function controlAction(d: Daemon, s: Session, action: string, value
       setProjectEngine(d, s.projectKey, { engine: engine.id })
       d.log(`project ${s.projectKey}: engine → ${engine.id} (session ${s.id} runs ${s.engine})`)
     }
-    return { toast: t('🧠 Проект → {engine}', { engine: engine.name }), screen: modelScreen(d, s) }
+    return { toast: t('🧠 Проект → {engine}', { engine: engine.name }), screen: await modelScreen(d, s) }
+  }
+  if (action === 'effdef') {
+    const engine = projectEngine(d, s.projectKey).engine
+    setProjectEffort(d, s.projectKey, engine, null)
+    return { toast: t('↩️ Следующие запуски — на уровне по умолчанию CLI'), screen: await modelScreen(d, s) }
+  }
+  if (action === 'eff') {
+    const engine = engineOf(projectEngine(d, s.projectKey).engine)
+    if (!value || !engine.efforts.includes(value)) return { toast: t('Неизвестный уровень.') }
+    setProjectEffort(d, s.projectKey, engine.id, value)
+    d.log(`project ${s.projectKey}: effort → ${value} (${engine.id})`)
+    // Another engine than the running one: from its next launch.
+    if (engine.id !== s.engine) return { toast: t('🎚 {v} — со следующего запуска', { v: effortLabel(value) }), screen: await modelScreen(d, s) }
+    if (!engine.liveEffortSwitch) {
+      const kb = new InlineKeyboard([
+        [button(t('♻️ Перезапустить сейчас'), `sm:engre:${s.id}`, 'primary')],
+        [button(t('Позже — со следующего запуска'), `sm:mdl:${s.id}`)],
+      ])
+      return { toast: `🎚 ${effortLabel(value)}`, screen: { text: t('🎚 {engine} меняет уровень рассуждений только перезапуском. Перезапустить сессию #{id} на уровне <b>{v}</b>? Разговор продолжится.', { engine: engine.name, id: s.id, v: escapeHtml(effortLabel(value)) }), kb } }
+    }
   }
   if (action === 'mdldef') {
     setProjectEngine(d, s.projectKey, { engine: projectEngine(d, s.projectKey).engine })
-    return { toast: t('↩️ Следующие запуски — на модели по умолчанию CLI'), screen: modelScreen(d, s) }
+    return { toast: t('↩️ Следующие запуски — на модели по умолчанию CLI'), screen: await modelScreen(d, s) }
   }
   if (action === 'clr') {
     const kb = new InlineKeyboard([[button(s.engine === 'codex' ? t('✅ Да, /new') : t('✅ Да, /clear'), `sm:clrok:${s.id}`, 'danger'), button(t('Отмена'), `sm:g:${s.id}:c`)]])
@@ -250,7 +288,7 @@ export async function controlAction(d: Daemon, s: Session, action: string, value
   if (model && (project.engine !== s.engine || !engineOf(s.engine).liveModelSwitch)) {
     setProjectEngine(d, s.projectKey, { engine: project.engine, model })
     d.log(`project ${s.projectKey}: model → ${model} (${project.engine})`)
-    if (project.engine !== s.engine) return { toast: t('🧠 {model} — со следующего запуска', { model }), screen: modelScreen(d, s) }
+    if (project.engine !== s.engine) return { toast: t('🧠 {model} — со следующего запуска', { model }), screen: await modelScreen(d, s) }
     // The same engine without /model <id> (Codex): the model needs a restart — offered right away, with the conversation.
     const kb = new InlineKeyboard([
       [button(t('♻️ Перезапустить сейчас'), `sm:engre:${s.id}`, 'primary')],
@@ -259,7 +297,7 @@ export async function controlAction(d: Daemon, s: Session, action: string, value
     return { toast: `🧠 ${model}`, screen: { text: t('🧠 {engine} меняет модель только перезапуском. Перезапустить сессию #{id} на <b>{model}</b>? Разговор продолжится.', { engine: engineOf(s.engine).name, id: s.id, model: escapeHtml(model) }), kb } }
   }
   // Codex names a fresh conversation /new; /compact is the same in both.
-  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? (s.engine === 'codex' ? '/new' : '/clear') : action === 'resume' ? `/resume ${value}` : `/model ${model}`
+  const line = action === 'cmp' ? '/compact' : action === 'clrok' ? (s.engine === 'codex' ? '/new' : '/clear') : action === 'resume' ? `/resume ${value}` : action === 'eff' ? `/effort ${value}` : `/model ${model}`
   if (line === '/model ') return { toast: t('Неизвестная модель.') }
   try {
     await d.tmuxType(s.tmuxPane, line)
@@ -333,7 +371,7 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
     .catch(err => { if (!isMessageNotModified(err)) throw err })
 }
 
-/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:eng:<id>:<engine>, sm:engre:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
+/** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:eff:<id>:<level>, sm:effdef:<id>, sm:eng:<id>:<engine>, sm:engre:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
@@ -433,7 +471,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
       .catch(err => d.log(`switch session ${s.id} failed: ${err instanceof Error ? err.stack ?? err.message : err}`))
     return true
   }
-  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng'].includes(action)) {
+  if (['cmp', 'clr', 'clrok', 'mdl', 'mdldef', 'model', 'eng', 'eff', 'effdef'].includes(action)) {
     const r = await controlAction(d, s, action, value)
     if (r.screen) {
       await answer(r.toast)

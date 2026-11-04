@@ -1014,6 +1014,19 @@ const dict: Dict = {
   "📝 Изменено файлов: {n} (+{add} −{del})": "📝 Archivos modificados: {n} (+{add} −{del})",
   "🔗 коммит {sha}": "🔗 commit {sha}",
   "🔗 PR": "🔗 PR",
+  "↩️ Уровень по умолчанию CLI": "↩️ Nivel predeterminado de la CLI",
+  "🎚 Уровень рассуждений: <b>{effort}</b>{now}": "🎚 Nivel de razonamiento: <b>{effort}</b>{now}",
+  " (сейчас: {v})": " (ahora: {v})",
+  "↩️ Следующие запуски — на уровне по умолчанию CLI": "↩️ Los próximos inicios usarán el nivel predeterminado de la CLI",
+  "Неизвестный уровень.": "Nivel desconocido.",
+  "🎚 {v} — со следующего запуска": "🎚 {v} — desde el próximo inicio",
+  "🎚 {engine} меняет уровень рассуждений только перезапуском. Перезапустить сессию #{id} на уровне <b>{v}</b>? Разговор продолжится.": "🎚 {engine} solo cambia el nivel de razonamiento al reiniciar. ¿Reiniciar la sesión #{id} con nivel <b>{v}</b>? La conversación continúa.",
+  "низкий": "bajo",
+  "средний": "medio",
+  "высокий": "alto",
+  "очень высокий": "muy alto",
+  "максимальный": "máximo",
+  "Агент": "Agente",
 }
 
 export default dict

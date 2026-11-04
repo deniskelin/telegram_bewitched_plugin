@@ -64,6 +64,8 @@ function run(args: string[]): Promise<string> {
 /** engine and model: the project's choice (engines.ts), filled in by Daemon.launchSession. */
 export type LaunchOptions = {
   continue?: boolean; resume?: string; name?: string; engine?: EngineId; model?: string
+  /** Reasoning effort, one of the engine's efforts (checked again when the command is built). */
+  effort?: string
   /** FR-20: the topic's prompt mode (promptmode.ts): a system prompt file and tools taken away. */
   prompt?: { file: string; disallowed: string[]; readOnly: boolean; key: string }
 }
