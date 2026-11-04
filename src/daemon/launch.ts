@@ -362,6 +362,8 @@ export async function remindLaunch(d: Daemon, dir: string, win: string, first: b
   const raw = await d.tmuxCapture(windowTarget(win))
   const o = owner()
   if (raw == null || !o) return // the window is gone: the watchdog or a failed start has said so
+  // A startup question: the question watch answers it by itself (confirmPendingLaunches) — nothing to remind of.
+  if (isStartupPrompt(raw)) return
   const user = /^(\d+)$/.exec(relative(settings.usersDir, dir))?.[1]
   const key = remindKey(dir)
   const st = remindState(d, key) ?? { dir }
@@ -369,14 +371,12 @@ export async function remindLaunch(d: Daemon, dir: string, win: string, first: b
     const who = user ? `👤 ${d.userLabel(user)}` : `📂 ${basename(dir)}`
     // A launch waiting for the owner: their DM, not the journal.
     const out = o
-    const text = inChat(d, out, undefined, () => isStartupPrompt(raw)
-      ? tr('⏳ Сессия <b>{v}</b> (окно {v2}) ждёт подтверждения запуска — пока его нет, сообщения до неё не дойдут.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) })
-      : tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) }))
+    const text = inChat(d, out, undefined, () => tr('⏳ Сессия <b>{v}</b> (окно {v2}) запущена, но так и не подключилась. Посмотрите, что на экране.', { v: escapeHtml(who), v2: escapeHtml(attachTarget(win)) }))
     const kb = inChat(d, out, undefined, () => screenKb(win).row(button(tr('🔕 Не напоминать'), `lr:off:${key}`)))
     const m = await d.bot.api.sendMessage(out, text, { parse_mode: 'HTML', reply_markup: kb }).catch(err => { d.log(`launch notice failed: ${err}`); return null })
     if (m) d.store.set(`lr:${key}`, JSON.stringify({ ...st, sent: [...(st.sent ?? []), { chat: out, id: m.message_id }] }))
   }
-  if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Вашу сессию ещё подтверждают на сервере — сообщение не потеряется и дойдёт, как только она подключится.')))
+  if (first && user && user !== o) await say(d, user, undefined, inChat(d, user, undefined, () => tr('⏳ Ваша сессия ещё запускается — сообщение не потеряется и дойдёт, как только она подключится.')))
 }
 
 /** The session connected: its launch reminders are done with (🔕 stays). */
@@ -545,9 +545,6 @@ export function attachTarget(win: string): string {
   return m && m[1] !== settings.tmuxSession ? m[1] : windowTarget(win)
 }
 
-export function confirmHint(win: string): string {
-  return tr('<pre>tmux attach -t {v}</pre>и примите экран подтверждения каналов. Или кнопкой «✅ Подтвердить запуск» — прямо из Telegram.', { v: escapeHtml(attachTarget(win)) })
-}
 
 /** Screen code of a window for callback data (see screen.ts tmuxTarget): w3, or s<session>.<index>. */
 export function windowCode(win: string): string {
@@ -588,14 +585,9 @@ export async function launchUserSession(d: Daemon, userId: string, name: string,
     if (o !== userId) await sendNotice(d, 'sessions', () => tr('❌ Не удалось запустить сессию пользователя {v} ({userId}): {v2}{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(r.error), v3: manualCmd(dir, { ...conv, name: sessionName(d, dir) }) }))
     return
   }
-  const self = o === userId
-  await say(d, where.chatId, where.threadId, self
-    ? tr('🚀 Запускаю вашу сессию в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(attachTarget(r.window)), v2: confirmHint(r.window) })
-    : tr('🚀 Запускаю вашу сессию. Сообщение дойдёт, когда она подключится — запуск подтверждают на сервере, это может занять время.'), self ? screenKb(r.window) : undefined)
-  if (o && !self) {
-    // The launch waits for the owner's confirmation: their DM.
-    await say(d, o, undefined, inChat(d, o, undefined, () => tr('🚀 {v} ({userId}) написал(а) боту — запускаю сессию пользователя в <code>{v2}</code>. Подтвердите:{v3}', { v: escapeHtml(name), userId, v2: escapeHtml(dir), v3: confirmHint(r.window) })), inChat(d, o, undefined, () => screenKb(r.window)))
-  }
+  // The startup questions are answered by the daemon (watchdog.ts): nobody is asked, the journal keeps the window.
+  await say(d, where.chatId, where.threadId, tr('🚀 Запускаю вашу сессию — сообщение дойдёт, когда она подключится.'))
+  await sendNotice(d, 'sessions', () => tr('🚀 {v} ({userId}): запущена личная сессия в <code>{v2}</code>, окно {v3}.', { v: escapeHtml(name), userId, v2: escapeHtml(dir), v3: escapeHtml(attachTarget(r.window)) }))
 }
 
 /**
@@ -609,11 +601,12 @@ export async function launchForTopic(d: Daemon, chatId: string, threadId: number
   if (launchable && await autoResume(d, projectKey, from, { chatId, threadId })) return
   const r: Launch = launchable ? await launchOnce(d, projectKey, { name: sessionName(d, projectKey) }) : { ok: false, skipped: false, error: tr('папки проекта нет') }
   if (!r.ok && r.skipped) {
-    await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'), r.window ? screenKb(r.window) : undefined)
+    await say(d, chatId, threadId, tr('⏳ Сессия проекта уже запускается — сообщение в очереди.'))
     return
   }
   if (r.ok) {
-    await say(d, chatId, threadId, tr('🚀 Запускаю сессию проекта в tmux (окно {v}). Сообщение дойдёт, когда она подключится. Подтвердите запуск:{v2}', { v: escapeHtml(attachTarget(r.window)), v2: confirmHint(r.window) }), screenKb(r.window))
+    await say(d, chatId, threadId, tr('🚀 Запускаю сессию проекта — сообщение дойдёт, когда она подключится.'))
+    await sendNotice(d, 'sessions', () => tr('🚀 Запуск сессии проекта <code>{v}</code>: окно {v2}.', { v: escapeHtml(projectKey), v2: escapeHtml(attachTarget(r.window)) }))
     return
   }
   // The topic is seen by everyone: the error there, the command only in the owner's DM.
@@ -693,10 +686,8 @@ export async function startProject(d: Daemon, dir: string, where: { chatId: stri
   }
   await say(d, where.chatId, where.threadId, [
     tr('🚀 {v} <code>{v2}</code>, запускаю Claude в tmux: окно {v3}.', { v: created ? tr('Создал проект') : tr('Проект'), v2: escapeHtml(dir), v3: escapeHtml(attachTarget(win)) }),
-    '',
-    tr('Подтвердите запуск каналов в терминале:') + confirmHint(win),
-    tr('После этого сессия подключится к {v}.', { v: bindThread != null ? tr('этому топику') : tr('новому топику проекта') }),
-  ].join('\n'), screenKb(win))
+    tr('Сессия подключится к {v}, как только запустится.', { v: bindThread != null ? tr('этому топику') : tr('новому топику проекта') }),
+  ].join('\n'))
 }
 
 /**

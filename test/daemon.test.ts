@@ -1335,7 +1335,7 @@ describe('topics', () => {
 
       const before = launched.length
       tg.push(callbackQuery(`wd:re:${s.id}`, { chat: Number(group) }))
-      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith('🚀 Перезапускаю сессию'), 5000)
+      await tg.waitFor('editMessageText', x => String(x.body.text).startsWith(`♻️ Перезапускаю сессию #${s.id}`), 5000)
       expect(keys).toEqual(['Escape', '/exit', 'C-c', 'C-c'])
       expect(launched.slice(before)).toEqual(['/tmp/stuck'])
     } finally {
@@ -1517,7 +1517,7 @@ describe('allowlist watcher', () => {
       expect(launches).toEqual([`${process.env.USERS_DIR}/777 claude-user-777`])
       const note = tg.callsOf('sendMessage').find(c => String(c.body.text).startsWith('👥 <b>777</b> в списке доступа'))!
       expect(String(note.body.chat_id)).toBe('111')
-      expect(JSON.stringify(note.body.reply_markup)).toContain('tx:w4')
+      expect(note.body.reply_markup).toBeUndefined()
       expect(String(note.body.text)).toContain('<code>/telegram-bewitched:access remove 777</code>')
       expect(tg.callsOf('sendMessage').some(c => String(c.body.text).startsWith('Привет! Я дал тебе доступ'))).toBe(true)
     } finally {
@@ -1877,14 +1877,19 @@ describe('convenience', () => {
     }
   })
 
-  test('⏳ a launch nobody confirmed: the owner is reminded with «✅ Подтвердить запуск», the user hears once', async () => {
+  test('⏳ a launch that never connected: the owner is reminded with the screen, the user hears once; a startup question is not reminded of', async () => {
     const { remindLaunch } = await import('../src/daemon/launch.ts')
     const dir = join(settings.usersDir, '555')
+    // A startup question is answered by the question watch: no reminder for it.
     d.tmuxCapture = async t => (t === 'claude:9' ? 'WARNING: Loading development channels\n❯ 1. I am using this for local development\n  2. Exit' : null)
+    const quietBefore = tg.callsOf('sendMessage').length
     await remindLaunch(d, dir, '9', true)
-    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно claude:9) ждёт подтверждения запуска'))
-    expect(JSON.stringify(owner.body.reply_markup)).toContain('tx:w9:c')
-    await tg.waitFor('sendMessage', c => c.body.chat_id === '555' && String(c.body.text).startsWith('⏳ Вашу сессию ещё подтверждают'))
+    expect(tg.callsOf('sendMessage').length).toBe(quietBefore)
+    d.tmuxCapture = async t => (t === 'claude:9' ? 'Error: something broke\n$ ' : null)
+    await remindLaunch(d, dir, '9', true)
+    const owner = await tg.waitFor('sendMessage', c => c.body.chat_id === '111' && String(c.body.text).includes('(окно claude:9) запущена, но так и не подключилась'))
+    expect(JSON.stringify(owner.body.reply_markup)).toContain('tx:w9')
+    await tg.waitFor('sendMessage', c => c.body.chat_id === '555' && String(c.body.text).startsWith('⏳ Ваша сессия ещё запускается'))
     // The second reminder goes to the owner only; a gone window is not reported.
     const before = tg.callsOf('sendMessage').length
     await remindLaunch(d, dir, '9', false)
@@ -2383,7 +2388,8 @@ describe('session types', () => {
     const earlier = new Set(tg.callsOf('sendMessage'))
     tg.push(textMessage({ text: 'привет, это я' }))
     const launchMsg = await tg.waitFor('sendMessage', c => !earlier.has(c) && String(c.body.text).startsWith('🚀 Запускаю вашу сессию'))
-    expect(JSON.stringify(launchMsg.body.reply_markup)).toContain('tx:w7')
+    // Nothing to confirm: the daemon answers the startup questions itself.
+    expect(launchMsg.body.reply_markup).toBeUndefined()
     expect(calls.at(-1)!.dir).toBe(`${usersDir}/111`)
     expect(calls.at(-1)!.o?.name).toBe('claude-user-111')
     u = new FakeClient()

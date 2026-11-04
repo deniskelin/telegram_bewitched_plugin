@@ -207,6 +207,17 @@ export async function handleScreenCallback(d: Daemon, ctx: Context, data: string
     await ctx.deleteMessage().catch(() => ctx.editMessageText(t('✖️ Закрыто')).catch(() => {}))
     return true
   }
+  // A launch notice outlives its launch: once the window's session is in, its keys have nothing left to do — say so.
+  if (key === 'c' || !key) {
+    const target = tmuxTarget(code)!
+    const pane = target.startsWith('%') ? target : await d.tmuxPaneId(target)
+    const s = pane ? d.activeSessions().find(x => x.tmuxPane === pane) : undefined
+    if (s && key === 'c') {
+      await answer(t('✅ Сессия уже подключилась'))
+      await ctx.editMessageText(t('✅ Сессия #{id} подключилась — можно писать.', { id: s.id }) + ` ${projectTitle(s)}`, { reply_markup: new InlineKeyboard([[button(t('✖️ Закрыть'), `tx:${code}:z`)]]) }).catch(() => {})
+      return true
+    }
+  }
   if (key === 'c') {
     const target = tmuxTarget(code)!
     if (confirming.has(target)) { await answer(t('Уже подтверждаю…')); return true }
