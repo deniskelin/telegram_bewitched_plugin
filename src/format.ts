@@ -102,6 +102,9 @@ export function summarizeTool(name: string, input: Record<string, unknown> | und
     case 'WebFetch': line = `🌐 ${short(i.url, 70)}`; break
     case 'Agent': case 'Task': line = `🤖 ${short(i.description, 70)}`; break
     case 'TodoWrite': line = t('📋 план'); break
+    case 'ToolSearch': line = `🧰 ${short(i.query, 70)}`; break
+    case 'Skill': line = `📚 ${short(i.skill, 70)}`; break
+    case 'NotebookEdit': line = `✏️ ${fileName(i.notebook_path)}`; break
     default: {
       const m = /^mcp__(.+?)__(.+)$/.exec(name)
       const own = m && isOwnTool(name) && OWN_TOOLS[m[2]] ? t(OWN_TOOLS[m[2]]) : undefined
