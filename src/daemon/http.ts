@@ -41,6 +41,9 @@ const LATE_HOOK_MS = 3000
 export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<HookEvent, 'event' | 'at'>, now = Date.now()): boolean {
   if (s.turn || s.turnEndedAt == null) return false
   if (!['PreToolUse', 'PostToolUseFailure', 'MessageDisplay'].includes(h.event)) return false
+  // Claude Code shows the turn's final text after its Stop hook has fired: text alone never starts a turn
+  // (a turn begins with a prompt, a delivered message or a tool call).
+  if (h.event === 'MessageDisplay') return true
   return h.at != null ? h.at <= s.turnEndedAt : now - s.turnEndedAt < LATE_HOOK_MS
 }
 
@@ -77,7 +80,12 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
   // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
-  if (isLateHook(s, h)) return
+  if (isLateHook(s, h)) {
+    if (h.event !== 'MessageDisplay') d.log(`hook ${h.event} of an ended turn ignored: session ${s.id}`)
+    return
+  }
+  // A turn opened without a prompt (begun in the terminal, or a daemon restart mid-turn): worth a line when the status looks wrong.
+  if (!s.turn && !s.stoppedAt && (h.event === 'PreToolUse' || h.event === 'MessageDisplay')) d.log(`hook ${h.event}: session ${s.id} (${s.engine}) opens a turn`)
   if (h.event === 'SessionStart' || h.event === 'UserPromptSubmit' || h.event === 'Stop') d.log(`hook ${h.event}: session ${s.id} (${s.engine})${s.status !== 'idle' ? ` ${s.status}` : ''}`)
   switch (h.event) {
     case 'UserPromptSubmit':

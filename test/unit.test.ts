@@ -985,7 +985,10 @@ describe('late hooks after Stop', async () => {
     expect(isLateHook({ turn: { start: 0, replied: false }, turnEndedAt: 1000 } as never, { event: 'MessageDisplay', at: 990 })).toBe(false)
     // Older hook scripts without the time: a short window after Stop.
     expect(isLateHook(s, { event: 'MessageDisplay' }, 2000)).toBe(true)
-    expect(isLateHook(s, { event: 'MessageDisplay' }, 9000)).toBe(false)
+    expect(isLateHook(s, { event: 'PreToolUse' }, 9000)).toBe(false)
+    // Text shown after the Stop (Claude Code prints the final text after the hook fires) never opens a turn.
+    expect(isLateHook(s, { event: 'MessageDisplay', at: 1200 })).toBe(true)
+    expect(isLateHook(s, { event: 'MessageDisplay' }, 9000)).toBe(true)
     expect(isLateHook({ turn: null }, { event: 'MessageDisplay', at: 5 })).toBe(false)
   })
 })
