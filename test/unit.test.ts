@@ -1041,3 +1041,20 @@ describe('late hooks after Stop', async () => {
     expect(isLateHook({ turn: null }, { event: 'MessageDisplay', at: 5 })).toBe(false)
   })
 })
+
+describe('custom emoji in inbound messages', async () => {
+  const { withCustomEmoji } = await import('../src/daemon/inbound.ts')
+  test('the ids from the entities go into the text as Markdown; UTF-16 offsets', () => {
+    // «агенты 🤖 и 🤖»: 🤖 is two UTF-16 code units.
+    const text = 'агенты 🤖 и 🤖'
+    const a = text.indexOf('🤖')
+    const b = text.lastIndexOf('🤖')
+    expect(withCustomEmoji(text, [
+      { type: 'custom_emoji', offset: a, length: 2, custom_emoji_id: '111' },
+      { type: 'bold', offset: 0, length: 6 },
+      { type: 'custom_emoji', offset: b, length: 2, custom_emoji_id: '222' },
+    ])).toBe('агенты ![🤖](tg://emoji?id=111) и ![🤖](tg://emoji?id=222)')
+    expect(withCustomEmoji('x', undefined)).toBe('x')
+    expect(withCustomEmoji('🤖', [{ type: 'custom_emoji', offset: 0, length: 2, custom_emoji_id: '1) evil' }])).toBe('🤖')
+  })
+})

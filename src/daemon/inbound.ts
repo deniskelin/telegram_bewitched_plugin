@@ -225,6 +225,23 @@ async function speechToText(d: Daemon, a: AttachmentMeta): Promise<SttResult | {
 type Batch = { items: { text: string; meta: Record<string, string> }[]; timer: ReturnType<typeof setTimeout>; ctx: Context; chat: ChatRef }
 const batches = new Map<string, Batch>()
 
+/**
+ * Custom emoji of a message as Markdown the model can read and reuse in a rich
+ * answer: ![🤖](tg://emoji?id=5368324170671202286). Telegram sends only the
+ * fallback character in the text; the id is in the entities (offsets in UTF-16
+ * code units, as JS strings are).
+ */
+export function withCustomEmoji(text: string, entities: readonly { type: string; offset: number; length: number; custom_emoji_id?: string }[] | undefined): string {
+  const list = (entities ?? []).filter(e => e.type === 'custom_emoji' && e.custom_emoji_id && /^\d+$/.test(e.custom_emoji_id)).sort((a, b) => b.offset - a.offset)
+  let out = text
+  for (const e of list) {
+    const ch = out.slice(e.offset, e.offset + e.length)
+    if (!ch) continue
+    out = `${out.slice(0, e.offset)}![${ch}](tg://emoji?id=${e.custom_emoji_id})${out.slice(e.offset + e.length)}`
+  }
+  return out
+}
+
 async function handleInbound(
   d: Daemon,
   ctx: Context,
@@ -250,6 +267,8 @@ async function handleInbound(
   const access = result.access
   const msg = ctx.message!
   const from = ctx.from!
+  // The custom emoji's ids are only in the entities: kept in the text, for the model and the history.
+  if (text === (msg.text ?? msg.caption)) text = withCustomEmoji(text, msg.entities ?? msg.caption_entities)
   const chatId = String(ctx.chat!.id)
   const threadId = msg.is_topic_message ? msg.message_thread_id : undefined
   const isPrivate = ctx.chat!.type === 'private'
