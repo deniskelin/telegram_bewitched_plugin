@@ -19,7 +19,7 @@ import { fmtQuiet, QUIET_PRESETS, quietHours } from './quiet.ts'
 import { remindersScreen } from './reminders.ts'
 import { reportsScreen } from './reports.ts'
 import { serverReport } from './server.ts'
-import { button } from './stream.ts'
+import { button, urlButton } from './stream.ts'
 import { limitsLine, usageKeyboard, usageReport } from './usage.ts'
 import { sendDaily, todaySoFar } from './daily.ts'
 import { idleScreen } from './idle.ts'
@@ -137,8 +137,8 @@ export function helpScreen(): Screen {
   if (author) {
     lines.push('', t('💌 Связаться с автором и предложить улучшение:'))
     const links: Btn[] = []
-    if (author.telegram) links.push(InlineKeyboard.url(t('✈️ Написать автору'), author.telegram))
-    if (author.issues) links.push(InlineKeyboard.url(t('🐞 GitHub Issues'), author.issues))
+    if (author.telegram) links.push(urlButton(t('✈️ Написать автору'), author.telegram))
+    if (author.issues) links.push(urlButton(t('🐞 GitHub Issues'), author.issues))
     if (links.length) rows.push(links)
   }
   rows.push([button(t('🎛 Меню'), 'hub:main')])

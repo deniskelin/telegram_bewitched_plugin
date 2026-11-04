@@ -18,6 +18,7 @@ import { editRich, isMessageNotModified, sendDraft } from '../tg.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
 import { t } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
+import { BUTTON_EMOJI } from './button-emoji.ts'
 
 const MAX_LINES = 12
 const MAX_TEXT = 1500
@@ -96,7 +97,24 @@ export type ButtonStyle = 'primary' | 'success' | 'danger'
 
 /** Callback button with Bot API 9.4 `style` (unknown to the bundled grammY types). */
 export function button(text: string, data: string, style?: ButtonStyle, disabled = false) {
-  return { text: clip(text, 64), callback_data: data, ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
+  const { label, icon } = buttonIcon(text)
+  return { text: clip(label, 64), callback_data: data, ...(icon ? { icon_custom_emoji_id: icon } : {}), ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
+}
+
+/** URL button with the same custom icon as button(). */
+export function urlButton(text: string, url: string) {
+  const { label, icon } = buttonIcon(text)
+  return { text: clip(label, 64), url, ...(icon ? { icon_custom_emoji_id: icon } : {}) } as { text: string; url: string }
+}
+
+/**
+ * A leading emoji with a custom one in BUTTON_EMOJI becomes the button's
+ * icon and leaves the label; «• » (the current choice) stays in front.
+ */
+export function buttonIcon(text: string): { label: string; icon?: string } {
+  const m = /^(• )?(\S+?)\uFE0F? (.*)$/su.exec(text)
+  const icon = m ? BUTTON_EMOJI[m[2].replace(/\uFE0F/g, '')] : undefined
+  return icon && m ? { label: `${m[1] ?? ''}${m[3]}`, icon } : { label: text }
 }
 
 const progressKey = (chatId: string, id: number) => `progress_msg:${chatId}:${id}`
