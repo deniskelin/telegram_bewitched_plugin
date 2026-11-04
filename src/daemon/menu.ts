@@ -22,7 +22,7 @@ import { listCodexConversations, listConversations, transcriptInfo, type Convers
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { launchUserSession, attachTarget, awaitConnect, closeWindow, continueOptions, endSession, endTiming, InputBlocked, launchOnce, screenKb, sessionName, waitGone } from './launch.ts'
 import { ENGINES, effortLabel, engineOf, projectEffort, projectEngine, setProjectEffort, setProjectEngine } from './engines.ts'
-import { sessionEffort } from './report.ts'
+import { sessionEffort, sessionModel } from './report.ts'
 import { reviewButton } from './oneshot.ts'
 import { askSummary, buildHandoff, type Handoff } from './handoff.ts'
 
@@ -39,20 +39,66 @@ function menuStatus(s: Session): string {
   return `${menuStatusIcon(s)} ${statusLabel(s).split(' ').slice(1).join(' ')}`
 }
 
+/** The custom emoji of each agent (the owner's set): in rich text and on buttons. */
+const AGENT_EMOJI: Record<string, string> = { codex: '5255760585445901285', claude: '5256261335682941418' }
+
+/** «🤖 Claude · opus-5-5 · высокий»: the agent with its emoji, the model and the reasoning effort when known. */
+async function agentLine(s: Session): Promise<string> {
+  const { model, effort } = await sessionModel(s)
+  const name = s.engine === 'codex' ? 'Codex' : 'Claude'
+  return [`<tg-emoji emoji-id="${AGENT_EMOJI[s.engine]}">🤖</tg-emoji> ${name}`, ...(model ? [escapeHtml(model.replace(/^claude-/, ''))] : []), ...(effort ? [escapeHtml(effortLabel(effort))] : [])].join(' · ')
+}
+
+/**
+ * /sessions: three sections — the owner's own (their DM session, ⏻ when it is
+ * not running, and the main one), the users', the projects' — numbered
+ * through, each line with the agent, model and effort; a button per session,
+ * the sections apart.
+ */
 export async function sessionsList(d: Daemon): Promise<Screen> {
-  const list = sortedSessions(d)
+  const all = sortedSessions(d)
   const ownerId = owner()
-  const offlineOwner = settings.userSessions && ownerId && !d.userSession(ownerId) ? ownerId : null
-  const lines = list.map((s, i) => {
-    const label = sessionLabel(d, s)
-    const icon = label.slice(0, label.indexOf(' '))
-    const emojiId = s.engine === 'codex' ? '5255760585445901285' : '5256261335682941418'
-    const engineName = s.engine === 'codex' ? 'Codex' : 'Claude'
-    const engine = `<tg-emoji emoji-id="${emojiId}">🤖</tg-emoji> ${engineName}`
-    return `${i + 1}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${engine} · ${menuStatus(s)}${s.group ? ' · 👥' : ''}`
-  })
-  if (offlineOwner) lines.push(`${list.length + 1}. 👤 <b>${escapeHtml(d.userShortName(offlineOwner))}</b> · ⏻ ${t('не запущена')}`)
-  const blocks = [t('📋 <b>Сессии</b> ({length})', { length: list.length + (offlineOwner ? 1 : 0) }), lines.length ? `${lines.join('\n')}\n\n${t('Выберите сессию:')}` : t('Нет запущенных сессий.')]
+  const ownSession = ownerId ? d.userSession(ownerId) : undefined
+  const offlineOwner = settings.userSessions && ownerId && !ownSession ? ownerId : null
+  const main = d.mainSession()
+  type Item = { s: Session } | { offline: string }
+  const sections: { title: string; items: Item[] }[] = [
+    { title: t('👑 <b>Владелец</b>'), items: [...(ownSession ? [{ s: ownSession }] : offlineOwner ? [{ offline: offlineOwner }] : []), ...all.filter(s => s === main && s !== ownSession).map(s => ({ s }))] },
+    { title: t('👥 <b>Пользователи</b>'), items: all.filter(s => d.userIdOf(s) && s !== ownSession).map(s => ({ s })) },
+    { title: t('📂 <b>Проекты</b>'), items: all.filter(s => !d.userIdOf(s) && s !== main).map(s => ({ s })) },
+  ].filter(x => x.items.length)
+
+  let n = 0
+  const textBlocks: string[] = []
+  const rows: Btn[][] = []
+  const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
+  for (const [k, sec] of sections.entries()) {
+    const lines: string[] = []
+    // A divider row between sections on the keyboard (it does nothing).
+    if (k > 0) rows.push([button(`┈┈ ${sec.title.replace(/<\/?b>/g, '')} ┈┈`, 'sm:sep')])
+    for (const item of sec.items) {
+      n++
+      if ('offline' in item) {
+        lines.push(`${n}. 👤 <b>${escapeHtml(d.userShortName(item.offline))}</b> · ⏻ ${t('не запущена')}`)
+        rows.push([button(`${n}. ${clip(d.userShortName(item.offline), 20)} ⏻`, 'sm:owner')])
+        continue
+      }
+      const s = item.s
+      const label = sessionLabel(d, s)
+      const icon = label.slice(0, label.indexOf(' '))
+      lines.push(`${n}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${menuStatus(s)}${s.group ? ' · 👥' : ''}\n    ${await agentLine(s)}`)
+      // One full-width row keeps the status visible on narrow phone screens.
+      const prefix = `${n}. `
+      const suffix = ` ${menuStatusIcon(s)}`
+      const name = sessionShortName(d, s).replace(/\s+/g, ' ').trim()
+      const chars = [...seg.segment(name)].map(x => x.segment)
+      const budget = Math.max(1, 28 - Array.from(prefix + suffix).length)
+      const title = chars.length > budget ? chars.slice(0, budget - 1).join('') + '…' : name
+      rows.push([{ ...button(`${prefix}${title}${suffix}`, `sm:s:${s.id}`), icon_custom_emoji_id: AGENT_EMOJI[s.engine] }])
+    }
+    textBlocks.push(`${sec.title}\n${lines.join('\n')}`)
+  }
+  const blocks = [t('📋 <b>Сессии</b> ({length})', { length: n }), ...(n ? textBlocks : [t('Нет запущенных сессий.')])]
   if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
   const passive = await passiveBlock(d)
   if (passive) blocks.push(passive)
@@ -60,18 +106,6 @@ export async function sessionsList(d: Daemon): Promise<Screen> {
   let text = blocks.join('\n\n')
   if (text.length > MAX_MESSAGE) text = text.slice(0, MAX_MESSAGE - 1) + '…'
 
-  const rows: Btn[][] = []
-  for (const [i, s] of list.entries()) {
-    // One full-width row keeps the status visible on narrow phone screens.
-    const prefix = `${i + 1}. `
-    const suffix = ` ${menuStatusIcon(s)}`
-    const name = sessionShortName(d, s).replace(/\s+/g, ' ').trim()
-    const chars = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(name)].map(x => x.segment)
-    const budget = Math.max(1, 28 - Array.from(prefix + suffix).length)
-    const title = chars.length > budget ? chars.slice(0, budget - 1).join('') + '…' : name
-    rows.push([{ ...button(`${prefix}${title}${suffix}`, `sm:s:${s.id}`), icon_custom_emoji_id: s.engine === 'codex' ? '5255760585445901285' : '5256261335682941418' }])
-  }
-  if (offlineOwner) rows.push([button(`${list.length + 1}. ${clip(d.userShortName(offlineOwner), 20)} ⏻`, 'sm:owner')])
   rows.push([...(d.permissions.size ? [button(t('🔐 Разрешения ({size})', { size: d.permissions.size }), 'sm:perms')] : []), button(t('👥 Пригласить'), 'inv:start'), button(t('🔄 Обновить'), 'sm:list')])
   rows.push([button(t('« Меню'), 'hub:main')])
   return { text, kb: new InlineKeyboard(rows as never) }
@@ -434,6 +468,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     await answer()
     return true
   }
+  if (action === 'sep') { await answer(); return true }
   if (action === 'perms') {
     await answer()
     await show(ctx, permissionsScreen(d))

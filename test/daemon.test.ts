@@ -805,8 +805,15 @@ describe('topics', () => {
 
   test('/sessions is a menu: a session button opens its card, settings apply to its topic, « returns', async () => {
     tg.push(textMessage({ text: '/sessions' }))
-    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('Выберите сессию'))
-    expect(String(r.body.text)).toMatch(/\n\d+\. 📂 <b>proj<\/b> · /)
+    const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('📂 <b>Проекты</b>'))
+    const listText = String(r.body.text)
+    expect(listText).toMatch(/\n\d+\. 📂 <b>proj<\/b> · /)
+    // Sections in order — the owner's, the users', the projects' — numbered through; each line with the agent.
+    const at = (x: string) => listText.indexOf(x)
+    expect(at('👑 <b>Владелец</b>')).toBeLessThan(at('📂 <b>Проекты</b>'))
+    const nums = [...listText.matchAll(/\n(\d+)\. /g)].map(m => Number(m[1]))
+    expect(nums).toEqual(nums.map((_, i) => i + 1))
+    expect(listText).toContain('🤖</tg-emoji> Claude')
     const kb = JSON.stringify(r.body.reply_markup)
     // Buttons preserve the agent and status around the project name.
     const btn = (r.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.callback_data === `sm:s:${sessionId}`)!
@@ -846,7 +853,7 @@ describe('topics', () => {
     tg.push(callbackQuery(`sm:s:${sessionId}`))
     await tg.waitFor('editMessageText', c => String(c.body.text).includes(`#${sessionId}`) && JSON.stringify(c.body.reply_markup ?? '').includes('sm:list'))
     tg.push(callbackQuery('sm:list'))
-    await tg.waitFor('editMessageText', c => String(c.body.text).includes('Выберите сессию'))
+    await tg.waitFor('editMessageText', c => String(c.body.text).startsWith('📋 <b>Сессии</b>'))
     expect(d.store.topic(s.topic!.chatId, s.topic!.threadId)?.status).toBe('active')
 
     // Someone else can't use the menu.
