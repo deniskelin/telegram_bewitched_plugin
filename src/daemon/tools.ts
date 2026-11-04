@@ -402,27 +402,29 @@ export function rateLimited(key: string): boolean {
   return false
 }
 
+/** Where notify goes: a topic by name, a chat_id (and thread), or the session's own target. */
+function notifyChat(d: Daemon, s: Session | null, args: Record<string, unknown>): ChatRef {
+  const topicArg = str(args.topic)
+  const groupChat = d.topicsChatId
+  if (topicArg && groupChat) {
+    const t = d.store.topicByName(groupChat, topicArg)
+    if (!t) throw new Error(`topic "${topicArg}" not found`)
+    return { chatId: groupChat, threadId: t.thread_id, isPrivate: false }
+  }
+  if (topicArg) throw new Error('no topics group connected — /connect_group in the bot DM')
+  if (str(args.chat_id)) return { chatId: str(args.chat_id)!, threadId: int(args.message_thread_id), isPrivate: !str(args.chat_id)!.startsWith('-') }
+  const c = sessionTarget(d, s)
+  if (!c) throw new Error('no destination: pair the bot or pass topic')
+  return c
+}
+
 /** Send to a topic (by name/thread) or the session's default target, without any inbound message. */
 export async function notify(d: Daemon, s: Session | null, args: Record<string, unknown>): Promise<string> {
   const text = String(args.text ?? '').trim()
   if (!text) throw new Error('text is required')
   const files = (args.files as string[] | undefined) ?? []
   checkFiles(files)
-  let c: ChatRef | null
-  const topicArg = str(args.topic)
-  const groupChat = d.topicsChatId
-  if (topicArg && groupChat) {
-    const t = d.store.topicByName(groupChat, topicArg)
-    if (!t) throw new Error(`topic "${topicArg}" not found`)
-    c = { chatId: groupChat, threadId: t.thread_id, isPrivate: false }
-  } else if (topicArg && !groupChat) {
-    throw new Error('no topics group connected — /connect_group in the bot DM')
-  } else if (str(args.chat_id)) {
-    c = { chatId: str(args.chat_id)!, threadId: int(args.message_thread_id), isPrivate: !str(args.chat_id)!.startsWith('-') }
-  } else {
-    c = sessionTarget(d, s)
-  }
-  if (!c) throw new Error('no destination: pair the bot or pass topic')
+  const c = notifyChat(d, s, args)
   assertAllowedChat(c.chatId)
   if (rateLimited(`${c.chatId}:${c.threadId ?? 0}`)) throw new Error('rate limit: too many notifications to this chat, try later')
   const sendOnce = (cc: ChatRef) => d.bot.api.sendMessage(cc.chatId, text.slice(0, 4096), {
@@ -466,14 +468,17 @@ function historyChat(d: Daemon, s: Session, args: Record<string, unknown>): Chat
  * event="session_message" — the bot's own messages never come back as updates.
  * Never to the writer itself, so two sessions cannot echo each other through their own chats.
  */
-function relayToChatSession(d: Daemon, s: Session, args: Record<string, unknown>, text: string, result: string): void {
+function relayToChatSession(d: Daemon, s: Session, args: Record<string, unknown>, text: string, result: string, chatOf: () => ChatRef = () => resolveChat(d, s, args)): void {
+  // Attachments are files on this machine: their paths let the other session read them as they are.
+  const files = ((args.files as unknown[] | undefined) ?? []).filter((f): f is string => typeof f === 'string')
+  if (files.length) text = `${text}\n\n[attached files: ${files.join(', ')}]` // i18n-ignore
   if (!text.trim()) return
   let c: ChatRef
-  try { c = resolveChat(d, s, args) } catch { return }
+  try { c = chatOf() } catch { return }
   const o = owner()
   const target = o ? resolveTarget(d, c, o) : null
   if (target?.kind !== 'session' || target.session.id === s.id || target.session.passive) return
-  const ids = /\(ids?: ([\d, ]+)\)/.exec(result)?.[1]?.split(/,\s*/) ?? []
+  const ids = /\(ids?: ([\d, ]+)/.exec(result)?.[1]?.split(/,\s*/).map(x => x.trim()).filter(Boolean) ?? []
   d.log(`session ${s.id} wrote into the chat of session ${target.session.id}, relayed`)
   d.deliver(target.session, text, {
     chat_id: c.chatId,
@@ -508,8 +513,11 @@ export async function handleCall(d: Daemon, s: Session, name: string, args: Reco
       return r
     }
 
-    case 'notify':
-      return notify(d, s, args)
+    case 'notify': {
+      const r = await notify(d, s, args)
+      relayToChatSession(d, s, args, String(args.text ?? ''), r, () => notifyChat(d, s, args))
+      return r
+    }
 
     case 'react': {
       const c = resolveChat(d, s, args)
