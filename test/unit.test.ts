@@ -798,6 +798,38 @@ describe('FR-19: orphans and exit codes', async () => {
     expect(findOrphans(d, reads).map(o => [o.pid, o.agent])).toEqual([[11, 'claude'], [15, 'codex']])
   })
 
+  test('«🧹 Завершить» on a rich notice (no text) rebuilds it; a repeat tap says it is done', async () => {
+    const { handleOrphanCallback } = await import('../src/daemon/orphans.ts')
+    let alive = true
+    const d = { store: new Store(':memory:'), sessions: new Map(), launching: new Map(), log: () => {} } as never
+    const reads = {
+      pids: () => (alive ? [21] : []),
+      argv: () => ['claude', 'plugin:telegram-bewitched@bewitched'],
+      agent: () => 'claude' as const,
+      age: () => 9999,
+      rss: () => 100,
+      cwd: () => '/p/x',
+    }
+    const calls: { toast: string[]; edits: string[]; markups: number } = { toast: [], edits: [], markups: 0 }
+    const ctx = {
+      from: { id: 111 },
+      callbackQuery: { message: { message_id: 5, rich_message: {} } },
+      answerCallbackQuery: async (o: { text: string }) => void calls.toast.push(o.text),
+      editMessageText: async (text: string) => void calls.edits.push(text),
+      editMessageReplyMarkup: async () => void calls.markups++,
+    } as never
+    const killed: number[] = []
+    expect(await handleOrphanCallback(d, ctx, 'orph:kill:21', reads, pid => { killed.push(pid); alive = false })).toBe(true)
+    expect(killed).toEqual([21])
+    expect(calls.edits.length).toBe(1)
+    expect(calls.edits[0]).toContain('<code>21</code>')
+    await handleOrphanCallback(d, ctx, 'orph:kill:21', reads, pid => killed.push(pid))
+    expect(killed).toEqual([21])
+    expect(calls.markups).toBe(1)
+    expect(calls.toast.length).toBe(2)
+    expect(calls.toast[1]).not.toBe(calls.toast[0])
+  })
+
   test('the exit code of a launch is written by the shell and read back', async () => {
     const dir = '/p/exit-test'
     const since = Date.now()
