@@ -10,7 +10,7 @@ import { Bot, GrammyError } from 'grammy'
 import { randomBytes } from 'crypto'
 import { chmodSync, existsSync, readFileSync, rmSync } from 'fs'
 import { basename, join, relative } from 'path'
-import { loadAccess, owner, prefsFor } from '../access.ts'
+import { loadAccess, owner, prefsFor, roleOf } from '../access.ts'
 import { DB_FILE, LEGACY_STATE_DIR, PROTOCOL_VERSION, SOCK_FILE, settings } from '../config.ts'
 import { Store, type TopicRow } from '../db.ts'
 import { LineDecoder, encode, type ClientMsg, type DaemonMsg, type Hello } from '../ipc.ts'
@@ -281,6 +281,9 @@ export class Daemon {
       content = session.notes.map(n => `[${n}]`).join('\n') + '\n\n' + content
       session.notes = []
     }
+    // F08: every event from a person says who they are now (a button answer, a reminder, a queued message too) —
+    // the role at delivery, not when the event was made. Events with no person (session_message) get none.
+    if (/^\d+$/.test(meta.user_id ?? '') && !meta.user_role) meta = { ...meta, user_role: roleOf(meta.user_id) ?? 'guest' }
     // Out of tokens: the message waits for the reset (outoftokens.ts).
     if (from && holdIfPaused(this, session, content, meta, from)) return
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.

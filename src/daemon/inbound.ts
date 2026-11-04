@@ -6,7 +6,6 @@
 
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import type { Message, ReactionTypeEmoji } from 'grammy/types'
-import { execFile } from 'child_process'
 import { readdirSync, rmSync } from 'fs'
 import { join } from 'path'
 import { can, dmCommandGate, gate, loadAccess, owner, prefsFor, roleOf } from '../access.ts'
@@ -518,9 +517,8 @@ export function stopSession(d: Daemon, s: Session, source: StopSource): 'interru
   s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram') // i18n-ignore: for the model
   d.streams.close(s, 'stopped')
   if (settings.stopMode === 'interrupt' && s.tmuxPane && s.status === 'working') {
-    execFile('tmux', ['send-keys', '-t', s.tmuxPane, 'Escape'], err => {
-      if (err) d.log(`tmux interrupt for ${s.id} failed: ${err.message}`)
-    })
+    // Through the daemon's tmux adapter (tests replace it): never a tmux call of its own.
+    void d.tmuxKeys(s.tmuxPane, ['Escape']).catch(err => d.log(`tmux interrupt for ${s.id} failed: ${err instanceof Error ? err.message : err}`))
     s.status = 'idle'
     s.turn = null
     s.stoppedAt = Date.now()

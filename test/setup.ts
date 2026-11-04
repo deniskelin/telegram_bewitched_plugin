@@ -29,6 +29,15 @@ process.env.HANDOFF_SUMMARY_SEC = '0'
 process.env.CODEX_SANDBOX = 'workspace-write'
 // Screens as HTML, so tests read their text; the FR-11 test switches rich screens on.
 process.env.RICH_SCREENS = 'off'
+// F01: a tmux the tests cannot reach the user's server with: whatever bypasses the daemon's adapters
+// (d.tmuxKeys, d.tmuxCapture…) finds this one — it fails and writes down what it was asked.
+const fakeBin = join(root, 'bin')
+mkdirSync(fakeBin, { recursive: true })
+export const realTmuxLog = join(root, 'tmux-calls.log')
+writeFileSync(join(fakeBin, 'tmux'), `#!/bin/sh\necho "$*" >> '${realTmuxLog}'\necho 'tmux is disabled in tests' >&2\nexit 1\n`, { mode: 0o755 })
+process.env.PATH = `${fakeBin}:${process.env.PATH}`
+delete process.env.TMUX
+delete process.env.TMUX_PANE
 writeFileSync(join(stateDir, 'access.json'), JSON.stringify({ dmPolicy: 'allowlist', allowFrom: ['111'], groups: {}, pending: {} }))
 
 export const fakeTelegram = new FakeTelegram()

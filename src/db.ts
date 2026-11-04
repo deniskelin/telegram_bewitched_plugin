@@ -187,16 +187,20 @@ export class Store {
     return rows.reverse()
   }
 
+  /**
+   * threadId: undefined — every topic of the chat; null — only messages outside topics (General, a DM);
+   * a number — that topic. F03: null used to mean «all», so a search from General picked up the topics.
+   */
   search(query: string, limit: number, chatId?: string, threadId?: number | null): MessageRow[] {
     // FTS5 syntax errors on stray quotes/operators — quote each term.
     const fts = query.split(/\s+/).filter(Boolean).map(t => `"${t.replace(/"/g, '""')}"`).join(' ')
     if (!fts) return []
-    return this.db.query<MessageRow, [string, string | null, number | null, number]>(`
+    return this.db.query<MessageRow, [string, string | null, number | null, number, number]>(`
       SELECT m.* FROM messages_fts f JOIN messages m ON m.id = f.rowid
       WHERE messages_fts MATCH ?1
         AND (?2 IS NULL OR m.chat_id = ?2)
-        AND (?3 IS NULL OR m.thread_id = ?3)
-      ORDER BY m.date DESC LIMIT ?4`).all(fts, chatId ?? null, threadId ?? null, limit)
+        AND (?5 = 0 OR m.thread_id IS ?3)
+      ORDER BY m.date DESC LIMIT ?4`).all(fts, chatId ?? null, threadId ?? null, limit, threadId === undefined ? 0 : 1)
   }
 
   forgetThread(chatId: string, threadId: number | null): number {

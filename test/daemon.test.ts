@@ -4,7 +4,8 @@
  */
 
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
-import { existsSync, mkdirSync, writeFileSync } from 'fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
 import { join } from 'path'
 import { callbackQuery, textMessage } from './fake-telegram.ts'
 import { fakeTelegram as tg } from './setup.ts'
@@ -63,7 +64,7 @@ class FakeClient {
   }
 
   close(): void {
-    this.sock.end()
+    this.sock?.end()
   }
 }
 
@@ -171,6 +172,8 @@ describe('buttons', () => {
 
     tg.push(callbackQuery(`q:${qid}:1`))
     const m = await client.inbound(x => x.meta.event === 'answer')
+    // F08: a button answer says who tapped, like a typed message.
+    expect(m.meta.user_role).toBe('owner')
     expect(m.content).toBe('Нет')
     expect(m.meta.question_id).toBe(qid)
     expect(m.meta.option_index).toBe('1')
@@ -289,6 +292,13 @@ describe('topics', () => {
       expect(m.content).toBe('Отчёт: Codex не применяет настройки')
       expect(m.meta.thread_id).toBe(String(thread))
       expect(m.meta.from_session_name).toBe('writer')
+      // notify by topic name (how Codex posted its review), with an attachment: heard too, the file's path included.
+      const topicName = d.sessions.get(sessionId)!.topic!.name
+      const f = join(mkdtempSync(join(tmpdir(), 'relay-')), 'review.md')
+      writeFileSync(f, '# review')
+      await other.call('notify', { topic: topicName, text: 'Ревью: 10 замечаний', files: [f] })
+      const n = await client.inbound(x => x.meta.event === 'session_message' && x.content.startsWith('Ревью'))
+      expect(n.content).toContain(`[attached files: ${f}]`)
       // A reply into its own topic goes nowhere else.
       const writerThread = Number(d.store.topicForProject(group, '/tmp/writer')!.thread_id)
       await other.call('reply', { chat_id: group, message_thread_id: String(writerThread), text: 'себе' })
@@ -735,7 +745,10 @@ describe('topics', () => {
 
   test('/sessions lists sessions without the channel and how to restart them', async () => {
     const p = new FakeClient()
-    await p.connect({ cwd: '/tmp/nochan', projectRoot: '/tmp/nochan', passive: true, claudePid: process.ppid })
+    // F09: a fixed interactive command line, not the argv of whatever runs the tests (`claude -p` read as print mode).
+    await p.connect({ cwd: '/tmp/nochan', projectRoot: '/tmp/nochan', passive: true, claudePid: 987654 })
+    const nochan = [...d.sessions.values()].find(x => x.cwd === '/tmp/nochan')!
+    nochan.argv = ['claude', '--model', 'opus']
     tg.push(textMessage({ text: '/sessions' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('nochan'))
     const text = String(r.body.text)
@@ -1133,6 +1146,7 @@ describe('topics', () => {
     const late = await client.inbound(x => x.meta.event === 'reminder' && x.content.includes('проверь деплой'))
     expect(late.meta.late_min).toBe('30')
     expect(late.meta.reminder_by).toBe('session')
+    expect(late.meta.user_role).toBe('owner')
     expect(late.content).toContain('Задача, которую вы поставили себе')
 
     expect((await client.call('remind', { text: 'пинг', every_minutes: 10 })).ok).toBe(true)
@@ -1167,6 +1181,10 @@ describe('topics', () => {
     })
     const pane = s.tmuxPane
     s.tmuxPane = '%9'
+    // F01: ⏹ goes through the daemon's tmux adapter — the user's real tmux is never touched.
+    const savedKeys = d.tmuxKeys
+    const keys: string[][] = []
+    d.tmuxKeys = async (target, k) => { keys.push([target, ...k]) }
     tg.push(textMessage({ chat: Number(group), text: 'расскажи анекдот', thread }))
     await client.inbound(x => x.content.endsWith('расскажи анекдот'))
     await hook('MessageDisplay', { delta: 'Жена отправляет мужа' })
@@ -1174,6 +1192,10 @@ describe('topics', () => {
     tg.push(callbackQuery(`stop:${sessionId}`, { chat: Number(group) }))
     await tg.waitFor('answerCallbackQuery', c => c.body.text === '⏹ Остановлено')
     expect(s.status).toBe('idle')
+    expect(keys).toEqual([['%9', 'Escape']])
+    d.tmuxKeys = savedKeys
+    const { realTmuxLog } = await import('./setup.ts')
+    expect(existsSync(realTmuxLog) ? readFileSync(realTmuxLog, 'utf8') : '').not.toContain('send-keys')
     // The tail of the streamed text arrives after the Escape; no Stop hook follows.
     await hook('MessageDisplay', { delta: 'в магазин.' })
     await hook('PreToolUse', { tool_name: 'Read', tool_input: { file_path: '/x/a.ts' } })
