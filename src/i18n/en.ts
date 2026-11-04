@@ -854,8 +854,6 @@ const dict: Dict = {
   "💸 <b>Потребление</b>, токены (цены API для Codex нет)\n<blockquote>{v}</blockquote>": "💸 <b>Usage</b>, tokens (no API price for Codex)\n<blockquote>{v}</blockquote>",
   "{who}: ≈{p}% окна · {v}": "{who}: ≈{p}% of the window · {v}",
   "{who}: {p}% токенов · {v}": "{who}: {p}% of tokens · {v}",
-  "🟠 Claude · {v}": "🟠 Claude · {v}",
-  "⚫️ Codex · {v}": "⚫️ Codex · {v}",
   "по последнему запросу, {at}": "as of the last request, {at}",
   "Не получилось отправить итоги — подробности в журнале демона.": "Couldn't send the summary — see the daemon log.",
   " · как вчера": " · same as yesterday",
@@ -1017,6 +1015,9 @@ const dict: Dict = {
   "📂 проекты": "📂 projects",
   "👤 <b>Владелец</b>": "👤 <b>Owner</b>",
   "Этот чат не привязан ни к проекту, ни к пользователю — сообщение некуда доставить.": "This chat is bound to neither a project nor a user — there is nowhere to deliver the message.",
+  "📊 <b>Лимиты</b>": "📊 <b>Limits</b>",
+  "🟠 <b>Claude</b> · {v}": "🟠 <b>Claude</b> · {v}",
+  "⚫️ <b>Codex</b> · {v}": "⚫️ <b>Codex</b> · {v}",
 }
 
 export default dict

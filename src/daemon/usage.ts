@@ -797,35 +797,36 @@ export function startLimitWatch(d: Daemon): void {
   setInterval(tick, min * 60_000).unref?.()
 }
 
-/** "📊 5 часов 42% · Неделя 31%" for the pinned dashboard; null before the first fetch. */
-/**
- * The limits as in /usage, plain text for the status message: per limit the
- * percent, a bar and when it resets. null before the first fetch.
- */
 /** Codex's windows as of its last request; one that has reset since is empty until the next request brings numbers. */
 export function freshCodexLimits(l: CodexLimits | null, now = Date.now()): Limit[] {
   return (l?.items ?? []).map(i => i.resetsAt && i.resetsAt.getTime() <= now ? { ...i, percent: 0, resetsAt: null } : i)
 }
 
-export function limitsBlock(now = Date.now()): string | null {
+/**
+ * The limits for the dashboard (HTML, a rich screen): a section per
+ * subscription — its plan in the heading, the windows in a quote with the
+ * percent in bold, a bar and when it resets. null before the first fetch.
+ */
+export function limitsHtml(now = Date.now()): string | null {
   const l = lastLimits()
   const cx = collectCodex(now, 31).limits
   const codex = freshCodexLimits(cx, now)
   if (!l?.limits.items.length && !codex.length) return null
-  const line = (i: Limit) => `${shortLabel(i.label)}: ${Math.round(i.percent)}% ${bar(i.percent)}${i.resetsAt ? `\n   ${fmtReset(i.resetsAt, now)}` : ''}`
-  const out = [tr('📊 Лимиты')]
+  const line = (i: Limit) => `${escapeHtml(shortLabel(i.label))}: <b>${Math.round(i.percent)}%</b> ${bar(i.percent)}${i.resetsAt ? `\n   ${escapeHtml(fmtReset(i.resetsAt, now))}` : ''}`
+  const out: string[] = []
   if (l?.limits.items.length) {
     const plan = planName(readOAuth())
-    out.push('', plan ? tr('🟠 Claude · {v}', { v: plan }) : '🟠 Claude', ...l.limits.items.map(line))
-    if (l.limits.breakdown) out.push(tr('За неделю: {v}', { v: l.limits.breakdown }))
+    const extra = l.limits.breakdown ? [`<i>${escapeHtml(tr('За неделю: {v}', { v: l.limits.breakdown }))}</i>`] : []
+    out.push(`${plan ? tr('🟠 <b>Claude</b> · {v}', { v: escapeHtml(plan) }) : '🟠 <b>Claude</b>'}\n<blockquote>${[...l.limits.items.map(line), ...extra].join('\n')}</blockquote>`)
   }
   if (codex.length) {
     const at = new Date(cx!.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
-    out.push('', cx!.plan ? tr('⚫️ Codex · {v}', { v: cx!.plan }) : '⚫️ Codex', ...codex.map(line), tr('по последнему запросу, {at}', { at }))
+    out.push(`${cx!.plan ? tr('⚫️ <b>Codex</b> · {v}', { v: escapeHtml(cx!.plan) }) : '⚫️ <b>Codex</b>'}\n<blockquote>${[...codex.map(line), `<i>${escapeHtml(tr('по последнему запросу, {at}', { at }))}</i>`].join('\n')}</blockquote>`)
   }
-  return out.join('\n')
+  return out.join('\n\n')
 }
 
+/** "📊 Claude: 5 часов 42% · Неделя 31%" — the brief dashboard; null before the first fetch. */
 export function limitsLine(now = Date.now()): string | null {
   const claude = lastLimits()?.limits.items ?? []
   const codex = freshCodexLimits(collectCodex(now, 31).limits, now)
