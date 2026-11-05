@@ -1,3 +1,4 @@
+import { taskBatchMeta } from '../core/task.ts'
 /**
  * Forum topics in a connected supergroup: one topic per project, a pinned
  * dashboard in General, control commands, and the /connect_group flow that
@@ -228,6 +229,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
   }
   if (parts.length && chat) {
     d.deliver(s, parts.join('\n\n'), {
+      ...taskBatchMeta(pending.map(p => p.meta)),
       event: 'session_resume',
       chat_id: chat.chatId,
       ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}),

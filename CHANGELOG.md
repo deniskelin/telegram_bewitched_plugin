@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — lifecycle architecture
+
+- Extract pure session/task lifecycle rules and a task repository port; route daemon adapters through typed state events.
+- Correlate asynchronous stop outcomes with per-request tokens and ignore obsolete hooks/completions.
+- Commit task records and current-task pointers atomically; preserve task identities in offline resume batches.
+- Document architecture boundaries and verify event orderings, rollback and adapter races.
+
 ## Unreleased — whole-task usage
 
 - Add persistent whole-task usage reports to result cards: explicit task lifecycle, exact-conversation accounting, delayed CLI reconciliation, auxiliary reviews and model breakdowns; document scope and unavailable usage.

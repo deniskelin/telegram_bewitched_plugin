@@ -1,3 +1,6 @@
+import { JsonTaskRepository, taskScopeKey } from './taskstore.ts'
+import { ownsTask, Tasks, type Task } from '../core/task.ts'
+export type { Task } from '../core/task.ts'
 /** Durable task identity and accounting. Scope and transcript identity are explicit;
  * cwd/time windows are never used to attribute another conversation's requests. */
 import { randomBytes } from 'crypto'
@@ -11,40 +14,32 @@ import { sessionTranscript, codexRollout } from './handoff.ts'
 import { costOf, parseTranscript, taskMarkers, type Entry } from './usage.ts'
 import { parseRollout } from './codexusage.ts'
 
-export type Task = { id: string; chat: ChatRef; user: string; state: 'open' | 'ready' | 'closed'; at: number; updated: number }
+
 export type Stage = { order: number; id: string; tasks: string[]; engine: string; session: string; conversation?: string; path?: string; start: number; end?: number; baseline: string[]; entries: Entry[]; tools: string[]; settled: boolean; auxiliary?: boolean; unallocatedRequests?: number }
-const scope = (c: ChatRef, user: string) => `cost:current:${c.chatId}:${c.threadId ?? 0}:${user}`
-export const taskOf = (d: Daemon, id: string): Task | null => JSON.parse(d.store.get(`cost:task:${id}`) ?? 'null')
-export function newTask(d: Daemon, c: ChatRef, user: string): Task {
-  const task: Task = { id: randomBytes(8).toString('hex'), chat: c, user, state: 'open', at: Date.now(), updated: Date.now() }
-  d.store.set(`cost:task:${task.id}`, JSON.stringify(task)); d.store.set(scope(c, user), task.id)
-  return task
-}
-export function changeTask(d: Daemon, id: string, state: Task['state']): void {
-  const task = taskOf(d, id)
-  if (!task) return
-  task.state = state; task.updated = Date.now(); d.store.set(`cost:task:${id}`, JSON.stringify(task))
-  if (state === 'closed') { if (d.store.get(scope(task.chat, task.user)) === id) d.store.set(scope(task.chat, task.user), null) }
-  else if (state === 'open') d.store.set(scope(task.chat, task.user), id)
-}
+const scope = taskScopeKey
+const repository = (d: Daemon) => new JsonTaskRepository(d.store)
+const tasks = (d: Daemon) => new Tasks(repository(d), () => randomBytes(8).toString('hex'), Date.now)
+export const taskOf = (d: Daemon, id: string): Task | null => repository(d).get(id)
+export function newTask(d: Daemon, c: ChatRef, user: string): Task { return tasks(d).create(c, user) }
+export function changeTask(d: Daemon, id: string, state: Task['state']): void { tasks(d).change(id, state) }
 /** Called before durable queues. Explicit new-task selection always starts a boundary. */
 export function bindTask(d: Daemon, c: ChatRef, user: string, meta: Record<string, string>, fresh = false): string {
   const supplied = meta.task_id && taskOf(d, meta.task_id)
   if (meta.task_ids) {
-    const ids = meta.task_ids.split(',').filter(id => { const task = taskOf(d, id); return task?.user === user && task.chat.chatId === c.chatId && (task.chat.threadId ?? 0) === (c.threadId ?? 0) })
+    const ids = meta.task_ids.split(',').filter(id => { const task = taskOf(d, id); return task && ownsTask(task, c, user) })
     if (ids.length) { meta.task_ids = ids.join(','); return ids[0]! }
     delete meta.task_ids
   }
   const replyId = meta.reply_to_message_id
   const questionTask = meta.question_id ? d.store.get(`cost:question:${meta.question_id}`) : replyId ? d.store.get(`cost:message:${c.chatId}:${replyId}`) : null
   const parentQuestion = questionTask ? taskOf(d, questionTask) : null
-  if (!fresh && parentQuestion?.user === user && parentQuestion.chat.chatId === c.chatId && (parentQuestion.chat.threadId ?? 0) === (c.threadId ?? 0)) { meta.task_id = parentQuestion.id; changeTask(d, parentQuestion.id, 'open'); return parentQuestion.id }
+  if (!fresh && parentQuestion && ownsTask(parentQuestion, c, user)) { meta.task_id = parentQuestion.id; changeTask(d, parentQuestion.id, 'open'); return parentQuestion.id }
   if (!fresh && !supplied && replyId) {
     const result = d.store.keys('ux:result:').map(k => JSON.parse(d.store.get(k)!)).find(r => r.taskId && r.chat.chatId === c.chatId && (r.chat.threadId ?? 0) === (c.threadId ?? 0) && [r.card, ...r.messages].includes(Number(replyId)))
     const parent = result && taskOf(d, result.taskId)
     if (parent?.user === user) { meta.task_id = parent.id; changeTask(d, parent.id, 'open'); return parent.id }
   }
-  if (supplied && supplied.chat.chatId === c.chatId && (supplied.chat.threadId ?? 0) === (c.threadId ?? 0) && supplied.user === user) return supplied.id
+  if (supplied && ownsTask(supplied, c, user)) return supplied.id
   let id = !fresh ? d.store.get(scope(c, user)) : null
   const task = id ? taskOf(d, id) : null
   if (!task || task.state === 'closed') id = newTask(d, c, user).id

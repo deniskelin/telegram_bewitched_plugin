@@ -1,3 +1,4 @@
+import { applySessionEvent } from '../core/session.ts'
 import { bindTask } from './taskcost.ts'
 /**
  * Inbound Telegram traffic: access gate, routing to the right session,
@@ -468,20 +469,20 @@ export function resolvePermission(d: Daemon, request_id: string, behavior: 'allo
   d.permissions.delete(request_id)
   const s = d.sessions.get(p.sessionId)
   if (!s) return false
+  if (!applySessionEvent(s, { type: 'permission_resolved' }).accepted) return false
   d.send(s, { t: 'perm', request_id, behavior })
-  s.status = 'working'
   d.onSessionsChanged()
   return true
 }
 
 export function handlePermissionRequest(d: Daemon, s: Session, p: { request_id: string; tool_name: string; description: string; input_preview: string }): void {
+  if (!applySessionEvent(s, { type: 'permission_requested' }).accepted) return
   d.permissions.set(p.request_id, { sessionId: s.id, tool_name: p.tool_name, description: p.description, input_preview: p.input_preview })
   if (s.alwaysAllow.has(p.tool_name) || projectRules(d, s.projectKey).includes(p.tool_name)) {
     d.log(`session ${s.id}: ${p.tool_name} allowed (♾/📌)`)
     resolvePermission(d, p.request_id, 'allow')
     return
   }
-  s.status = 'waiting'
   d.onSessionsChanged()
   const text = `🔐 ${projectTitle(s)}: ${p.tool_name}`
   const kb = permissionKb(p.request_id, p.tool_name, true)
@@ -551,12 +552,13 @@ export function stopSession(d: Daemon, s: Session, source: StopSource): 'interru
     // Through the daemon's tmux adapter (tests replace it): never a tmux call of its own.
     if (s.stopRequest?.phase === 'sent') return 'interrupted'
     const at = Date.now()
-    s.stoppedAt = at
-    s.stopRequest = { at, phase: 'sent' }
+    applySessionEvent(s, { type: 'stop_requested', at })
+    const token = s.stopRequest?.token
     void d.tmuxKeys(s.tmuxPane, ['Escape']).then(() => {
-      setTimeout(() => void verifyStop(d, s, at).catch(err => d.log(`stop verification: ${err}`)), 700).unref?.()
+      setTimeout(() => void verifyStop(d, s, at, token).catch(err => d.log(`stop verification: ${err}`)), 700).unref?.()
     }).catch(err => {
-      s.stopRequest = { at, phase: 'failed' }
+      if (d.sessions.get(s.id) !== s) return
+      if (!applySessionEvent(s, { type: 'stop_checked', at, token, idle: false, checkedAt: Date.now() }).accepted) return
       d.log(`tmux interrupt for ${s.id} failed: ${err}`)
       const c = s.lastChat
       if (c) void d.bot.api.sendMessage(c.chatId, tr('Остановка не подтверждена'), { message_thread_id: c.threadId }).catch(() => {})

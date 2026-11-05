@@ -1,3 +1,4 @@
+import { applySessionEvent } from '../core/session.ts'
 import { taskForSession } from './taskcost.ts'
 /**
  * MCP tool calls proxied from a session's client. Executed here so all
@@ -378,7 +379,7 @@ async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>):
 
 function finishReply(d: Daemon, s: Session, c: ChatRef): void {
   sessionPhase(d, s, 'done')
-  if (s.turn) s.turn.replied = true
+  applySessionEvent(s, { type: 'reply_sent' })
   d.streams.onReply(s, c.chatId)
 }
 

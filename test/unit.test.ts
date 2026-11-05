@@ -1059,7 +1059,7 @@ describe('late hooks after Stop', async () => {
     expect(isLateHook(s, { event: 'PreToolUse', at: 999 })).toBe(true)
     // Fired after the Stop: a turn begun in the terminal.
     expect(isLateHook(s, { event: 'PreToolUse', at: 1500 })).toBe(false)
-    // A new prompt always counts; a running turn takes everything.
+    // A new prompt always counts; activity newer than the active turn belongs to it.
     expect(isLateHook(s, { event: 'UserPromptSubmit', at: 990 })).toBe(false)
     expect(isLateHook({ turn: { start: 0, replied: false }, turnEndedAt: 1000 } as never, { event: 'MessageDisplay', at: 990 })).toBe(false)
     // Older hook scripts without the time: a short window after Stop.

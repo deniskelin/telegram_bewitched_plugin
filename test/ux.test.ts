@@ -116,3 +116,67 @@ test('owner and attention sessions come first, with no duplicate buttons', async
   expect(buttons.map(b => b.callback_data)).toEqual([`sm:s:${s.id}`, `sm:s:${waiting.id}`, `sm:s:${idle.id}`])
   expect(list.text).toContain('Требуют внимания')
 })
+
+test('an old stop check cannot confirm a newer stop with the same timestamp', async () => {
+  const { applySessionEvent } = await import('../src/core/session.ts')
+  const { d, s } = setup()
+  applySessionEvent(s,{type:'stop_requested',at:10})
+  const first = s.stopRequest!.token
+  let release!: (screen:string)=>void
+  d.tmuxCapture = () => new Promise(resolve => {release = resolve})
+  const checking = verifyStop(d,s,10,first)
+  applySessionEvent(s,{type:'delivered',at:11})
+  applySessionEvent(s,{type:'stop_requested',at:10})
+  const second = s.stopRequest!.token
+  release('❯ ')
+  expect(await checking).toBe(false)
+  expect(s.stopRequest).toMatchObject({at:10,token:second,phase:'sent'})
+  expect(s.status).toBe('working')
+  expect(await verifyStop(d,s,10,first)).toBe(false)
+})
+
+test('a failed old tmux interrupt cannot overwrite a new turn or send a stale failure notice', async () => {
+  const { applySessionEvent } = await import('../src/core/session.ts')
+  const { stopSession } = await import('../src/daemon/inbound.ts')
+  const { d, s, calls } = setup()
+  s.notes = []
+  Object.assign(d,{streams:{close:()=>{}}})
+  let reject!: (error:Error)=>void
+  d.tmuxKeys = () => new Promise((_,fail)=>{reject = fail})
+  stopSession(d,s,'button')
+  applySessionEvent(s,{type:'delivered',at:Date.now()})
+  reject(new Error('old interrupt failed'))
+  await Promise.resolve(); await Promise.resolve()
+  expect(s.stopRequest).toBeUndefined()
+  expect(s.status).toBe('working')
+  expect(calls.some(c=>c.method === 'sendMessage')).toBe(false)
+})
+
+
+test('an old Stop hook cannot replace a new conversation or mark it idle', async () => {
+  const { handleHook } = await import('../src/daemon/http.ts')
+  const {d,s} = setup()
+  s.turn = {start:10,replied:false}; s.lastHookAt = 11
+  s.claude = {sessionId:'current',transcript:'/current.jsonl',permissionMode:null}
+  Object.assign(d,{sessionByClaudePid:()=>s})
+  handleHook(d,{claudePid:1,event:'Stop',at:9,data:{session_id:'obsolete',transcript_path:'/obsolete.jsonl'}})
+  expect(s.status).toBe('working')
+  expect(s.turn?.start).toBe(10)
+  expect(s.lastHookAt).toBe(11)
+  expect(s.claude).toMatchObject({sessionId:'current',transcript:'/current.jsonl'})
+})
+
+
+test('a failed interrupt of a disconnected session cannot notify its replacement', async () => {
+  const { stopSession } = await import('../src/daemon/inbound.ts')
+  const { d, s, calls } = setup()
+  s.notes = []
+  Object.assign(d,{streams:{close:()=>{}}})
+  let reject!: (error:Error)=>void
+  d.tmuxKeys = () => new Promise((_,fail)=>{reject = fail})
+  stopSession(d,s,'button')
+  d.sessions.delete(s.id)
+  reject(new Error('disconnected interrupt'))
+  await Promise.resolve(); await Promise.resolve()
+  expect(calls.some(c=>c.method === 'sendMessage')).toBe(false)
+})

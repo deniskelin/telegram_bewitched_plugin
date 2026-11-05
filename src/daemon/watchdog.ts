@@ -1,3 +1,4 @@
+import { applySessionEvent } from '../core/session.ts'
 /**
  * Session watchdog — the daemon's "technical" duty. A session that goes away
  * on its own (not archived, not closed for idling) is reported after
@@ -172,7 +173,7 @@ export async function checkTurns(d: Daemon, now = Date.now()): Promise<void> {
     const turn = s.turn
     if (!turn || turn.stuck || now - turn.start < sec * 1000) continue
     if (s.lastHookAt >= turn.start || transcriptSince(s, turn.start)) continue
-    turn.stuck = true
+    applySessionEvent(s, { type: 'stuck' })
     d.log(`session ${s.id}: no sign of life ${Math.round((now - turn.start) / 1000)} s after a message`)
     await warnStuck(d, s, Math.round((now - turn.start) / 60_000))
   }

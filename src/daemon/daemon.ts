@@ -1,3 +1,4 @@
+import { applySessionEvent, type SessionState } from '../core/session.ts'
 import { bindTask, startStage, recoverTaskCosts } from './taskcost.ts'
 /**
  * The shared daemon. Exactly one per state dir: it alone polls getUpdates,
@@ -42,7 +43,7 @@ export type ChatRef = { chatId: string; threadId?: number; isPrivate: boolean }
 /** An extra forum group for project topics (FR-3). */
 export type TopicGroup = { chatId: string; title: string; paths: string[] }
 
-export type Session = {
+export type Session = SessionState & {
   id: string
   sock: Socket<SockData>
   claudePid: number | null
@@ -57,8 +58,6 @@ export type Session = {
   quietTurn?: boolean
   /** FR-12: the last plan of the session (TodoWrite). */
   plan?: import('./stream.ts').PlanItem[]
-  lastActivity: number
-  status: 'idle' | 'working' | 'waiting'
   topic: { chatId: string; threadId: number; name: string } | null
   /** The model's text since its last tool call in this turn: the answer being written (FR-1). */
   answer: string
@@ -68,22 +67,10 @@ export type Session = {
   /** The last answer sent as one message (rich Markdown or plain text): the turn cost is appended to it (FR-11). */
   /** kb: the answer's keyboard (📋 copy buttons): an edit without it would take them off. */
   lastAnswer: { chatId: string; messageId: number; at: number; markdown?: string; text?: string; kb?: unknown } | null
-  /** stuck: «не берёт сообщение» went out for this turn (watchdog.ts checkTurns). */
-  /** byHook: opened by a tool call, not a prompt (a turn begun in the terminal, or a daemon restart mid-turn). */
-  turn: { start: number; replied: boolean; stuck?: boolean; byHook?: boolean } | null
   /** The last hook event of this session: a sign of life. */
   lastHookAt: number
   /** The agent CLI behind it (FR-15); everything connecting over the channel is Claude Code. */
   engine: EngineId
-  /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
-  stopRequest?: { at: number; phase: 'sent' | 'confirmed' | 'failed' }
-  stoppedAt: number | null
-  /**
-   * When the last turn ended (the Stop hook fired). Each hook is a process of its own, so the
-   * turn's last MessageDisplay can reach the daemon after its Stop: such a late hook must not
-   * open a turn nobody will close («работает» while idle).
-   */
-  turnEndedAt?: number
   /** Notes prepended to the next inbound message (e.g. "you were stopped"). */
   notes: string[]
   reconnect: boolean
@@ -317,14 +304,11 @@ export class Daemon {
       if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
     }
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
-    session.lastActivity = Date.now()
-    session.stoppedAt = null
-    session.stopRequest = undefined
+    const transition = applySessionEvent(session, { type: 'delivered', at: Date.now(), startTurn: !!from })
     if (from) {
       session.answer = ''
       session.lastChat = from
-      if (!session.turn) { session.turn = { start: Date.now(), replied: false }; turnStarted(session) }
-      session.status = 'working'
+      if (transition.openedTurn) turnStarted(session)
       this.streams.open(session, from)
     }
     this.onSessionsChanged()
