@@ -262,6 +262,12 @@ bunx tsc --noEmit
 
 [Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).
 
-## Settings and task entry
+## 设置与任务入口
 
-[Chat/agent settings, reply detail and one-shot task/file actions](docs/settings-and-tasks.md).
+`/menu` 中的**聊天设置**包含语言、语音、转录、回复详细程度和进度显示，对后续消息立即生效。**高级设置**包含流式输出、完成通知、用量显示和整个机器人的静默时段。**智能体设置**控制项目模型和推理强度：Claude Code 在轮次之间更改；Codex 和引擎切换需要重启。
+
+**新任务**或 `/task` 提供解释、修复、检查和审查。选择仅用于下一条消息或文件，机器人进程重启后仍保留，30 分钟后失效；不同发送者、聊天和话题互相独立。`/task cancel` 可取消选择。
+
+机器人会确认文件的目标会话。如果没有说明文字、已选操作或进行中的任务，会用按钮询问，无须调用模型。任务类型不会更改权限、沙盒或长期模式；简短回复也不会减少实际工作和必要验证。
+
+[详细说明与限制](docs/settings-and-tasks.md)。

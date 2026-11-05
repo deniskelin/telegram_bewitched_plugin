@@ -277,4 +277,14 @@ Layout: `server.ts` — a thin MCP client per session; `src/daemon/` — the dae
 
 ## Settings and task entry
 
-[Chat/agent settings, reply detail and one-shot task/file actions](docs/settings-and-tasks.md).
+Settings in `/menu` are grouped by purpose:
+
+- **Chat settings**: language, voice/transcript, reply detail and progress. Apply to subsequent messages immediately. Brief replies do not reduce the work or required verification.
+- **Advanced**: streaming, completion notifications, cost display and bot-wide quiet hours.
+- **Agent settings**: project model and reasoning effort. Claude Code applies changes between turns without restarting; Codex needs a restart. Switching engines requires a restart.
+
+**New task** or `/task` offers Explain, Fix, Check and Review. A choice applies once to the next message or file, survives daemon restarts and expires after 30 minutes. It is isolated by sender, chat and topic; local status queries do not consume it. `/task cancel` clears the choice.
+
+File receipts show the destination session. A bare file without a selected action or active task waits for an action button, without a model call for clarification. Files with an existing task need no mandatory questionnaire. Task intent does not change permissions, sandboxing or the persistent agent mode.
+
+See [settings and tasks](docs/settings-and-tasks.md) for access rules and limitations.
