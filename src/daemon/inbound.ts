@@ -4,10 +4,11 @@
  * callback-button dispatcher.
  */
 
+import { registerTaskCommands, handleTaskCallback, applyTask, selectedTask, prepareFile, acknowledgeFile } from './tasks.ts'
 import { verifyStop } from './stopcheck.ts'
 import { receiveMessage, deliveryPhase, sessionPhase, handleUxCallback, replacementSession } from './ux.ts'
 import { projectEngine, setProjectEngine, setProjectEffort, engineOf } from './engines.ts'
-import { queueTextBatch, economyReport, cancelTextBatch } from './economy.ts'
+import { queueTextBatch, economyReport, cancelTextBatch, taskBatchMeta } from './economy.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import type { Message, ReactionTypeEmoji } from 'grammy/types'
 import { readdirSync, rmSync } from 'fs'
@@ -372,6 +373,15 @@ async function handleInbound(
     } : {}),
   }
 
+  const hasFile = !!downloadImage || !!attachment && !isSpeech(attachment.kind)
+  const continuingTask = target.kind === 'session' && target.session.status === 'working' && !!target.session.turn
+  if (hasFile && !msg.caption?.trim() && !selectedTask(d, chat, String(from.id)) && !continuingTask) {
+    await prepareFile(d, ctx, chat, String(from.id), text, meta)
+    return
+  }
+  if (target.kind !== 'session') text = applyTask(d, chat, String(from.id), text, meta)
+  if (hasFile) await acknowledgeFile(d, ctx, chat, String(from.id), meta.task_kind ?? selectedTask(d, chat, String(from.id)) ?? undefined)
+
   if (target.kind !== 'session') deliveryPhase(d, meta, target.kind === 'launch' || target.kind === 'user_offline' || target.kind === 'group_launch' ? 'launching' : 'queued')
 
   if (target.kind === 'group_unbound') {
@@ -414,6 +424,8 @@ async function handleInbound(
     if (handled) { deliveryPhase(d, meta, 'done', target.session); return }
   }
 
+  text = applyTask(d, chat, String(from.id), text, meta)
+
   if (msg.forward_origin) {
     const key = `${chatId}:${threadId ?? 0}:${from.id}`
     const b = batches.get(key)
@@ -442,7 +454,7 @@ function flushBatch(d: Daemon, key: string): void {
   const content = b.items.length === 1 ? b.items[0]!.text :
     `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) => // i18n-ignore
       `${i + 1}. [${it.meta.forward_from ?? '?'}${it.meta.forward_date ? `, ${it.meta.forward_date}` : ''}] ${it.text}`).join('\n\n')
-  const meta = { ...last, message_ids: b.items.map(x => x.meta.message_id).join(','), ...(b.items.length > 1 ? { forward_count: String(b.items.length) } : {}) }
+  const meta = { ...last, ...taskBatchMeta(b.items.map(x => x.meta)), message_ids: b.items.map(x => x.meta.message_id).join(','), ...(b.items.length > 1 ? { forward_count: String(b.items.length) } : {}) }
   void routeText(d, b.chat, String(b.ctx.from?.id ?? ''), content, meta).catch(err => { deliveryPhase(d, meta, 'failed'); d.log(`forward batch: ${err}`) })
 }
 
@@ -601,6 +613,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
     }
     await respond(economyReport(d))
   })
+  registerTaskCommands(d, bot)
   registerReminderCommands(d, bot)
   registerPromptCommands(d, bot)
   registerOnceCommands(d, bot)
@@ -672,6 +685,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   bot.on('callback_query:data', async ctx => {
     const data = ctx.callbackQuery.data
+    if (await handleTaskCallback(d, ctx, data)) return
     if (await handleUxCallback(d, ctx, data)) return
     if (data.startsWith('perm:')) return handlePermissionCallback(d, ctx, data)
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)

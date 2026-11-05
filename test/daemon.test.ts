@@ -2170,7 +2170,7 @@ describe('convenience', () => {
       tg.push(callbackQuery('hub:set'))
       const set = await tg.waitFor('editMessageText', c => String(c.body.text).includes('Голос: xenia'))
       const kb = JSON.stringify(set.body.reply_markup)
-      for (const cb of ['hub:tv:baya', 'hub:ts:125', 'hub:qh:2']) expect(kb).toContain(cb)
+      for (const cb of ['hub:tv:baya', 'hub:ts:125', 'hub:advanced']) expect(kb).toContain(cb)
       tg.push(callbackQuery('hub:tv:baya'))
       tg.push(callbackQuery('hub:ts:125'))
       await tg.waitFor('editMessageText', c => String(c.body.text).includes('Голос: baya, скорость ×1.25'))
@@ -2864,7 +2864,7 @@ describe('attachments land in the session folder', () => {
     tg.files.set('doc1', Buffer.from('%PDF-fake'))
     tg.push({ message: { message_id: 92001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
       chat: { id: -100500, type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: s.topic!.threadId, is_topic_message: true,
-      photo: [{ file_id: 'photo1', file_unique_id: 'ph1', width: 10, height: 10 }] } })
+      caption: 'проверь фото', photo: [{ file_id: 'photo1', file_unique_id: 'ph1', width: 10, height: 10 }] } })
     const m = await client.inbound(x => x.meta.message_id === '92001')
     const inbox = join(s.cwd, '.telegram', 'inbox')
     expect(m.meta.image_path.startsWith(inbox + '/')).toBe(true)
@@ -2938,4 +2938,52 @@ describe('stable UX controls', () => {
       expect(notices[0]).toContain('перезапущена')
     } finally { d.tmuxType = saved }
   })
+})
+
+describe('simple task UX', () => {
+  test('a selected task survives a local status query, then applies to one real message', async () => {
+    const s = d.sessions.get(sessionId)!
+    const { selectTask, selectedTask } = await import('../src/daemon/tasks.ts')
+    const chat = { chatId: s.topic!.chatId, threadId: s.topic!.threadId, isPrivate: false }
+    selectTask(d, chat, '111', 'explain')
+    tg.push(textMessage({ chat: Number(chat.chatId), thread: chat.threadId, text: 'ты жив?' }))
+    await tg.waitFor('sendMessage', x => String(x.body.text).includes(`#${s.id}, активность`))
+    expect(selectedTask(d, chat, '111')).toBe('explain')
+    tg.push(textMessage({ chat: Number(chat.chatId), thread: chat.threadId, text: 'explain this task fixture' }))
+    const m = await client.inbound(x => x.meta.task_kind === 'explain')
+    expect(m.content).toContain('explain this task fixture')
+    expect(selectedTask(d, chat, '111')).toBeNull()
+  })
+  test('answer detail is scoped to the chat and included in the next agent message', async () => {
+    const { setPref } = await import('../src/access.ts')
+    const s = d.sessions.get(sessionId)!
+    const chatId = s.topic!.chatId, threadId = s.topic!.threadId
+    setPref(`${chatId}:${threadId}`, { answerDetail: 'short' })
+    try {
+      tg.push(textMessage({ chat: Number(chatId), thread: threadId, text: 'answer detail fixture' }))
+      const m = await client.inbound(x => x.content.includes('answer detail fixture'))
+      expect(m.meta.answer_detail).toBe('short')
+    } finally { setPref(`${chatId}:${threadId}`, { answerDetail: 'normal' }) }
+  })
+})
+
+
+test('a bare photo without an active task asks once and the selected action routes the original photo', async () => {
+  const s = d.sessions.get(sessionId)!
+  s.status = 'idle'; s.turn = null
+  const chat = s.topic!.chatId, thread = s.topic!.threadId
+  tg.files.set('taskPhoto', Buffer.from('task-image'))
+  tg.push({ message: { message_id: 99001, date: Math.floor(Date.now() / 1000), from: { id: 111, is_bot: false, first_name: 'Den' },
+    chat: { id: Number(chat), type: 'supergroup', title: 'Test Group', is_forum: true }, message_thread_id: thread, is_topic_message: true,
+    photo: [{ file_id: 'taskPhoto', file_unique_id: 'task-image', width: 10, height: 10 }] } })
+  const q = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Файл принят') && String(JSON.stringify(c.body.reply_markup)).includes('tk:file:') && (c.body.reply_parameters as { message_id?: number } | undefined)?.message_id === 99001)
+  expect(client.msgs.some(m => m.t === 'inbound' && (m as Inbound).meta.message_id === '99001')).toBe(false)
+  const id = /tk:file:([0-9a-f]+):check/.exec(JSON.stringify(q.body.reply_markup))![1]
+  const tap = callbackQuery(`tk:file:${id}:check`, { chat: Number(chat) })
+  const msg = (tap.callback_query as { message: Record<string, unknown> }).message
+  msg.message_thread_id = thread; msg.is_topic_message = true
+  tg.push(tap)
+  const delivered = await client.inbound(m => m.meta.message_id === '99001')
+  expect(delivered.meta.task_kind).toBe('check')
+  expect(existsSync(delivered.meta.image_path)).toBe(true)
 })

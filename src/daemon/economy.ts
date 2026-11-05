@@ -75,7 +75,7 @@ export async function flushTextBatch(d: Daemon, key: string): Promise<void> {
     try { assertAllowedChat(b.chat.chatId) } catch { d.store.set(key, null); return }
     const last = b.items.at(-1)!
     const text = b.items.length === 1 ? last.text : b.items.map(x => `[message_id=${x.meta.message_id}]\n${x.text}`).join('\n\n')
-    await d.routeText(b.chat, b.from, text, { ...last.meta, user_role: roleOf(b.from) ?? 'guest', message_ids: b.items.map(x => x.meta.message_id).join(','), batch_count: String(b.items.length) })
+    await d.routeText(b.chat, b.from, text, { ...last.meta, ...taskBatchMeta(b.items.map(x => x.meta)), user_role: roleOf(b.from) ?? 'guest', message_ids: b.items.map(x => x.meta.message_id).join(','), batch_count: String(b.items.length) })
     // New messages may have arrived while routing/launching: only remove the delivered ones.
     const current: Batch = JSON.parse(d.store.get(key) ?? raw)
     const sent = new Set(b.items.map(x => x.meta.message_id))
@@ -170,4 +170,12 @@ export function cancelTextBatch(d: Daemon, chat: ChatRef, from: string): boolean
   timers.get(d)?.delete(key)
   countEconomy(d, 'cancelled_batches')
   return true
+}
+
+/** Preserve a chosen intent when later messages in the same batch have no explicit mode. */
+export function taskBatchMeta(metas: Record<string, string>[]): Record<string, string> {
+  const kinds = [...new Set(metas.map(m => m.task_kind).filter(Boolean))]
+  if (kinds.length === 1) return { task_kind: kinds[0]! }
+  if (kinds.length > 1) return { task_kind: '', task_kinds: kinds.join(',') }
+  return {}
 }

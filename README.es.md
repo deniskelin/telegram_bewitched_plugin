@@ -261,3 +261,13 @@ Estructura: `server.ts`: un cliente MCP ligero por sesión; `src/daemon/`: el de
 ## Reliable UX
 
 [Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).
+
+## Ajustes e inicio de tareas
+
+En `/menu`, **Ajustes del chat** reúne idioma, voz, transcripción y detalle de respuestas y progreso; los cambios se aplican a los siguientes mensajes. **Avanzado** contiene streaming, avisos, gasto y horario silencioso global. **Ajustes del agente** controla modelo y razonamiento del proyecto: Claude Code cambia entre turnos; Codex y el cambio de motor requieren reiniciar.
+
+**Nueva tarea** o `/task` permite Explicar, Corregir, Comprobar o Revisar. La elección se usa una vez en el siguiente mensaje o archivo, se conserva al reiniciar el demonio y caduca en 30 minutos; está separada por usuario, chat y tema. `/task cancel` la cancela.
+
+El bot confirma el destino del archivo. Si no hay descripción, acción elegida ni tarea activa, ofrece botones sin consultar al modelo. El tipo de tarea no cambia permisos ni aislamiento; una respuesta breve no reduce el trabajo ni las comprobaciones.
+
+[Detalles y límites](docs/settings-and-tasks.md).

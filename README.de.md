@@ -261,3 +261,13 @@ Aufbau: `server.ts` – ein schlanker MCP-Client pro Sitzung; `src/daemon/` – 
 ## Reliable UX
 
 [Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).
+
+## Einstellungen und Aufgabenstart
+
+In `/menu` enthalten **Chat-Einstellungen** Sprache, Stimme, Transkript sowie Antwort- und Fortschrittsumfang; Änderungen gelten für folgende Nachrichten. **Erweitert** enthält Streaming, Benachrichtigungen, Verbrauch und globale Ruhezeiten. **Agent-Einstellungen** betreffen Modell und Denktiefe des Projekts: Claude Code wechselt zwischen Durchläufen; Codex und ein Engine-Wechsel benötigen einen Neustart.
+
+**Neue Aufgabe** oder `/task` bietet Erklären, Beheben, Prüfen und Review. Die Auswahl gilt einmal für die nächste Nachricht oder Datei, überlebt einen Daemon-Neustart und verfällt nach 30 Minuten; sie ist nach Person, Chat und Thema getrennt. `/task cancel` hebt sie auf.
+
+Der Bot bestätigt das Dateiziel. Ohne Beschreibung, ausgewählte Aktion oder aktive Aufgabe fragt er per Schaltfläche statt durch einen Modellaufruf. Die Auswahl ändert keine Rechte oder Sandbox; kurze Antworten verringern weder Arbeit noch notwendige Prüfungen.
+
+[Details und Grenzen](docs/settings-and-tasks.md).

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — settings and task entry
+
+- Separate immediate chat preferences from advanced transport/notification controls and project agent settings. Show model/effort restart semantics explicitly.
+- Add chat-scoped reply detail without reducing task scope, model quality or required verification.
+- Add one-shot explain/fix/check/review choices, scoped to sender and chat/topic, persisted with a 30-minute expiry.
+- Acknowledge file destination; retain ambiguous bare attachments for a scoped action button instead of spending a model turn on clarification. Preserve attachments and roles when routing.
+- Translate new UI labels and document permissions, expiry, retry and application timing.
+
+
 ## Unreleased — reliable UX
 
 - Persistent delivery phases distinguish bot receipt, transport dispatch and actual agent activity; delayed silent status cards avoid extra messages for fast answers.

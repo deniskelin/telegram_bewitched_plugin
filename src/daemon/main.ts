@@ -159,6 +159,7 @@ void d.startPolling(bot => {
   // One list per language (Telegram shows the one for the user's app language), plus the default.
   const commands = () => [
     { command: 'menu', description: t('Меню: сессии, группы, статистика, люди, настройки') },
+    { command: 'task', description: t('Новая задача') },
     { command: 'sessions', description: t('Сессии') },
     { command: 'usage', description: t('Лимиты подписки и расход') },
     { command: 'help', description: t('Помощь') },

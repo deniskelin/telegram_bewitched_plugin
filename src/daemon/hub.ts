@@ -5,6 +5,7 @@
  * /usage, /server, /users, /reports; each has a way back here.
  */
 
+import { resolveTarget } from './inbound.ts'
 import { pauseBadge } from './outoftokens.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
 import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
@@ -13,7 +14,7 @@ import { sttEnabled } from '../voice/stt.ts'
 import { settings } from '../config.ts'
 import { SILERO_VOICES, SPEEDS, ttsEnabled } from '../voice/tts.ts'
 import type { Daemon } from './daemon.ts'
-import { show, type Btn, type Screen } from './menu.ts'
+import { show, modelScreen, type Btn, type Screen } from './menu.ts'
 import { macrosScreen } from './macros.ts'
 import { fmtQuiet, QUIET_PRESETS, quietHours } from './quiet.ts'
 import { remindersScreen } from './reminders.ts'
@@ -25,6 +26,7 @@ import { sendDaily, todaySoFar } from './daily.ts'
 import { idleScreen } from './idle.ts'
 
 const BACK = () => button(t('« Меню'), 'hub:main')
+const ANSWER_INFO = { short: k('Кратко'), normal: k('Обычно'), detailed: k('Подробно') } as const
 const VOICE_INFO = { off: k('текстом'), mirror: k('голосом на голосовое'), always: k('всегда голосом') } as const
 
 /** Where the menu message lives: its chat and topic — the settings section is about it. */
@@ -46,7 +48,8 @@ export function mainScreen(d: Daemon): Screen {
     [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list'), button(t('👥 Группы'), 'gp:list')],
     [button(t('📊 Статистика'), 'hub:stats'), button(t('👥 Люди'), 'hub:people')],
     [button(t('⏰ Напоминания'), 'hub:rem'), button(t('⚡ Быстрые команды'), 'hub:mc')],
-    [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('💤 Приостановка сессий'), 'hub:idle')],
+    [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('🧠 Настройки агента'), 'hub:agent')],
+    [button(t('Новая задача'), 'tk:list'), button(t('💤 Приостановка сессий'), 'hub:idle')],
     [button(t('❓ Помощь'), 'hub:help')],
   ]
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
@@ -74,42 +77,56 @@ function peopleScreen(d: Daemon): Screen {
   }
 }
 
-function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Screen {
+export function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Screen {
   const p = prefsFor(c.chatId, c.threadId)
   const mark = (on: boolean, label: string) => `${on ? '• ' : ''}${label}`
+  const cur = normLang(p.lang)
   const lines = [
     c.threadId != null ? t('⚙️ <b>Настройки в этом топике</b>') : c.chatId.startsWith('-') ? t('⚙️ <b>Настройки в General</b>') : t('⚙️ <b>Настройки в этой личке</b>'),
-    t('Язык: {lang}', { lang: LANG_NAMES[normLang(p.lang) ?? lang()] }) + (p.lang ? '' : t(' (по умолчанию)')),
+    t('Изменения применяются сразу.'),
+    t('Язык: {lang}', { lang: LANG_NAMES[cur ?? lang()] }) + (p.lang ? '' : t(' (по умолчанию)')),
+    t('Подробность ответа: {detail}', { detail: t(ANSWER_INFO[p.answerDetail]) }),
     t('Подробность прогресса: {badge} {info}', { badge: verboseBadge(p.verbose), info: t(VERBOSE_INFO[p.verbose]) }),
-    t('Ответ: {v}', { v: p.streamAnswer ? t('пишется на глазах') : t('приходит целиком') }),
-    t('Конец ответа в группе: {v}', { v: p.streamFinal === 'edit' ? t('правкой того же сообщения, без звука') : t('новым сообщением, со звуком') }),
-    t('«✅ готово» после хода: {v}', { v: t(NOTIFY_DONE_INFO[p.notifyDone]) }),
     t('Ответы: {v}', { v: t(VOICE_INFO[p.voice]) }) + (ttsEnabled() ? '' : t(' (синтез речи выключен)')),
     t('Расшифровка голосовых в чате: {v}', { v: p.transcript ? t('показывать') : t('не показывать') }) + (sttEnabled() ? '' : t(' (распознавание выключено)')),
   ]
-  const silero = settings.ttsProvider === 'silero'
-  if (ttsEnabled()) lines.push(t('Голос: {voice}скорость ×{speed}', { voice: silero ? `${p.ttsVoice || settings.ttsVoice}, ` : '', speed: p.ttsSpeed }))
-  lines.push('', t('🌙 Тихие часы (для всего бота): {v} — в это время сообщения приходят без звука', { v: fmtQuiet(quietHours(d)) }))
-  const cur = normLang(p.lang)
   const kb: Btn[][] = [
     LANGS.slice(0, 3).map(l => button(mark(cur === l, LANG_NAMES[l]), `hub:lg:${l}`, cur === l ? 'primary' : undefined)),
     LANGS.slice(3).map(l => button(mark(cur === l, LANG_NAMES[l]), `hub:lg:${l}`, cur === l ? 'primary' : undefined)),
+    (['short', 'normal', 'detailed'] as const).map(v => button(mark(p.answerDetail === v, t(ANSWER_INFO[v])), `hub:ad:${v}`, p.answerDetail === v ? 'primary' : undefined)),
     ([0, 1, 2] as const).map(v => button(mark(p.verbose === v, verboseBadge(v)), `hub:v:${v}`, p.verbose === v ? 'primary' : undefined)),
-    [button(mark(p.streamAnswer, t('✍️ на глазах')), 'hub:sa:on', p.streamAnswer ? 'primary' : undefined), button(mark(!p.streamAnswer, t('📦 целиком')), 'hub:sa:off', !p.streamAnswer ? 'primary' : undefined)],
-    [button(mark(p.streamFinal === 'edit', t('✏️ конец: правкой')), 'hub:sf:edit', p.streamFinal === 'edit' ? 'primary' : undefined), button(mark(p.streamFinal === 'new', t('🆕 конец: новым')), 'hub:sf:new', p.streamFinal === 'new' ? 'primary' : undefined)],
-    (['off', 'long', 'always'] as const).map(v => button(mark(p.notifyDone === v, `✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`), `hub:n:${v}`, p.notifyDone === v ? 'primary' : undefined)),
     (['off', 'mirror', 'always'] as const).map(v => button(mark(p.voice === v, `🔊 ${v === 'off' ? t('текст') : v === 'mirror' ? t('зеркально') : t('всегда')}`), `hub:vo:${v}`, p.voice === v ? 'primary' : undefined)),
     [button(mark(p.transcript, t('🎤 показывать')), 'hub:tr:on', p.transcript ? 'primary' : undefined), button(mark(!p.transcript, t('🎤 скрывать')), 'hub:tr:off', !p.transcript ? 'primary' : undefined)],
-    [button(mark(!p.turnCost, t('🔢 расход: скрыт')), 'hub:tc:off', !p.turnCost ? 'primary' : undefined), button(mark(p.turnCost, t('🔢 после каждого хода')), 'hub:tc:on', p.turnCost ? 'primary' : undefined)],
   ]
   if (ttsEnabled()) {
     const voice = p.ttsVoice || settings.ttsVoice
-    if (silero) kb.push(SILERO_VOICES.map(v => button(mark(voice === v, v), `hub:tv:${v}`, voice === v ? 'primary' : undefined)))
+    lines.push(t('Голос: {voice}скорость ×{speed}', { voice: `${voice}, `, speed: p.ttsSpeed }))
+    if (settings.ttsProvider === 'silero') kb.push(SILERO_VOICES.map(v => button(mark(voice === v, v), `hub:tv:${v}`, voice === v ? 'primary' : undefined)))
     kb.push(SPEEDS.map(v => button(mark(p.ttsSpeed === v, `×${v}`), `hub:ts:${Math.round(v * 100)}`, p.ttsSpeed === v ? 'primary' : undefined)))
   }
+  kb.push([button(t('🧠 Настройки агента'), 'hub:agent'), button(t('Дополнительно'), 'hub:advanced')], [BACK()])
+  return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
+}
+
+export function advancedSettingsScreen(d: Daemon, c: { chatId: string; threadId?: number }): Screen {
+  const p = prefsFor(c.chatId, c.threadId)
+  const mark = (on: boolean, label: string) => `${on ? '• ' : ''}${label}`
   const q = quietHours(d)
-  kb.push(QUIET_PRESETS.map((v, i) => button(mark(q === v || (v === 'off' && fmtQuiet(q) === fmtQuiet('off')), `🌙 ${fmtQuiet(v)}`), `hub:qh:${i}`)))
-  kb.push([BACK()])
+  const lines = [
+    `<b>${t('Дополнительно')}</b>`, t('Изменения применяются сразу.'),
+    t('Ответ: {v}', { v: p.streamAnswer ? t('пишется на глазах') : t('приходит целиком') }),
+    t('Конец ответа в группе: {v}', { v: p.streamFinal === 'edit' ? t('правкой того же сообщения, без звука') : t('новым сообщением, со звуком') }),
+    t('«✅ готово» после хода: {v}', { v: t(NOTIFY_DONE_INFO[p.notifyDone]) }),
+    t('🌙 Тихие часы (для всего бота): {v} — в это время сообщения приходят без звука', { v: fmtQuiet(q) }),
+  ]
+  const kb: Btn[][] = [
+    [button(mark(p.streamAnswer, t('✍️ на глазах')), 'hub:sa:on', p.streamAnswer ? 'primary' : undefined), button(mark(!p.streamAnswer, t('📦 целиком')), 'hub:sa:off', !p.streamAnswer ? 'primary' : undefined)],
+    [button(mark(p.streamFinal === 'edit', t('✏️ конец: правкой')), 'hub:sf:edit', p.streamFinal === 'edit' ? 'primary' : undefined), button(mark(p.streamFinal === 'new', t('🆕 конец: новым')), 'hub:sf:new', p.streamFinal === 'new' ? 'primary' : undefined)],
+    (['off', 'long', 'always'] as const).map(v => button(mark(p.notifyDone === v, `✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`), `hub:n:${v}`, p.notifyDone === v ? 'primary' : undefined)),
+    [button(mark(!p.turnCost, t('🔢 расход: скрыт')), 'hub:tc:off', !p.turnCost ? 'primary' : undefined), button(mark(p.turnCost, t('🔢 после каждого хода')), 'hub:tc:on', p.turnCost ? 'primary' : undefined)],
+    QUIET_PRESETS.map((v, i) => button(mark(q === v, `🌙 ${fmtQuiet(v)}`), `hub:qh:${i}`)),
+    [button(t('⚙️ Настройки чата'), 'hub:set'), BACK()],
+  ]
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
 }
 
@@ -120,6 +137,7 @@ export function helpScreen(): Screen {
     '',
     t('<b>Команды</b> (всё это есть и кнопками в /menu):'),
     t('/sessions — сессии, /topics — топики, /usage — лимиты'),
+    t('/task — выбрать тип следующей задачи'),
     t('/economy — экономия; fast/balanced/thorough [модель] — профиль следующего запуска'),
     t('/remind &lt;когда&gt; &lt;текст&gt; — напоминание (30m, 2h, 18:30, завтра 9:00, каждый день 9:00)'),
     t('/macro add &lt;кнопка&gt; | &lt;текст&gt; — быстрая команда чата (кнопки — /menu → ⚡)'),
@@ -203,13 +221,22 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       if (ctx.chat) await sendDaily(d, String(ctx.chat.id), todaySoFar(), ctx.callbackQuery?.message?.message_thread_id)
       return true
     case 'reports': screen = primary ? reportsScreen(d) : statsScreen(); if (!primary) toast = t('Отчёты — у владельца.'); break
+    case 'agent': {
+      const c = place(ctx)
+      const target = resolveTarget(d, { ...c, isPrivate: !c.chatId.startsWith('-') }, String(ctx.from.id))
+      if (target.kind === 'session') screen = await modelScreen(d, target.session)
+      else if (target.kind === 'user_offline' && target.userId === owner()) { await ctx.answerCallbackQuery().catch(() => {}); const { handleSessionMenu } = await import('./menu.ts'); await handleSessionMenu(d, ctx, 'sm:owner'); return true }
+      else { toast = t('Сначала запустите сессию.'); screen = mainScreen(d) }
+      break
+    }
+    case 'advanced': screen = advancedSettingsScreen(d, place(ctx)); break
     case 'set': screen = settingsScreen(d, place(ctx)); break
     case 'idle': screen = primary ? idleScreen(d) : mainScreen(d); if (!primary) toast = t('Это настройка владельца.'); break
     case 'qh': {
       const v = QUIET_PRESETS[Number(value)]
       if (v) d.store.set('quiet_hours', v)
       toast = t('🌙 Тихие часы: {v}', { v: fmtQuiet(v ?? quietHours(d)) })
-      screen = settingsScreen(d, place(ctx))
+      screen = advancedSettingsScreen(d, place(ctx))
       break
     }
     case 'lg': {
@@ -227,9 +254,10 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       screen = settingsScreen(d, c)
       break
     }
-    case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': case 'sa': case 'sf': case 'tc': {
+    case 'ad': case 'v': case 'n': case 'vo': case 'tr': case 'tv': case 'ts': case 'sa': case 'sf': case 'tc': {
       const c = place(ctx)
       const key = c.threadId != null ? `${c.chatId}:${c.threadId}` : c.chatId
+      if (action === 'ad' && (value === 'short' || value === 'normal' || value === 'detailed')) setPref(key, { answerDetail: value })
       if (action === 'v' && ['0', '1', '2'].includes(value ?? '')) setPref(key, { verbose: Number(value) as 0 | 1 | 2 })
       if (action === 'n' && (value === 'off' || value === 'long' || value === 'always')) setPref(key, { notifyDone: value })
       if (action === 'vo' && (value === 'off' || value === 'mirror' || value === 'always')) setPref(key, { voice: value })
@@ -240,7 +268,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       if (action === 'tv' && (SILERO_VOICES as readonly string[]).includes(value ?? '')) setPref(key, { ttsVoice: value })
       if (action === 'ts' && SPEEDS.some(v => Math.round(v * 100) === Number(value))) setPref(key, { ttsSpeed: Number(value) / 100 })
       toast = t('Сохранено')
-      screen = settingsScreen(d, c)
+      screen = ['n', 'sa', 'sf', 'tc'].includes(action) ? advancedSettingsScreen(d, c) : settingsScreen(d, c)
       break
     }
     default: screen = mainScreen(d)
