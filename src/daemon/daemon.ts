@@ -291,6 +291,7 @@ export class Daemon {
     if (/^\d+$/.test(meta.user_id ?? '') && !meta.user_role) meta = { ...meta, user_role: roleOf(meta.user_id) ?? 'guest' }
     // Out of tokens: the message waits for the reset (outoftokens.ts).
     if (from && holdIfPaused(this, session, content, meta, from)) { deliveryPhase(this, meta, 'queued', session); return }
+    if (from) meta = { ...meta, answer_detail: prefsFor(from.chatId, from.threadId).answerDetail }
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && session.engine === 'claude' && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     // Codex has no channel: the message goes into its thread with codex queue (FR-16).

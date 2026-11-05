@@ -8,8 +8,8 @@ import { inChat } from './lang.ts'
 import type { Daemon, Session, ChatRef } from './daemon.ts'
 import { button } from './stream.ts'
 
-export type Phase = 'received' | 'launching' | 'queued' | 'sent' | 'working' | 'done' | 'failed' | 'stopped'
-const LABEL: Record<Phase, string> = { received: k('Получено ботом'), launching: k('Ждёт запуска'), queued: k('В очереди'), sent: k('Передано агенту'), working: k('Агент начал работу'), done: k('Готово'), failed: k('Не доставлено'), stopped: k('Остановлено') }
+export type Phase = 'question' | 'received' | 'launching' | 'queued' | 'sent' | 'working' | 'done' | 'failed' | 'stopped'
+const LABEL: Record<Phase, string> = { question: k('Ждёт вашего выбора'), received: k('Получено ботом'), launching: k('Ждёт запуска'), queued: k('В очереди'), sent: k('Передано агенту'), working: k('Агент начал работу'), done: k('Готово'), failed: k('Не доставлено'), stopped: k('Остановлено') }
 export type Delivery = { id: string; chat: ChatRef; messageId: string; userId: string; phase: Phase; at: number; updated: number; card?: number; project?: string; session?: string }
 const key = (chat: string, id: string) => `ux:delivery:${chat}:${id}`
 const pendingRenders = new WeakMap<Daemon, Set<string>>()

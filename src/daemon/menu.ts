@@ -200,7 +200,7 @@ export function launchEngineKb(d: Daemon, dir: string, data: (engine: string) =>
  * model and effort go in now (/model, /effort) where the engine can, and stay
  * the project's (FR-15).
  */
-async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
+export async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
   const choice = projectEngine(d, s.projectKey)
   const engine = engineOf(choice.engine)
   const cur = choice.model
@@ -227,6 +227,9 @@ async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
   rows.push([button(t('« Назад'), `sm:g:${s.id}:c`)])
   const text = [
     t('🧠 <b>Движок и модель</b> · сессия #{id} ({v})', { id: s.id, v: escapeHtml(projectTitle(s)) }),
+    t('Настройки агента применяются к проекту, а не только к этому чату.'),
+    ...(engine.liveEffortSwitch ? [t('Глубина размышлений меняется между ходами.')] : []),
+    engine.liveModelSwitch ? t('Модель меняется между ходами; смена движка требует перезапуска.') : t('Модель и глубина размышлений применятся после перезапуска.'),
     t('Сейчас работает: <b>{engine}</b>', { engine: engineOf(s.engine).name }),
     t('Для проекта: <b>{engine}</b> · модель <b>{model}</b>', { engine: engine.name, model: cur ? escapeHtml(cur) : t('по умолчанию CLI') }),
     ...(engine.efforts.length ? [t('🎚 Уровень рассуждений: <b>{effort}</b>{now}', {

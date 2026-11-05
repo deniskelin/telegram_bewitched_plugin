@@ -50,7 +50,7 @@ describe('token economy', () => {
     const old = process.env.TEXT_BATCH_MS
     process.env.TEXT_BATCH_MS = '3000'
     try {
-      queueTextBatch(d, chat, '111', 'first', { message_id: '1', user_role: 'owner' })
+      queueTextBatch(d, chat, '111', 'first', { message_id: '1', user_role: 'owner', task_kind: 'review' })
       queueTextBatch(d, chat, '111', 'second', { message_id: '2', user_role: 'owner' })
       queueTextBatch(d, { ...chat, threadId: 37 }, '111', 'other', { message_id: '3' })
       await flushTextBatch(d, 'economy:batch:111:0:111')
@@ -58,7 +58,7 @@ describe('token economy', () => {
       expect(delivered[0]!.text).toContain('first')
       expect(delivered[0]!.text).toContain('second')
       expect(delivered[0]!.text).not.toContain('other')
-      expect(delivered[0]!.meta).toMatchObject({ message_ids: '1,2', user_role: 'owner', batch_count: '2' })
+      expect(delivered[0]!.meta).toMatchObject({ message_ids: '1,2', user_role: 'owner', batch_count: '2', task_kind: 'review' })
       await flushTextBatch(d, 'economy:batch:111:37:111')
       expect(delivered).toHaveLength(2)
     } finally { process.env.TEXT_BATCH_MS = old }

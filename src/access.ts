@@ -27,6 +27,8 @@ export type GroupPolicy = {
 }
 
 export type Prefs = {
+  /** Presentation only: never reduce task scope or verification. */
+  answerDetail?: 'short' | 'normal' | 'detailed'
   /** 0 = only "thinking" + answer, 1 = + tool lines, 2 = + model text. */
   verbose?: 0 | 1 | 2
   /** Auto "done" notice after a turn. */
@@ -162,7 +164,7 @@ export function prefsFor(chatId: string, threadId?: number | null, a: Access = l
   const p = a.prefs ?? {}
   const chats = p.chats ?? {}
   const merged = { ...p, ...chats[chatId], ...(threadId != null ? chats[`${chatId}:${threadId}`] : {}) }
-  return { verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true, streamFinal: merged.streamFinal ?? 'edit', turnCost: merged.turnCost ?? false }
+  return { answerDetail: merged.answerDetail ?? 'normal', verbose: merged.verbose ?? 1, notifyDone: merged.notifyDone ?? 'long', transcript: merged.transcript ?? false, voice: merged.voice ?? 'mirror', ttsVoice: merged.ttsVoice ?? '', ttsSpeed: merged.ttsSpeed ?? 1, lang: merged.lang ?? '', streamAnswer: merged.streamAnswer ?? true, streamFinal: merged.streamFinal ?? 'edit', turnCost: merged.turnCost ?? false }
 }
 
 const VERBOSE_ICONS = ['🔕', '🔔', '📢'] as const

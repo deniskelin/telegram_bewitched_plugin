@@ -261,3 +261,7 @@ bunx tsc --noEmit
 ## Reliable UX
 
 [Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).
+
+## Settings and task entry
+
+[Chat/agent settings, reply detail and one-shot task/file actions](docs/settings-and-tasks.md).
