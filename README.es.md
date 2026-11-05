@@ -289,3 +289,5 @@ La tarjeta ocupa dos líneas y muestra solo **Detalles** / **Cerrar informe**. L
 El panel prioriza sesiones que requieren atención y conserva filtros y páginas. Los informes compactos unifican Claude/Codex, distinguen períodos móviles y naturales y ofrecen estimaciones API, gráficos y CSV/JSON. Los envíos programados fallidos se reintentan; las cuotas caducadas siguen siendo desconocidas. [Detalles](docs/usage-pages.md).
 
 Los detalles pliegan comparación, cuotas, modelos y proyectos por separado; las notificaciones tienen su propia vista e iconos de agente por ventana.
+
+La primera vista de `/usage` muestra las cuotas restantes de cinco horas y semanales de ambos agentes, sus reinicios y la hora de observación.
