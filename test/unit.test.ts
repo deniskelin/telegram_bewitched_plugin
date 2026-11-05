@@ -477,7 +477,17 @@ describe('rich (FR-11)', async () => {
 
   test('a screen gets a heading, a divider, sections and a footer', () => {
     const html = '📋 <b>Сессии</b> (2)\n1. 🟢 <b>a</b> · ok\n2. ⚪️ <b>b</b>\n\n💸 <b>Потребление</b>, в ценах API\n<blockquote>5 ч: 1\nСутки: 2</blockquote>\n\n<i>Стоимость — как в API.</i>'
-    expect(screenToRich(html)).toBe('<h3>📋 Сессии (2)</h3><hr/><p>1. 🟢 <b>a</b> · ok<br>2. ⚪️ <b>b</b></p><h4>💸 Потребление, в ценах API</h4><blockquote>5 ч: 1<br>Сутки: 2</blockquote><footer>Стоимость — как в API.</footer>')
+    expect(screenToRich(html)?.replace(/<tg-emoji[^>]*>([^]*?)<\/tg-emoji>/g,'$1')).toBe('<h3>📋 Сессии (2)</h3><hr/><p>1. 🟢 <b>a</b> · ok<br>2. ⚪️ <b>b</b></p><h4>💸 Потребление, в ценах API</h4><blockquote>5 ч: 1<br>Сутки: 2</blockquote><footer>Стоимость — как в API.</footer>')
+  })
+
+  test('expandable sections become native rich details; agent emoji and code remain intact',()=>{
+    const icon='<tg-emoji emoji-id="5256261335682941418">🤖</tg-emoji>'
+    const fallback=`📊 <b>Report</b>\n\n<blockquote expandable><b>Models</b>\n${icon} Claude Code &amp; Codex</blockquote>\n\n<pre>📋 literal</pre>`
+    const rich=screenToRich(fallback)!
+    expect(rich).toContain(`<details><summary>Models</summary><p>${icon} Claude Code &amp; Codex</p></details>`)
+    expect(rich).toContain('<pre>📋 literal</pre>')
+    expect(rich).toContain('<h3><tg-emoji emoji-id="5445146408153806223">📊</tg-emoji> Report</h3>')
+    expect(fallback).not.toContain('<details>')
   })
 
   test('notices and one-liners are not screens', () => {
@@ -487,7 +497,7 @@ describe('rich (FR-11)', async () => {
   })
 
   test('pre blocks keep their newlines', () => {
-    expect(screenToRich('🖥 <b>Сервер</b>\n<pre>a\n\nb</pre>')).toBe('<h3>🖥 Сервер</h3><hr/><pre>a\n\nb</pre>')
+    expect(screenToRich('🖥 <b>Сервер</b>\n<pre>a\n\nb</pre>')?.replace(/<tg-emoji[^>]*>([^]*?)<\/tg-emoji>/g,'$1')).toBe('<h3>🖥 Сервер</h3><hr/><pre>a\n\nb</pre>')
   })
 
   test('hardBreaks keeps single newlines, not in code, tables or before blocks', () => {

@@ -109,7 +109,7 @@ export type ButtonStyle = 'primary' | 'success' | 'danger'
 /** Callback button with Bot API 9.4 `style` (unknown to the bundled grammY types). */
 export function button(text: string, data: string, style?: ButtonStyle, disabled = false) {
   const { label, icon } = buttonIcon(text)
-  return { text: clip(label, 64), callback_data: data, ...(icon ? { icon_custom_emoji_id: icon } : {}), ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string }
+  return { text: clip(label, 64), callback_data: data, ...(icon ? { icon_custom_emoji_id: icon } : {}), ...(style ? { style } : {}), ...(disabled ? { disabled: {} } : {}) } as { text: string; callback_data: string; icon_custom_emoji_id?: string }
 }
 
 /** URL button with the same custom icon as button(). */

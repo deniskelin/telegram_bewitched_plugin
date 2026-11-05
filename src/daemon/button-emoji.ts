@@ -89,3 +89,7 @@ export const BUTTON_EMOJI: Record<string, string> = {
   '🛠': '5444869180899752137',
   '🧾': '5444889156792646660',
 }
+
+/** Agent identity is independent of the shared menu icon pack. */
+export const AGENT_EMOJI: Record<string,string> = {codex:'5255760585445901285',claude:'5256261335682941418'}
+export function agentEmoji(engine:string):string { return `<tg-emoji emoji-id="${AGENT_EMOJI[engine]??AGENT_EMOJI.claude}">🤖</tg-emoji>` }

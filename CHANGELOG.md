@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — report presentation
+
+- Replace dense usage details with collapsed sections, spaced cards and shared custom menu/agent emoji.
+- Move reset reminders and warmup controls into a dedicated Notifications screen; distinguish Claude/Codex windows with agent icons.
+- Preserve ordinary HTML fallback, scope-bound snapshots and paginated access to all rows.
+
+
 ## Unreleased — unified control panel and usage reports
 
 - Unify Claude/Codex calendar and rolling accounting, published Codex API equivalents, honest stale quotas and guarded forecasts.

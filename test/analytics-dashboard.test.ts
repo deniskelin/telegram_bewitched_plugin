@@ -1,3 +1,4 @@
+import { screenToRich } from '../src/rich.ts'
 import { beforeAll, afterAll, describe, test, expect } from 'bun:test'
 import { mkdirSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
@@ -9,7 +10,7 @@ import type { Daemon, Session } from '../src/daemon/daemon.ts'
 import type { Context } from 'grammy'
 import { buildReport, lastPeriod, sendDueReports, setReport, handleReportCallback } from '../src/daemon/reports.ts'
 import { readAnalytics, freezeAnalytics, bucketStats } from '../src/daemon/analytics.ts'
-import { freshCodexLimits, limitText, usageScreen, handleResetCallback } from '../src/daemon/usage.ts'
+import { freshCodexLimits, limitText, usageScreen, usageKeyboard, handleResetCallback } from '../src/daemon/usage.ts'
 import { loadUsageView, saveUsageView } from '../src/daemon/usageview.ts'
 import { sessionsList, handleSessionMenu } from '../src/daemon/menu.ts'
 import { sessionView } from '../src/daemon/sessionview.ts'
@@ -94,6 +95,31 @@ describe('consistent report/UI adapters',()=>{
     await handleResetCallback(d,ctx,`uv:${v.id}:e:json`);expect(calls.some(c=>c.method==='sendDocument')).toBe(true)
     await handleResetCallback(d,ctx,`uv:${v.id}:c:tokens`);expect(calls.filter(c=>c.method==='sendPhoto')).toHaveLength(1)
     await handleResetCallback(d,ctx,`uv:${v.id}:s:summary`);expect(loadUsageView(d,v.id)?.section).toBe('summary')
+  })
+  test('presentation folds details, preserves custom agent icons and isolates notifications, including old snapshots',async()=>{
+    const {d,ctx}=setup();await usageScreen(d,{chatId:'111'})
+    const v=latest(d),reset=new Date(Date.now()+3600_000).toISOString()
+    v.limits=[{label:'5 часов',percent:42,resetsAt:reset},{label:'Codex: 5 часов',percent:21,resetsAt:reset}]
+    delete v.sections.notifications;saveUsageView(d,v)
+    await handleResetCallback(d,ctx,`uv:${v.id}:s:details`)
+    let saved=loadUsageView(d,v.id)!
+    const buttons=usageKeyboard(d,saved).inline_keyboard.flat()
+    expect(buttons.some(b=>'callback_data'in b&&b.callback_data.endsWith(':s:notifications'))).toBe(true)
+    expect(buttons.some(b=>'callback_data'in b&&b.callback_data.includes(':a:lr:'))).toBe(false)
+    const rich=screenToRich(saved.pages[0]!)!
+    expect(rich).toContain('<details><summary>')
+    expect(rich).toContain('5256261335682941418')
+    expect(rich).not.toContain('недостаточно свежих данных')
+    await handleResetCallback(d,ctx,`uv:${v.id}:s:notifications`)
+    saved=loadUsageView(d,v.id)!
+    const windows=usageKeyboard(d,saved).inline_keyboard.flat().filter(b=>'callback_data'in b&&b.callback_data.endsWith(':x'))
+    expect(windows.map(b=>(b as {icon_custom_emoji_id?:string}).icon_custom_emoji_id)).toEqual(['5256261335682941418','5255760585445901285'])
+    expect(windows.every(b=>!b.text.includes('Codex')&&!b.text.includes('Claude'))).toBe(true)
+    expect(screenToRich(saved.pages[0]!)).toContain('Уведомления</h3>')
+    await handleResetCallback(d,ctx,`uv:${v.id}:a:lr:1:s`)
+    expect(d.store.get('limit_notify:Codex: 5 часов')).toEndWith('|silent')
+    await handleResetCallback(d,ctx,`uv:${v.id}:s:details`)
+    expect(loadUsageView(d,v.id)?.section).toBe('details')
   })
   test('stable project identity keeps same-basename projects separate; exports omit server paths',()=>{
     const {d}=setup(),now=Date.now(),range=analyticsRange('m','rolling',now,Intl.DateTimeFormat().resolvedOptions().timeZone)

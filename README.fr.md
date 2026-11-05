@@ -287,3 +287,5 @@ La carte tient sur deux lignes avec **Détails** / **Fermer le rapport**. Les d�
 ### Pages du rapport de consommation
 
 Le panneau privilégie les sessions demandant une intervention et conserve filtres et pages. Les rapports compacts unifient Claude/Codex, distinguent périodes glissantes et calendaires et proposent estimations API, graphiques et CSV/JSON. Les envois planifiés échoués sont réessayés ; les quotas périmés restent inconnus. [Détails](docs/usage-pages.md).
+
+Les détails replient séparément comparaison, quotas, modèles et projets ; les notifications ont leur propre vue et une icône d’agent par fenêtre.

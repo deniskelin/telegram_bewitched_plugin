@@ -41,7 +41,8 @@ export function menuStatus(s: Session): string {
 }
 
 /** The custom emoji of each agent (the owner's set): in rich text and on buttons. */
-export const AGENT_EMOJI: Record<string, string> = { codex: '5255760585445901285', claude: '5256261335682941418' }
+import { AGENT_EMOJI } from './button-emoji.ts'
+export { AGENT_EMOJI } from './button-emoji.ts'
 
 /** «🤖 Claude · opus-5-5 · высокий»: the agent with its emoji, the model and the reasoning effort when known. */
 export async function agentLine(s: Session): Promise<string> {

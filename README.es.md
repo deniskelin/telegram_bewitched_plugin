@@ -287,3 +287,5 @@ La tarjeta ocupa dos líneas y muestra solo **Detalles** / **Cerrar informe**. L
 ### Páginas del informe de consumo
 
 El panel prioriza sesiones que requieren atención y conserva filtros y páginas. Los informes compactos unifican Claude/Codex, distinguen períodos móviles y naturales y ofrecen estimaciones API, gráficos y CSV/JSON. Los envíos programados fallidos se reintentan; las cuotas caducadas siguen siendo desconocidas. [Detalles](docs/usage-pages.md).
+
+Los detalles pliegan comparación, cuotas, modelos y proyectos por separado; las notificaciones tienen su propia vista e iconos de agente por ventana.
