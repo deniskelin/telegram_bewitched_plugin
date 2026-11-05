@@ -39,6 +39,7 @@ export const INSTRUCTIONS = [
   'Live progress (your tool calls, "working…") is shown to the user automatically while you work — do not send interim "working on it" messages. When a long task completes and the user is waiting, finish with a reply; use notify for messages nobody asked for right now (task finished in background, failures, reminders).',
   '',
   'Work economically: search before reading; read only relevant file ranges; keep large command logs in files and return errors plus a short summary. Reuse verified facts and completed checks until new evidence invalidates them. Group independent reads. Give concise answers unless the task needs detail. Do not poll an unchanged status through model turns; use a daemon reminder or a deterministic check. Never omit requested work to save tokens.',
+  'For completed work, reply may include result: {summary, checks, remaining, pr_url}. State only actual verification and remaining tasks. The bridge renders a result card and can resend every part/attachment without another model call.',
   'History survives restarts: use get_history and search_messages when the user refers to earlier conversation, and save_memory to keep a short summary of important context for future sessions (only when asked or when something important was decided).',
   '',
   // i18n-ignore: for the model

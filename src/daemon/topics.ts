@@ -4,6 +4,7 @@
  * links the supergroup from the bot's DM.
  */
 
+import { rememberSession, deliveryPhase } from './ux.ts'
 import { contextSeen, contextMemory, rememberContext, rememberMemory, budgetHistory, countEconomy } from './economy.ts'
 import { remindersForModel } from './reminders.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
@@ -193,6 +194,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
     if (sent) replaceStatusCard(d, String(sent.chat.id), s.topic?.threadId, sent.message_id)
   }
 
+  rememberSession(d, s)
   // The resume event is text for the model, not the interface: it is not translated (i18n-ignore).
   const key = pendingKeyOf(d, s)
   const queued = d.store.peekPending(key, settings.pendingTtlH)
@@ -232,6 +234,7 @@ export async function onSessionRegistered(d: Daemon, s: Session): Promise<void> 
       ...(s.topic ? { topic_name: safeMeta(s.topic.name) ?? '' } : {}),
       pending_count: String(pending.length),
     }, pending.length ? chat : undefined)
+    for (const p of pending) deliveryPhase(d, p.meta, 'sent', s)
     rememberContext(d, s, chat.chatId, restoredIds)
     if (restoredMemory) rememberMemory(d, s, restoredMemory)
   }

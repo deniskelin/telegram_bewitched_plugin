@@ -20,6 +20,8 @@ import { k, t } from '../i18n/index.ts'
 
 
 export function statusLabel(s: Session): string {
+  if (s.stopRequest?.phase === 'sent') return `⏳ ${t('Команда остановки отправлена')}`
+  if (s.stopRequest?.phase === 'failed') return `⚠️ ${t('Остановка не подтверждена')}`
   if (s.status === 'waiting') return t('🟡 ждёт разрешения')
   if (s.status === 'working') return t('🔵 работает')
   return t('🟢 свободна')
@@ -27,6 +29,8 @@ export function statusLabel(s: Session): string {
 
 /** ⚙️ working, 🔐 waiting for a permission, 💤 idle: the list's status icons. */
 export function menuStatusIcon(s: Session): string {
+  if (s.stopRequest?.phase === 'sent') return '⏳'
+  if (s.stopRequest?.phase === 'failed') return '⚠️'
   return s.status === 'waiting' ? '🔐' : s.status === 'working' ? '⚙️' : '💤'
 }
 

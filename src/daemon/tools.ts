@@ -3,6 +3,7 @@
  * outbound traffic shares one Bot instance (rate limits, history, streams).
  */
 
+import { publishResult, sessionPhase, type ResultDetails } from './ux.ts'
 import { rememberContext, boundedResult } from './economy.ts'
 import { execFileSync } from 'child_process'
 import { githubBase, postprocess, type Copy } from '../postprocess.ts'
@@ -188,7 +189,8 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     if (id) {
       recordOut(d, c, id, text, 'text', s)
       ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
-      finishReply(d, s, c)
+      void publishResult(d, s, c, ids, text, args.result as ResultDetails | undefined).catch(err => d.log(`result card: ${err}`))
+    finishReply(d, s, c)
       return idsResult(ids)
     }
     voice = null
@@ -199,7 +201,8 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     if (id) {
       recordOut(d, c, id, text, 'text', s)
       ids.push(id, ...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
-      finishReply(d, s, c)
+      void publishResult(d, s, c, ids, text, args.result as ResultDetails | undefined).catch(err => d.log(`result card: ${err}`))
+    finishReply(d, s, c)
       return idsResult(ids)
     }
     voice = null
@@ -273,6 +276,7 @@ async function reply(d: Daemon, s: Session, args: Record<string, unknown>): Prom
     if (id) ids.push(id)
   }
   ids.push(...(await sendFiles(d, c, files, replyMode !== 'off' ? replyTo : undefined)))
+  void publishResult(d, s, c, ids, text, args.result as ResultDetails | undefined).catch(err => d.log(`result card: ${err}`))
   finishReply(d, s, c)
   return idsResult(ids)
 }
@@ -370,6 +374,7 @@ async function replyVoice(d: Daemon, s: Session, args: Record<string, unknown>):
 }
 
 function finishReply(d: Daemon, s: Session, c: ChatRef): void {
+  sessionPhase(d, s, 'done')
   if (s.turn) s.turn.replied = true
   d.streams.onReply(s, c.chatId)
 }

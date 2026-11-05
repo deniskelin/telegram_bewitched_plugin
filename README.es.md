@@ -257,3 +257,7 @@ Estructura: `server.ts`: un cliente MCP ligero por sesión; `src/daemon/`: el de
 ## Token economy
 
 [Configuration, batching, context budgets and measurement](docs/token-economy.md). Owner command: `/economy [fast|balanced|thorough] [model]`.
+
+## Reliable UX
+
+[Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).

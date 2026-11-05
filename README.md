@@ -270,3 +270,7 @@ Layout: `server.ts` — a thin MCP client per session; `src/daemon/` — the dae
 ## Token economy
 
 [Configuration, batching, context budgets and measurement](docs/token-economy.md). Owner command: `/economy [fast|balanced|thorough] [model]`.
+
+## Reliable UX
+
+[Delivery tracking, verified Stop, session navigation and result cards](docs/reliable-ux.md).

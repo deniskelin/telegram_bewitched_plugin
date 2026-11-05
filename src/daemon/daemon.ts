@@ -4,6 +4,7 @@
  * sessions connected over the unix socket.
  */
 
+import { deliveryPhase, rememberSession, startUx } from './ux.ts'
 import { installEconomy, restoreTextBatches, countEconomy, rememberContext } from './economy.ts'
 import { holdIfPaused } from './outoftokens.ts'
 import type { Socket } from 'bun'
@@ -21,7 +22,7 @@ import { Streams } from './stream.ts'
 import { installLang } from './lang.ts'
 import { t } from '../i18n/index.ts'
 import { installQuietHours } from './quiet.ts'
-import { channelText, codexDeliver, codexQueue, codexUndelivered, codexTakeHeld, holdForCodex, withProjectEngine, type EngineId } from './engines.ts'
+import { channelText, codexDeliver, codexQueue, codexUndelivered, codexTakeHeldEntries, holdForCodex, withProjectEngine, type EngineId } from './engines.ts'
 import { tmuxCapture, tmuxKeys, tmuxPaneId, tmuxKillWindow, tmuxLaunch, tmuxType, tmuxLocation, type LaunchOptions, type TmuxLocation, type TypeOptions } from './launch.ts'
 import { sendNotice } from './journal.ts'
 import { pendingKeyOf } from './topics.ts'
@@ -74,6 +75,7 @@ export type Session = {
   /** The agent CLI behind it (FR-15); everything connecting over the channel is Claude Code. */
   engine: EngineId
   /** Set when ⏹ interrupted the turn: late hooks of that turn must not mark it working again. Cleared by the next prompt. */
+  stopRequest?: { at: number; phase: 'sent' | 'confirmed' | 'failed' }
   stoppedAt: number | null
   /**
    * When the last turn ended (the Stop hook fired). Each hook is a process of its own, so the
@@ -288,27 +290,31 @@ export class Daemon {
     // the role at delivery, not when the event was made. Events with no person (session_message) get none.
     if (/^\d+$/.test(meta.user_id ?? '') && !meta.user_role) meta = { ...meta, user_role: roleOf(meta.user_id) ?? 'guest' }
     // Out of tokens: the message waits for the reset (outoftokens.ts).
-    if (from && holdIfPaused(this, session, content, meta, from)) return
+    if (from && holdIfPaused(this, session, content, meta, from)) { deliveryPhase(this, meta, 'queued', session); return }
     // FR-1: tell the model the chat streams the answer, so it writes it as text and replies with use_last_message.
     if (from && session.engine === 'claude' && prefsFor(from.chatId, from.threadId).streamAnswer) meta = { ...meta, stream_answer: 'true' }
     // Codex has no channel: the message goes into its thread with codex queue (FR-16).
     if (session.engine === 'codex') {
       // FR-16: during a turn messages are held and go in as one after it (codexFlushHeld) — one turn, not N.
-      if (session.turn && meta.event == null && (session.lastHookAt ?? 0) >= session.turn.start && holdForCodex(this, session, channelText(content, meta), from)) {
+      if (session.turn && meta.event == null && (session.lastHookAt ?? 0) >= session.turn.start && holdForCodex(this, session, channelText(content, meta), from, meta)) {
+        deliveryPhase(this, meta, 'queued', session)
         this.log(`message from ${from?.chatId ?? '?'} held for codex session ${session.id} until its turn ends`)
         return
       }
       void codexDeliver(this, session, channelText(content, meta)).then(() => {
+        deliveryPhase(this, meta, 'sent', session)
         if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
-      }).catch(err => codexUndelivered(this, session, err, from))
+      }).catch(err => { deliveryPhase(this, meta, 'failed', session); codexUndelivered(this, session, err, from) })
     }
     else {
       this.send(session, { t: 'inbound', content, meta })
+      deliveryPhase(this, meta, 'sent', session)
       if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
     }
     if (from) this.log(`message from ${from.chatId}${from.threadId ? `/${from.threadId}` : ''} → session ${session.id}${session.status === 'idle' ? '' : ` (${session.status})`}`)
     session.lastActivity = Date.now()
     session.stoppedAt = null
+    session.stopRequest = undefined
     if (from) {
       session.answer = ''
       session.lastChat = from
@@ -348,8 +354,8 @@ export class Daemon {
   private register(sock: Socket<SockData>, h: Hello): Session {
     const projectKey = h.projectRoot || h.cwd
     let id: string
-    do id = randomBytes(2).toString('hex')
-    while (this.sessions.has(id))
+    do id = randomBytes(4).toString('hex')
+    while (this.sessions.has(id) || this.store.get(`ux:alias:${id}`) != null)
     const s: Session = {
       id,
       sock,
@@ -383,6 +389,7 @@ export class Daemon {
       reconnect: h.reconnect === true || (h.claudePid != null && this.store.get(`greeted:${h.claudePid}`) != null),
     }
     this.sessions.set(id, s)
+    rememberSession(this, s)
     this.log(`session ${id} connected: ${projectKey}${h.passive ? ' (passive)' : ''} pid=${h.claudePid}`)
     return s
   }
@@ -393,7 +400,7 @@ export class Daemon {
     for (const [rid, p] of this.permissions) if (p.sessionId === s.id) this.permissions.delete(rid)
     this.log(`session ${s.id} disconnected`)
     // FR-16: messages held for the end of a Codex turn wait for the next session instead of being lost.
-    for (const text of codexTakeHeld(s)) this.store.addPending(pendingKeyOf(this, s), text, {})
+    for (const item of codexTakeHeldEntries(s)) this.store.addPending(pendingKeyOf(this, s), item.content, item.meta)
     if (this.sessions.size === 0) this.lastClientGone = Date.now()
     this.onSessionGone(s)
     this.onSessionsChanged()
@@ -507,6 +514,7 @@ export class Daemon {
     this.botId = me.id
     installLang(this, this.bot)
     installEconomy(this, this.bot)
+    startUx(this)
     register(this.bot)
     restoreTextBatches(this)
     let warned = false

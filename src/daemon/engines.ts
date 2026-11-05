@@ -11,6 +11,7 @@
  * starts with them.
  */
 
+import { deliveryPhase } from './ux.ts'
 import { activateContext } from './economy.ts'
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs'
 import { homedir } from 'os'
@@ -337,7 +338,7 @@ async function codexDeliverNow(d: Daemon, s: Session, text: string): Promise<voi
 }
 
 /** FR-16: messages that came in during a Codex turn, by session. */
-const codexHeld = new Map<string, { texts: string[]; from?: ChatRef }>()
+const codexHeld = new Map<string, { texts: string[]; metas: Record<string, string>[]; from?: ChatRef }>()
 
 /** Longest a message waits for the end of a turn: a lost Stop hook must not keep it forever. */
 export const CODEX_HOLD_MAX_MS = 10 * 60_000
@@ -346,11 +347,12 @@ export const CODEX_HOLD_MAX_MS = 10 * 60_000
  * Hold a message for after the turn (the turn really runs: a hook came since
  * it began). False when nothing should be held (no chat to tell).
  */
-export function holdForCodex(d: Daemon, s: Session, text: string, from?: ChatRef): boolean {
+export function holdForCodex(d: Daemon, s: Session, text: string, from?: ChatRef, meta: Record<string, string> = {}): boolean {
   if (!from) return false
   const first = !codexHeld.has(s.id)
-  const h = codexHeld.get(s.id) ?? { texts: [], from }
+  const h = codexHeld.get(s.id) ?? { texts: [], metas: [], from }
   h.texts.push(text)
+  h.metas.push(meta)
   h.from = from
   codexHeld.set(s.id, h)
   if (first) setTimeout(() => { if (codexHeld.get(s.id) === h) codexFlushHeld(d, s) }, CODEX_HOLD_MAX_MS).unref?.()
@@ -365,13 +367,18 @@ export function codexHeldCount(s: Session): number {
 /** The turn ended: what came in meanwhile goes in as one message. Text for the model, not translated. */
 export function codexFlushHeld(d: Daemon, s: Session): void {
   const h = codexHeld.get(s.id)
-  if (!h) return
+  if (!h || s.stoppedAt) return
   codexHeld.delete(s.id)
   const text = h.texts.length === 1
     ? h.texts[0]
     : `While you were working, ${h.texts.length} messages came in. Answer them together, in order:\n\n${h.texts.join('\n\n')}` // i18n-ignore
   d.log(`codex ${s.id}: ${h.texts.length} held message(s) delivered after the turn`)
-  void codexDeliver(d, s, text).catch(err => codexUndelivered(d, s, err, h.from))
+  void codexDeliver(d, s, text).then(() => {
+    for (const meta of h.metas) deliveryPhase(d, meta, 'sent', s)
+  }).catch(err => {
+    for (const meta of h.metas) deliveryPhase(d, meta, 'failed', s)
+    codexUndelivered(d, s, err, h.from)
+  })
 }
 
 /** The session is gone: its held messages, if any, are handed back (to the pending queue by the caller). */
@@ -510,4 +517,11 @@ export function withProjectEngine(d: Daemon, dir: string, o: LaunchOptions = {})
   // The project's model only for its own engine: a restart on another CLI does not get a model it does not have.
   const model = engine === c.engine ? c.model : undefined
   return { engine, ...(model ? { model } : {}), ...(effort ? { effort } : {}), ...(prompt ? { prompt } : {}), ...o }
+}
+
+/** Preserve identities while putting a disconnected agent's queue back on disk. */
+export function codexTakeHeldEntries(s: Session): { content: string; meta: Record<string, string> }[] {
+  const h = codexHeld.get(s.id)
+  codexHeld.delete(s.id)
+  return h?.texts.map((content, i) => ({ content, meta: h.metas[i] ?? {} })) ?? []
 }

@@ -4,6 +4,8 @@
  * callback-button dispatcher.
  */
 
+import { verifyStop } from './stopcheck.ts'
+import { receiveMessage, deliveryPhase, sessionPhase, handleUxCallback, replacementSession } from './ux.ts'
 import { projectEngine, setProjectEngine, setProjectEffort, engineOf } from './engines.ts'
 import { queueTextBatch, economyReport, cancelTextBatch } from './economy.ts'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
@@ -263,6 +265,7 @@ async function handleInbound(
   const isPrivate = ctx.chat!.type === 'private'
   const chat: ChatRef = { chatId, threadId, isPrivate }
 
+  receiveMessage(d, chat, String(msg.message_id), String(from.id))
   d.store.addMessage({
     chat_id: chatId, thread_id: threadId ?? null, message_id: msg.message_id, direction: 'in',
     from_id: String(from.id), from_name: from.username ?? from.first_name, date: msg.date, text,
@@ -277,6 +280,7 @@ async function handleInbound(
   // Permission reply typed as text ("yes abcde").
   const permMatch = PERMISSION_REPLY_RE.exec(text)
   if (permMatch && can(from.id, 'permissions')) {
+    deliveryPhase(d, { chat_id: chatId, message_id: String(msg.message_id) }, 'done')
     const request_id = permMatch[2]!.toLowerCase()
     const behavior = permMatch[1]!.toLowerCase().startsWith('y') ? 'allow' : 'deny'
     resolvePermission(d, request_id, behavior)
@@ -289,6 +293,7 @@ async function handleInbound(
   // Claude Code's own commands are for the session's window, not for the model: answer here, no turn spent.
   const sc = SESSION_COMMAND_RE.exec(text)
   if (sc && !attachment) {
+    deliveryPhase(d, { chat_id: chatId, message_id: String(msg.message_id) }, 'done')
     const s = target.kind === 'session' ? target.session : null
     if (!can(from.id, 'control')) await reply(tr('Команды окна сессии — у владельца.'))
     else if (!s) await reply(tr('Сессия здесь не запущена — команду некуда отправить.'))
@@ -299,12 +304,14 @@ async function handleInbound(
     return
   }
   // Unknown commands in General are not for Claude.
-  if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) return
+  if (d.isTopicsChat(chatId) && threadId == null && text.startsWith('/')) { deliveryPhase(d, { chat_id: chatId, message_id: String(msg.message_id) }, 'done'); return }
   if (target.kind === 'unbound') {
+    deliveryPhase(d, { chat_id: chatId, message_id: String(msg.message_id) }, 'failed')
     await reply(tr('Этот чат не привязан ни к проекту, ни к пользователю — сообщение некуда доставить.'))
     return
   }
   if (target.kind === 'archived') {
+    deliveryPhase(d, { chat_id: chatId, message_id: String(msg.message_id) }, 'queued')
     if (target.projectKey) d.store.addPending(target.projectKey, text, { chat_id: chatId, thread_id: String(threadId), user: safeMeta(from.username ?? String(from.id)) ?? '', user_id: String(from.id), ts: new Date(msg.date * 1000).toISOString() })
     await reply(tr('🗄 Топик в архиве. Сообщение сохранил — оно дойдёт до сессии после восстановления.'), new InlineKeyboard([[button(tr('▶️ Восстановить'), `tp:unar:${target.threadId}`, 'success')]]))
     return
@@ -365,7 +372,10 @@ async function handleInbound(
     } : {}),
   }
 
+  if (target.kind !== 'session') deliveryPhase(d, meta, target.kind === 'launch' || target.kind === 'user_offline' || target.kind === 'group_launch' ? 'launching' : 'queued')
+
   if (target.kind === 'group_unbound') {
+    deliveryPhase(d, meta, 'queued')
     d.store.addPending(groupPendingKey(chatId), text, meta)
     const asked = await askOwnerAboutGroup(d, chatId, 'title' in ctx.chat! ? ctx.chat.title : undefined).catch(() => false)
     if (asked) await reply(tr('⏳ Владелец ещё не настроил эту группу — сообщение сохранено и дойдёт, когда он решит.'))
@@ -401,7 +411,7 @@ async function handleInbound(
   // FR-9: what the daemon can answer itself never wakes the session.
   if (!msg.forward_origin && !imagePath && !(attachment && !isSpeech(attachment.kind))) {
     const handled = await withoutModel(d, ctx, text, target.session, { chatId, threadId, messageId: msg.message_id, from: from.id }, (s2, t2) => d.deliver(s2, t2, meta, chat))
-    if (handled) return
+    if (handled) { deliveryPhase(d, meta, 'done', target.session); return }
   }
 
   if (msg.forward_origin) {
@@ -419,7 +429,7 @@ async function handleInbound(
 
   // FR-20: a reply to a message of an older conversation asks where it goes.
   if (await holdIfOldConversation(d, target.session, chat, text, meta).catch(err => { d.log(`reply conversation check failed: ${err}`); return false })) return
-  if (!imagePath && !attachment && !msg.reply_to_message && !questionId && !text.startsWith('/') && queueTextBatch(d, chat, String(from.id), text, meta)) return
+  if (!imagePath && !attachment && !msg.reply_to_message && !questionId && !text.startsWith('/') && queueTextBatch(d, chat, String(from.id), text, meta)) { deliveryPhase(d, meta, 'queued', target.session); return }
   d.deliver(target.session, text, meta, chat)
 }
 
@@ -427,14 +437,13 @@ function flushBatch(d: Daemon, key: string): void {
   const b = batches.get(key)
   if (!b) return
   batches.delete(key)
-  const target = resolveTarget(d, b.chat, String(b.ctx.from?.id ?? ''))
-  if (target.kind !== 'session') return
-  if (b.items.length === 1) return d.deliver(target.session, b.items[0].text, b.items[0].meta, b.chat)
-  // i18n-ignore: for the model
-  const content = `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) =>
-    `${i + 1}. [${it.meta.forward_from ?? '?'}${it.meta.forward_date ? `, ${it.meta.forward_date}` : ''}] ${it.text}`).join('\n\n')
-  const last = b.items[b.items.length - 1].meta
-  d.deliver(target.session, content, { ...last, forward_count: String(b.items.length) }, b.chat)
+  const last = b.items.at(-1)!.meta
+  // Re-resolve at dispatch: a session may have restarted while forwards were being collected.
+  const content = b.items.length === 1 ? b.items[0]!.text :
+    `Переслано сообщений: ${b.items.length}\n\n` + b.items.map((it, i) => // i18n-ignore
+      `${i + 1}. [${it.meta.forward_from ?? '?'}${it.meta.forward_date ? `, ${it.meta.forward_date}` : ''}] ${it.text}`).join('\n\n')
+  const meta = { ...last, message_ids: b.items.map(x => x.meta.message_id).join(','), ...(b.items.length > 1 ? { forward_count: String(b.items.length) } : {}) }
+  void routeText(d, b.chat, String(b.ctx.from?.id ?? ''), content, meta).catch(err => { deliveryPhase(d, meta, 'failed'); d.log(`forward batch: ${err}`) })
 }
 
 // --- permission relay ---
@@ -524,12 +533,20 @@ export function stopSession(d: Daemon, s: Session, source: StopSource): 'interru
   }
   s.notes.push('Предыдущий ход был остановлен пользователем кнопкой ⏹ в Telegram') // i18n-ignore: for the model
   d.streams.close(s, 'stopped')
-  if (settings.stopMode === 'interrupt' && s.tmuxPane && s.status === 'working') {
+  if (settings.stopMode === 'interrupt' && s.tmuxPane && (s.status === 'working' || s.status === 'waiting')) {
     // Through the daemon's tmux adapter (tests replace it): never a tmux call of its own.
-    void d.tmuxKeys(s.tmuxPane, ['Escape']).catch(err => d.log(`tmux interrupt for ${s.id} failed: ${err instanceof Error ? err.message : err}`))
-    s.status = 'idle'
-    s.turn = null
-    s.stoppedAt = Date.now()
+    if (s.stopRequest?.phase === 'sent') return 'interrupted'
+    const at = Date.now()
+    s.stoppedAt = at
+    s.stopRequest = { at, phase: 'sent' }
+    void d.tmuxKeys(s.tmuxPane, ['Escape']).then(() => {
+      setTimeout(() => void verifyStop(d, s, at).catch(err => d.log(`stop verification: ${err}`)), 700).unref?.()
+    }).catch(err => {
+      s.stopRequest = { at, phase: 'failed' }
+      d.log(`tmux interrupt for ${s.id} failed: ${err}`)
+      const c = s.lastChat
+      if (c) void d.bot.api.sendMessage(c.chatId, tr('Остановка не подтверждена'), { message_thread_id: c.threadId }).catch(() => {})
+    })
     d.log(`stop #${s.id} via ${source}: Escape sent to ${s.tmuxPane}`)
     d.onSessionsChanged()
     return 'interrupted'
@@ -543,11 +560,16 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
   const id = data.slice('stop:'.length)
   if (!can(ctx.from!.id, 'stop')) return void ctx.answerCallbackQuery({ text: tr('Нет доступа.') }).catch(() => {})
   const s = d.sessions.get(id)
-  if (!s) return void ctx.answerCallbackQuery({ text: tr('Сессия уже отключена.') }).catch(() => {})
+  if (!s) {
+    const current = replacementSession(d, id)
+    await ctx.answerCallbackQuery({ text: current ? tr('Сессия перезапущена: откройте актуальную карточку.') : tr('Сессия уже отключена.') }).catch(() => {})
+    if (current && can(ctx.from!.id, 'control')) await ctx.editMessageReplyMarkup({ reply_markup: new InlineKeyboard([[button(tr('Открыть текущую сессию'), `sm:s:${current.id}`)]]) }).catch(() => {})
+    return
+  }
   if (ctx.chat) cancelTextBatch(d, { chatId: String(ctx.chat.id), threadId: ctx.callbackQuery?.message?.message_thread_id, isPrivate: ctx.chat.type === 'private' }, String(ctx.from!.id))
   const r = stopSession(d, s, 'button')
   await ctx.answerCallbackQuery({
-    text: r === 'interrupted' ? tr('⏹ Остановлено') : s.tmuxPane ? tr('Сейчас нечего останавливать.') : tr('Прерывание недоступно: сессия запущена не в tmux.'),
+    text: r === 'interrupted' ? tr('Команда остановки отправлена') : s.tmuxPane ? tr('Сейчас нечего останавливать.') : tr('Прерывание недоступно: сессия запущена не в tmux.'),
     show_alert: r !== 'interrupted' && !s.tmuxPane,
   }).catch(() => {})
 }
@@ -650,6 +672,7 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
 
   bot.on('callback_query:data', async ctx => {
     const data = ctx.callbackQuery.data
+    if (await handleUxCallback(d, ctx, data)) return
     if (data.startsWith('perm:')) return handlePermissionCallback(d, ctx, data)
     if (data.startsWith('q:')) return handleQuestionCallback(d, ctx, data)
     if (data.startsWith('stop:')) return handleStopCallback(d, ctx, data)

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — reliable UX
+
+- Persistent delivery phases distinguish bot receipt, transport dispatch and actual agent activity; delayed silent status cards avoid extra messages for fast answers.
+- Stop requests are acknowledged immediately and verified against hooks/the idle screen, with a separate owner-confirmed queue cancellation action.
+- Sessions needing attention and unread results are prioritised; current tasks and projects navigation are visible.
+- Old session actions redirect to the current card, and screen keys carry the session identity.
+- Durable work-result cards show supplied verification/remaining work, PR links and replay all original parts/files without a model call.
+
+
 ## Unreleased — token economy
 
 - Durable fixed-window text batching, replayed-update receipts, and cancellation of queued text on Stop.
