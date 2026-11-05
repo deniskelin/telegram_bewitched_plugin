@@ -1,3 +1,5 @@
+import { htmlPages } from '../core/html-pages.ts'
+import { newUsageViewId, saveUsageView, loadUsageView, viewScope, ownsUsageView, lockUsageView, type UsageView } from './usageview.ts'
 /**
  * /usage: the subscription plan (from Claude Code's credentials file), its
  * limits (percent used and reset time, from the same undocumented endpoint
@@ -437,7 +439,7 @@ export async function usageReport(d: Daemon, now = Date.now(), period: Period = 
     const owners = group(list, e => ownerOf(d, e.cwd))
     return [
       tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
-      tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.slice(0, 15).map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
+      tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
     ]
   }
 
@@ -716,15 +718,33 @@ function rescheduleRequested(d: Daemon): void {
 }
 
 /** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
-export function usageKeyboard(d: Daemon): InlineKeyboard {
+/** One screen is a frozen report snapshot; changing its period does not change other screens. */
+export async function usageScreen(d: Daemon, c: { chatId: string; threadId?: number }, period = usagePeriod(d), now = Date.now()): Promise<{ text: string; kb: InlineKeyboard }> {
+  const pages = htmlPages(await usageReport(d, now, period))
+  const v: UsageView = { id: newUsageViewId(d), ...c, period, page: 0, pages, at: now, limits: (lastLimits()?.limits.items ?? []).map(l => ({ ...l, resetsAt: l.resetsAt?.toISOString() ?? null })) }
+  saveUsageView(d, v)
+  return renderUsageView(d, v)
+}
+export function renderUsageView(d: Daemon, v: UsageView): { text: string; kb: InlineKeyboard } {
+  return { text: (v.page ? tr('📊 <b>Подписки и расход</b>') + '\n\n' : '') + v.pages[v.page]! + (v.pages.length > 1 ? `\n\n<i>${tr('Страница {page} из {total}', { page: v.page + 1, total: v.pages.length })}</i>` : ''), kb: usageKeyboard(d, v) }
+}
+
+export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
   const l = lastLimits()
-  const period = usagePeriod(d)
+  const period = view?.period ?? usagePeriod(d)
   const rows: ReturnType<typeof button>[][] = [
-    PERIODS.map(p => button(`${p === period ? '• ' : ''}${tr(PERIOD_BUTTON[p])}`, `us:p:${p}`, p === period ? 'primary' : undefined)),
+    PERIODS.map(p => button(`${p === period ? '• ' : ''}${tr(PERIOD_BUTTON[p])}`, view ? `uv:${view.id}:p:${p}` : `us:p:${p}`, p === period ? 'primary' : undefined)),
   ]
+  if (view && view.pages.length > 1) rows.unshift([
+    ...(view.page > 0 ? [button('◀', `uv:${view.id}:g:${view.page - 1}`)] : []),
+    button(`${view.page + 1}/${view.pages.length}`, `uv:${view.id}:g:${view.page}`),
+    ...(view.page + 1 < view.pages.length ? [button('▶', `uv:${view.id}:g:${view.page + 1}`)] : []),
+  ])
+  const wrap = (data: string) => view ? `uv:${view.id}:a:${data}` : data
   // One row per limit, like the periods: off / with sound / silent, the chosen one marked.
-  const seg = (on: boolean, text: string, data: string) => button(`${on ? '• ' : ''}${text}`, data, on ? 'primary' : undefined)
-  for (const [i, it] of (l?.limits.items ?? []).entries()) {
+  const seg = (on: boolean, text: string, data: string) => button(`${on ? '• ' : ''}${text}`, wrap(data), on ? 'primary' : undefined)
+  const shownLimits = view ? view.limits.map(l => ({ ...l, resetsAt: l.resetsAt ? new Date(l.resetsAt) : null })) : l?.limits.items ?? []
+  for (const [i, it] of shownLimits.entries()) {
     if (!it.resetsAt) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req && windowKey(new Date(req.at)) === windowKey(it.resetsAt) && !req.off ? req : null
@@ -736,12 +756,37 @@ export function usageKeyboard(d: Daemon): InlineKeyboard {
   }
   const wOn = warmupOn(d)
   rows.push([seg(!wOn, tr('⚡ Окно: обычно'), 'us:w:off'), seg(wOn, tr('⚡ Сразу после сброса'), 'us:w:on')])
-  rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), 'us:r')])
+  rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), view ? `uv:${view.id}:r` : 'us:r')])
   return new InlineKeyboard(rows)
 }
 
 /** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections; us:r — refresh. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const view = /^uv:([a-f0-9]{8}):(g|p|r|a)(?::(.+))?$/.exec(data)
+  if (!view) return handleUsageAction(d, ctx, data)
+  if (!ctx.from || String(ctx.from.id) !== owner()) { await ctx.answerCallbackQuery({ text: tr('Только для владельца подписки.') }).catch(() => {}); return true }
+  return lockUsageView(d, view[1]!, async () => {
+    const v = loadUsageView(d, view[1]!)
+    if (!v || !ownsUsageView(v, ctx) || Date.now() - v.at > 7 * 86400_000) { await ctx.answerCallbackQuery({ text: tr('Отчёт устарел. Откройте /usage заново.') }).catch(() => {}); return true }
+    if (view[2] === 'a') return handleUsageAction(d, ctx, view[3]!, v)
+    await ctx.answerCallbackQuery().catch(() => {})
+    if (view[2] === 'g') {
+      if (!/^\d{1,6}$/.test(view[3] ?? '')) return true
+      v.page = Math.min(v.pages.length - 1, Math.max(0, Number(view[3])))
+    } else {
+      if (view[2] === 'p') { if (!PERIODS.includes(view[3] as Period)) return true; v.period = view[3] as Period; v.page = 0 }
+      else resetLimitsCache()
+      v.at = Date.now(); v.pages = htmlPages(await usageReport(d, v.at, v.period))
+      v.page = Math.min(v.page, v.pages.length - 1)
+      v.limits = (lastLimits()?.limits.items ?? []).map(l => ({ ...l, resetsAt: l.resetsAt?.toISOString() ?? null }))
+    }
+    saveUsageView(d, v)
+    const screen = renderUsageView(d, v)
+    await ctx.editMessageText(screen.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: screen.kb }).catch(err => { if (!isMessageNotModified(err)) d.log(`usage pages: ${err}`) })
+    return true
+  })
+}
+async function handleUsageAction(d: Daemon, ctx: Context, data: string, view?: UsageView): Promise<boolean> {
   const p = /^us:(?:p:(h5|d|w|m)|r)$/.exec(data)
   const m = /^lr:(\d+)(?::(s|x))?$/.exec(data)
   const w = /^us:w:(on|off)$/.exec(data)
@@ -772,7 +817,7 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
     const session = lastLimits()?.limits.items.find(l => l.label === LIMIT_LABELS.session)
     if (w[1] === 'on' && session?.resetsAt) scheduleWarmup(d, session.resetsAt)
     await ctx.answerCallbackQuery({ text: w[1] === 'on' ? tr('⚡ Окно будет запускаться сразу после сброса') : tr('Окно запускается как обычно') }).catch(() => {})
-    await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
+    await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d, view) }).catch(() => {})
     return true
   }
   if (p) {
@@ -780,13 +825,15 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
     if (p[1]) d.store.set('usage_period', p[1])
     else resetLimitsCache()
     await ctx.answerCallbackQuery({ text: tr('📊 Собираю…') }).catch(() => {})
-    await ctx.editMessageText(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
+    const screen = await usageScreen(d, viewScope(ctx))
+    await ctx.editMessageText(screen.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: screen.kb })
       .catch(err => { if (!isMessageNotModified(err)) d.log(`usage period: ${err}`) })
     return true
   }
   if (!m) return true
-  const it = lastLimits()?.limits.items[Number(m[1])]
-  if (!it?.resetsAt) {
+  const stored = view?.limits[Number(m[1])]
+  const it = view ? stored && { ...stored, resetsAt: stored.resetsAt ? new Date(stored.resetsAt) : null } : lastLimits()?.limits.items[Number(m[1])]
+  if (!it?.resetsAt || it.resetsAt.getTime() <= Date.now()) {
     await ctx.answerCallbackQuery({ text: tr('Данные о лимитах устарели — откройте /usage заново.') }).catch(() => {})
     return true
   }
@@ -794,7 +841,7 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
   const off = m[2] === 'x'
   requestResetNotice(d, it.label, it.resetsAt, silent, off)
   await ctx.answerCallbackQuery({ text: off ? tr('Без напоминания о сбросе') : `${silent ? tr('🔕 Тихо напомню') : tr('🔔 Напомню')} ${fmtReset(it.resetsAt, Date.now(), false)}` }).catch(() => {})
-  await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d) }).catch(() => {})
+  await ctx.editMessageReplyMarkup({ reply_markup: usageKeyboard(d, view) }).catch(() => {})
   return true
 }
 

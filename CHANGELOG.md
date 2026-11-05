@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — usage report pages
+
+- Paginate interactive usage reports in one message, preserving balanced HTML and every model/project row.
+- Persist scope-bound per-report period/page snapshots across restarts; refresh and settings controls retain pagination. Reject expired reset reminders.
+- Cover long reports, oversized escaped lines, scope isolation, persistence and overlapping navigation; document the new UI in six READMEs.
+
 ## Unreleased — lifecycle architecture and compact reports
 
 - Extract pure session/task lifecycle rules and a task repository port; route daemon adapters through typed state events.

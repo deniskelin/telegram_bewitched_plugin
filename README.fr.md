@@ -283,3 +283,7 @@ Les transitions des sessions et tâches sont isolées de Telegram, SQLite et des
 ### Rapports compacts
 
 La carte tient sur deux lignes avec **Détails** / **Fermer le rapport**. Les détails affichent le rapport et les autres actions ; **Replier** rétablit la vue compacte. Fermer le rapport conserve la tâche et la réponse originale. Les mises à jour de consommation et les redémarrages préservent la vue choisie.
+
+### Pages du rapport de consommation
+
+Les longs rapports restent dans un message avec flèches et compteur de pages. Tous les modèles et projets restent accessibles. Chaque rapport conserve sa période et sa page après redémarrage ; la navigation utilise un instantané sans appel au modèle. Actualiser reconstruit le rapport. [Détails](docs/usage-pages.md).

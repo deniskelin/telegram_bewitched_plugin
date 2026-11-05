@@ -21,7 +21,7 @@ import { remindersScreen } from './reminders.ts'
 import { reportsScreen } from './reports.ts'
 import { serverReport } from './server.ts'
 import { button, urlButton } from './stream.ts'
-import { limitsLine, usageKeyboard, usageReport } from './usage.ts'
+import { limitsLine, usageScreen } from './usage.ts'
 import { sendDaily, todaySoFar } from './daily.ts'
 import { idleScreen } from './idle.ts'
 
@@ -213,7 +213,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
     case 'usage':
       if (!primary) { toast = t('Лимиты подписки видит только владелец.'); screen = statsScreen(); break }
       await ctx.answerCallbackQuery({ text: t('📊 Собираю…') }).catch(() => {})
-      await show(ctx, { text: await usageReport(d), kb: usageKeyboard(d) })
+      await show(ctx, await usageScreen(d, place(ctx)))
       return true
     case 'digest':
       // The day so far, as the 00:00 summary: a new rich message under the menu.

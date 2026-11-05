@@ -2,6 +2,9 @@ import type { Dict } from './index.ts'
 
 // Interface strings: Russian source → zh. Keys are the exact strings passed to t()/k() in the code.
 const dict: Dict = {
+  "Страница {page} из {total}": "第 {page} 页，共 {total} 页",
+  "Отчёт устарел. Откройте /usage заново.": "此报告已过期。请重新打开 /usage。",
+
   "Отчёт закрыт": "报告已关闭",
   "Закрыть отчёт": "关闭报告",
   "Свернуть": "收起",

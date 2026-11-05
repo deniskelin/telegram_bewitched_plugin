@@ -27,7 +27,7 @@ import { statusLabel } from './report.ts'
 import { blockedScreen, questionAfterTyping } from './screen.ts'
 import { InputBlocked } from './launch.ts'
 import { button } from './stream.ts'
-import { usageReport, usageKeyboard } from './usage.ts'
+import { usageScreen } from './usage.ts'
 
 // i18n-ignore: words people type (Russian and English), matched whatever the interface language
 const STOP_RE = /^\s*(стоп|хватит|отмена|остановись|stop|cancel|halt)[\s.!]*$/i
@@ -116,7 +116,8 @@ export async function withoutModel(d: Daemon, ctx: Context, text: string, s: Ses
   }
 
   if (LIMITS_RE.test(text) && String(here.from) === owner()) {
-    await reply(await usageReport(d), usageKeyboard(d))
+    const screen = await usageScreen(d, here)
+    await reply(screen.text, screen.kb)
     saved(d, 'limits')
     return true
   }

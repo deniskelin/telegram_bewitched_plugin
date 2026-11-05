@@ -300,3 +300,7 @@ Session/task transitions are isolated in a core without Telegram, SQLite or proc
 ### Compact result reports
 
 Result cards start with two lines and just **Details** / **Close report**. Details reveals the report and all other actions; **Collapse** folds it again. Closing the report retains the task and original answer. Delayed usage updates and restarts preserve the chosen view.
+
+### Usage report pages
+
+Long usage reports stay in one message with previous/next arrows and a page counter. All models and projects are accessible. Each report keeps its own period and page across restarts; page navigation uses a saved snapshot without model calls. Refresh rebuilds the snapshot. [Details](docs/usage-pages.md).

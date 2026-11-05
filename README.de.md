@@ -283,3 +283,7 @@ Sitzungs- und Aufgabenübergänge sind von Telegram, SQLite und Prozessen getren
 ### Kompakte Berichte
 
 Ergebniskarten beginnen mit zwei Zeilen und **Details** / **Bericht schließen**. Details zeigt den Bericht und weitere Aktionen; **Einklappen** stellt die kompakte Ansicht wieder her. Das Schließen erhält Aufgabe und Originalantwort. Verbrauchsaktualisierungen und Neustarts bewahren die gewählte Ansicht.
+
+### Seiten im Verbrauchsbericht
+
+Lange Berichte bleiben in einer Nachricht mit Pfeilen und Seitenzähler. Alle Modelle und Projekte bleiben erreichbar. Jeder Bericht behält Zeitraum und Seite über Neustarts; die Navigation nutzt einen gespeicherten Stand ohne Modellaufrufe. Aktualisieren erstellt den Bericht neu. [Details](docs/usage-pages.md).

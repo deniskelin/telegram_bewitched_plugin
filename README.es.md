@@ -283,3 +283,7 @@ Las transiciones de sesiones y tareas están aisladas de Telegram, SQLite y los 
 ### Informes compactos
 
 La tarjeta ocupa dos líneas y muestra solo **Detalles** / **Cerrar informe**. Los detalles revelan el informe y las demás acciones; **Contraer** restaura la vista compacta. Cerrar el informe conserva la tarea y la respuesta original. Las actualizaciones de consumo y los reinicios respetan la vista elegida.
+
+### Páginas del informe de consumo
+
+Los informes largos permanecen en un mensaje con flechas y contador de páginas. Todos los modelos y proyectos siguen accesibles. Cada informe conserva su período y página tras reinicios; la navegación usa una instantánea sin llamadas al modelo. Actualizar regenera el informe. [Detalles](docs/usage-pages.md).
