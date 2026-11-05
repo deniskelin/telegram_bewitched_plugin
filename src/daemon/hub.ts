@@ -1,3 +1,5 @@
+import { lastResult } from './ux.ts'
+import { sessionShortName } from './report.ts'
 /**
  * /menu: one message that leads everywhere — sessions, topics, statistics,
  * people, reminders, this chat's settings and help — so the command list in
@@ -21,7 +23,7 @@ import { remindersScreen } from './reminders.ts'
 import { reportsScreen } from './reports.ts'
 import { serverReport } from './server.ts'
 import { button, urlButton } from './stream.ts'
-import { limitsLine, usageKeyboard, usageReport } from './usage.ts'
+import { limitsLine, usageScreen, usagePeriod } from './usage.ts'
 import { sendDaily, todaySoFar } from './daily.ts'
 import { idleScreen } from './idle.ts'
 
@@ -36,13 +38,25 @@ function place(ctx: Context): { chatId: string; threadId?: number } {
   return { chatId: String(ctx.chat!.id), threadId }
 }
 
-export function mainScreen(d: Daemon): Screen {
+export function mainScreen(d: Daemon, c?:{chatId:string;threadId?:number}, more=false): Screen {
   const sessions = d.activeSessions()
   const lines = [t('🎛 <b>Меню</b>'), t('Сессий: {n}', { n: sessions.length }) + (d.permissions.size ? t(' · 🔐 ждут разрешения: {n}', { n: d.permissions.size }) : '')]
   const limits = limitsLine()
   if (limits) lines.push(limits)
   const pause = pauseBadge(d)
   if (pause) lines.push(pause)
+  const own=owner()?d.userSession?.(owner()!):null
+  lines.push(own?`${t('Ваша сессия')}: ${own.engine==='codex'?'Codex':'Claude'} · ${own.status==='idle'?t('свободна'):own.status==='waiting'?t('ждёт разрешения'):t('работает')}`:`${t('Ваша сессия')}: ⏻ ${t('не запущена')}`)
+  if(c&&owner()){const target=resolveTarget(d,{...c,isPrivate:!c.chatId.startsWith('-')},owner()!);if(target.kind==='session')lines.push(`${t('Этот чат')}: ${sessionShortName(d,target.session)}`)}
+  if(!more){
+    const actions:Btn[][]=[]
+    if(d.permissions.size)actions.push([button(t('🔐 Разрешения ({size})',{size:d.permissions.size}),'sm:perms')])
+    for(const s of sessions.filter(s=>s.turn?.stuck||s.stopRequest?.phase==='failed'||d.store.get(`ux:error:${s.projectKey}`)).slice(0,2))actions.push([button(`${t('Требуют внимания')}: ${sessionShortName(d,s)}`,`sm:s:${s.id}`)])
+    const unread=sessions.filter(s=>lastResult(d,s.projectKey)?.unread)
+    if(unread.length)actions.push([button(`${t('Непрочитанный результат')}: ${unread.length}`,'sl:attention')])
+    if(pause)actions.push([button(t('▶️ Продолжить сейчас'),'tok:go')])
+    return{text:lines.join('\n'),kb:new InlineKeyboard([...actions,[button(t('📋 Сессии'),'sm:list'),button(t('Лимиты'),'hub:usage'),button(t('Отчёты'),'hub:periods')],[button(t('Новая задача'),'tk:list'),button(t('Дополнительно'),'hub:more')]] as never)}
+  }
   const kb: Btn[][] = [
     ...(pause ? [[button(t('▶️ Продолжить сейчас'), 'tok:go')]] : []),
     [button(t('📋 Сессии'), 'sm:list'), button(t('📂 Топики'), 'tm:list'), button(t('👥 Группы'), 'gp:list')],
@@ -50,7 +64,7 @@ export function mainScreen(d: Daemon): Screen {
     [button(t('⏰ Напоминания'), 'hub:rem'), button(t('⚡ Быстрые команды'), 'hub:mc')],
     [button(t('⚙️ Настройки чата'), 'hub:set'), button(t('🧠 Настройки агента'), 'hub:agent')],
     [button(t('Новая задача'), 'tk:list'), button(t('💤 Приостановка сессий'), 'hub:idle')],
-    [button(t('❓ Помощь'), 'hub:help')],
+    [button(t('❓ Помощь'), 'hub:help'), BACK()],
   ]
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
 }
@@ -167,7 +181,7 @@ export function helpScreen(): Screen {
 export function registerHubCommands(d: Daemon, bot: Bot): void {
   bot.command('menu', async ctx => {
     if (!ctx.from || !can(ctx.from.id, 'control')) return
-    const { text, kb } = mainScreen(d)
+    const { text, kb } = mainScreen(d,place(ctx))
     const thread = ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: thread })
   })
@@ -200,6 +214,8 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
   let toast: string | undefined
   let screen: Screen
   switch (action) {
+    case 'more': screen=mainScreen(d,place(ctx),true);break
+    case 'periods': await ctx.answerCallbackQuery().catch(()=>{});await show(ctx,await usageScreen(d,place(ctx)));return true
     case 'stats': screen = statsScreen(); break
     case 'people': screen = peopleScreen(d); break
     case 'rem': {
@@ -213,7 +229,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
     case 'usage':
       if (!primary) { toast = t('Лимиты подписки видит только владелец.'); screen = statsScreen(); break }
       await ctx.answerCallbackQuery({ text: t('📊 Собираю…') }).catch(() => {})
-      await show(ctx, { text: await usageReport(d), kb: usageKeyboard(d) })
+      await show(ctx,await usageScreen(d,place(ctx),usagePeriod(d),Date.now(),'current',undefined,'limits'))
       return true
     case 'digest':
       // The day so far, as the 00:00 summary: a new rich message under the menu.
@@ -226,12 +242,12 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       const target = resolveTarget(d, { ...c, isPrivate: !c.chatId.startsWith('-') }, String(ctx.from.id))
       if (target.kind === 'session') screen = await modelScreen(d, target.session)
       else if (target.kind === 'user_offline' && target.userId === owner()) { await ctx.answerCallbackQuery().catch(() => {}); const { handleSessionMenu } = await import('./menu.ts'); await handleSessionMenu(d, ctx, 'sm:owner'); return true }
-      else { toast = t('Сначала запустите сессию.'); screen = mainScreen(d) }
+      else { toast = t('Сначала запустите сессию.'); screen = mainScreen(d,place(ctx)) }
       break
     }
     case 'advanced': screen = advancedSettingsScreen(d, place(ctx)); break
     case 'set': screen = settingsScreen(d, place(ctx)); break
-    case 'idle': screen = primary ? idleScreen(d) : mainScreen(d); if (!primary) toast = t('Это настройка владельца.'); break
+    case 'idle': screen = primary ? idleScreen(d) : mainScreen(d,place(ctx)); if (!primary) toast = t('Это настройка владельца.'); break
     case 'qh': {
       const v = QUIET_PRESETS[Number(value)]
       if (v) d.store.set('quiet_hours', v)
@@ -271,7 +287,7 @@ export async function handleHubCallback(d: Daemon, ctx: Context, data: string): 
       screen = ['n', 'sa', 'sf', 'tc'].includes(action) ? advancedSettingsScreen(d, c) : settingsScreen(d, c)
       break
     }
-    default: screen = mainScreen(d)
+    default: screen = mainScreen(d,place(ctx))
   }
   await show(ctx, screen)
   await ctx.answerCallbackQuery(toast ? { text: toast } : undefined).catch(() => {})

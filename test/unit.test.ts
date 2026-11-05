@@ -357,7 +357,7 @@ describe('period reports', async () => {
     expect(svg.match(/<path /g)?.length).toBe(2)
     const png = await svgToPng(svg)
     expect(png?.subarray(1, 4).toString()).toBe('PNG')
-    expect(columnChartSvg({ title: 'T', subtitle: 'S', columns: [{ label: 'a', value: 0 }] })).toContain('Нет активности')
+    expect(columnChartSvg({ title: 'T', subtitle: 'S', columns: [{ label: 'a', value: 0 }] })).toContain('Нет данных для этой метрики')
   })
 })
 
@@ -732,12 +732,12 @@ describe('Codex usage', () => {
     expect(modelKey({ model: 'claude-opus-5-5' })).toBe('opus-5-5')
   })
 
-  test('a window that has reset since the last request shows empty', async () => {
+  test('a window that has expired without a new observation remains unknown', async () => {
     const { freshCodexLimits } = await import('../src/daemon/usage.ts')
     const at = new Date('2026-11-01T17:45:58Z')
     const l = { at: 0, plan: 'plus', items: [{ label: 'Codex: 5 часов', percent: 40, resetsAt: at }] }
     expect(freshCodexLimits(l, at.getTime() - 1)[0].percent).toBe(40)
-    expect(freshCodexLimits(l, at.getTime() + 1)[0]).toEqual({ label: 'Codex: 5 часов', percent: 0, resetsAt: null })
+    expect(freshCodexLimits(l, at.getTime() + 1)[0]).toMatchObject({ label: 'Codex: 5 часов', percent: 40, resetsAt: at, stale:true })
   })
 })
 

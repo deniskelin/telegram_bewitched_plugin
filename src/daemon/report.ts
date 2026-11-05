@@ -1,3 +1,5 @@
+import { readFileSync, statSync } from 'fs'
+import { sessionTranscript } from './handoff.ts'
 /**
  * Session cards for /sessions: type, status, id, folder, branch,
  * topic, tmux target to attach from a terminal, stop availability, timing.
@@ -10,7 +12,6 @@ import { escapeHtml, fmtDuration } from '../format.ts'
 import { topicLink } from '../tg.ts'
 import { cmdlineOf } from '../proc.ts'
 import { effortLabel, engineOf, projectEngine } from './engines.ts'
-import { collectCodex } from './codexusage.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { remoteControl, type RemoteControl } from './remote.ts'
 import { projectRules } from './permrules.ts'
@@ -149,8 +150,14 @@ function transcriptOf(s: Session, argv: string[]): string | null {
 /** The model and reasoning effort the session runs at: its transcript's last reply (Claude Code) or its last Codex request; nulls — not recorded yet. */
 export async function sessionModel(s: Session): Promise<{ model: string | null; effort: string | null }> {
   if (s.engine === 'codex') {
-    const last = collectCodex(Date.now(), 1).entries.filter(e => e.cwd === s.cwd).reduce<{ ts: number; model: string; effort?: string } | null>((a, e) => (!a || e.ts > a.ts ? e : a), null)
-    return { model: last?.model ?? null, effort: last?.effort ?? null }
+    const path=sessionTranscript(s)
+    if(path)try{
+      if(statSync(path).size<=64*1024*1024){for(const line of readFileSync(path,'utf8').split('\n').reverse()){
+        let event;try{event=JSON.parse(line)}catch{continue}
+        if(event.type==='turn_context'&&typeof event.payload?.model==='string'){const p=event.payload;const effort=typeof p.effort==='string'?p.effort:p.collaboration_mode?.settings?.reasoning_effort;return{model:p.model,effort:typeof effort==='string'?effort:null}}
+      }}
+    }catch{}
+    return{model:null,effort:null}
   }
   const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
   const path = transcriptOf(s, argv)
@@ -161,8 +168,7 @@ export async function sessionModel(s: Session): Promise<{ model: string | null; 
 /** The reasoning effort the session runs at: its transcript's last reply (Claude Code) or its last Codex request; null — not recorded (the CLI's default). */
 export async function sessionEffort(s: Session): Promise<string | null> {
   if (s.engine === 'codex') {
-    const last = collectCodex(Date.now(), 1).entries.filter(e => e.cwd === s.cwd).reduce<{ ts: number; effort?: string } | null>((a, e) => (!a || e.ts > a.ts ? e : a), null)
-    return last?.effort ?? null
+    return (await sessionModel(s)).effort
   }
   const argv = s.argv.length ? s.argv : s.claudePid ? cmdlineOf(s.claudePid) : []
   const path = transcriptOf(s, argv)

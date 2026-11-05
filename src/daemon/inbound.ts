@@ -35,7 +35,7 @@ import { handleIdleCallback } from './idle.ts'
 import { handleShortcutCallback, withoutModel } from './shortcuts.ts'
 import { handleVoiceForbiddenCallback } from './tools.ts'
 import { handleTokensCallback } from './outoftokens.ts'
-import { handleResetCallback, usageKeyboard, usageReport } from './usage.ts'
+import { handleResetCallback, usageScreen } from './usage.ts'
 import { sendDaily, todaySoFar } from './daily.ts'
 import { handleSessionMenu, sessionCommandScreen } from './menu.ts'
 import { handleScreenCallback } from './screen.ts'
@@ -679,7 +679,8 @@ export function registerInbound(d: Daemon, bot: Bot, token: string): void {
   // The subscription is the owner's, and the breakdown shows everyone's sessions.
   bot.command('usage', async ctx => {
     if (ctx.chat.type !== 'private' || !can(ctx.from!.id, 'control')) return
-    await ctx.reply(await usageReport(d), { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: usageKeyboard(d) })
+    const screen = await usageScreen(d, { chatId: String(ctx.chat.id) })
+    await ctx.reply(screen.text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: screen.kb })
   })
 
   bot.command('digest', async ctx => {
