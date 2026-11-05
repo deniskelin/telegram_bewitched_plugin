@@ -1,6 +1,7 @@
+import { taskForSession, taskReport, taskUsageData, taskOf, changeTask, refreshTaskCards } from './taskcost.ts'
 /** Persistent UI state. A transport dispatch is not an acknowledgement from the agent. */
 import { randomBytes } from 'crypto'
-import { InlineKeyboard, type Context } from 'grammy'
+import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { can } from '../access.ts'
 import { clip, escapeHtml, maskSecrets } from '../format.ts'
 import { t, k } from '../i18n/index.ts'
@@ -109,7 +110,7 @@ export function replacementSession(d: Daemon, id: string): Session | null {
 }
 
 export type ResultDetails = { summary?: string; checks?: string; remaining?: string; pr_url?: string }
-export type Result = { id: string; session: string; project: string; chat: ChatRef; messages: number[]; card?: number; files: number[]; summary: string; checks?: string; remaining?: string; pr?: string; unread: boolean; at: number }
+export type Result = { taskId?: string; cost?: string; id: string; session: string; project: string; chat: ChatRef; messages: number[]; card?: number; files: number[]; summary: string; checks?: string; remaining?: string; pr?: string; unread: boolean; at: number }
 export function lastResult(d: Daemon, project: string): Result | null {
   const id = d.store.get(`ux:last-result:${project}`)
   return id ? JSON.parse(d.store.get(`ux:result:${id}`) ?? 'null') : null
@@ -120,6 +121,10 @@ export async function publishResult(d: Daemon, s: Session, chat: ChatRef, messag
   const clean = (x: unknown, n: number) => clip(maskSecrets(typeof x === 'string' ? x : ''), n)
   const pr = typeof details?.pr_url === 'string' ? details.pr_url : text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/)?.[0]
   const r: Result = { id, session: s.id, project: s.projectKey, chat, messages: [...new Set(messages)], files: messages.filter(id => d.store.getMessage(chat.chatId, id)?.kind === 'document'), summary: clean(details?.summary || text || t('Получить файлы'), 500), ...(details?.checks ? { checks: clean(details.checks, 500) } : {}), ...(details?.remaining ? { remaining: clean(details.remaining, 500) } : {}), ...(pr && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr) ? { pr } : {}), unread: true, at: Date.now() }
+  r.taskId = taskForSession(d, s)
+  const task = r.taskId ? taskOf(d, r.taskId) : null
+  if (!task || task.chat.chatId !== chat.chatId || (task.chat.threadId ?? 0) !== (chat.threadId ?? 0)) r.taskId = undefined
+  if (r.taskId) { if (task?.state !== 'closed') changeTask(d, r.taskId, 'ready'); r.cost = taskReport(d, r.taskId) }
   d.store.set(`ux:result:${id}`, JSON.stringify(r))
   d.store.set(`ux:last-result:${s.projectKey}`, id)
   const posted = await inChat(d, chat.chatId, chat.threadId, () => d.bot.api.sendMessage(chat.chatId, resultText(r, false), { parse_mode: 'HTML', disable_notification: true, message_thread_id: chat.threadId, reply_markup: resultButtons(r) }))
@@ -128,17 +133,18 @@ export async function publishResult(d: Daemon, s: Session, chat: ChatRef, messag
   d.store.set(`ux:result:${id}`, JSON.stringify(current))
 }
 export function resultText(r: Result, details: boolean): string {
-  return [`<b>${t('Результат')}</b>`, escapeHtml(clip(r.summary, details ? 500 : 200)), ...(r.checks ? [`<b>${t('Проверено')}</b>: ${escapeHtml(clip(r.checks, details ? 500 : 160))}`] : []), ...(r.remaining ? [`<b>${t('Осталось')}</b>: ${escapeHtml(clip(r.remaining, details ? 500 : 160))}`] : [])].join('\n\n')
+  return [`<b>${t('Результат')}</b>`, escapeHtml(clip(r.summary, details ? 500 : 200)), ...(r.checks ? [`<b>${t('Проверено')}</b>: ${escapeHtml(clip(r.checks, details ? 500 : 160))}`] : []), ...(r.remaining ? [`<b>${t('Осталось')}</b>: ${escapeHtml(clip(r.remaining, details ? 500 : 160))}`] : []), ...(r.cost ? [r.cost] : [])].join('\n\n')
 }
-function resultButtons(r: Result): InlineKeyboard {
+export function resultButtons(r: Result): InlineKeyboard {
   const kb = new InlineKeyboard([[button(t('Подробности'), `urx:show:${r.id}`), button(t('Повторить всё'), `urx:repeat:${r.id}`)], [button(t('Отметить прочитанным'), `urx:read:${r.id}`)]])
+  if (r.taskId) kb.row().text(t('Полный отчёт по расходу'), `urx:cost:${r.id}`).row().text(t('Продолжить задачу'), `urx:continue:${r.id}`).text(t('Закрыть задачу'), `urx:close:${r.id}`)
   if (r.files?.length) kb.row().text(t('Получить файлы'), `urx:files:${r.id}`)
   if (r.pr) kb.row().url('PR', r.pr)
   return kb
 }
 export async function handleUxCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const delivery = /^ud:(-?\d+):(\d+)$/.exec(data)
-  const result = /^urx:(show|repeat|read|files):([0-9a-f]+)$/.exec(data)
+  const result = /^urx:(show|repeat|read|files|continue|close|cost):([0-9a-f]+)$/.exec(data)
   if (!delivery && !result) return false
   if (!ctx.from || !can(ctx.from.id, 'answer')) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
   const message = ctx.callbackQuery?.message
@@ -153,7 +159,19 @@ export async function handleUxCallback(d: Daemon, ctx: Context, data: string): P
   const r: Result | null = JSON.parse(d.store.get(`ux:result:${result![2]}`) ?? 'null')
   const thread = message && 'message_thread_id' in message ? message.message_thread_id : undefined
   if (!r || !message || String(message.chat.id) !== r.chat.chatId || (thread ?? 0) !== (r.chat.threadId ?? 0)) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
+  if (['continue', 'close'].includes(result![1]!)) {
+    const task = r.taskId ? taskOf(d, r.taskId) : null
+    if (!task || String(ctx.from.id) !== task.user) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
+    changeTask(d, task.id, result![1] === 'close' ? 'closed' : 'open')
+    await ctx.answerCallbackQuery({ text: result![1] === 'close' ? t('Задача закрыта') : t('Задача открыта') })
+    await refreshTaskCards(d, [task.id]); return true
+  }
   await ctx.answerCallbackQuery()
+  if (result![1] === 'cost' && r.taskId) {
+    const report = taskUsageData(d, r.taskId)
+    await d.bot.api.sendDocument(r.chat.chatId, new InputFile(Buffer.from(JSON.stringify(report, null, 2)), `task-${r.taskId}-usage.json`), { message_thread_id: r.chat.threadId, disable_notification: true })
+    return true
+  }
   if (result![1] === 'repeat' || result![1] === 'files') {
     // Copy every original part/attachment, in order; no files are re-read from arbitrary paths.
     for (const id of result![1] === 'files' ? r.files ?? [] : r.messages) {

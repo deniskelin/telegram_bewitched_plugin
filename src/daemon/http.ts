@@ -1,3 +1,4 @@
+import { stageHook, finishStage } from './taskcost.ts'
 /**
  * Local HTTP endpoint on 127.0.0.1 (bearer token from STATE_DIR/http.token):
  *   POST /hook    — Claude Code hook events (progress, text, stop)
@@ -79,6 +80,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     s.claude.sessionId = data.session_id
   }
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
+  stageHook(d, s)
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
   // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
   if (isLateHook(s, h)) {
@@ -109,6 +111,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
       // Text before a tool call was narration, not the answer.
       if (name && !isOwnTool(name)) s.answer = ''
       if (name && !isOwnTool(name)) d.streams.onTool(s, summary)
+      if (name) stageHook(d, s, String(data.tool_use_id ?? data.tool_call_id ?? `${name}:${Date.now()}`))
       if (name) noteTool(s, name, data.tool_input as Record<string, unknown> | undefined)
       if (name === 'TodoWrite') { s.plan = parsePlan(data.tool_input); d.streams.onPlan(s, s.plan) }
       // Codex may ask in its window before running it: the request goes to the chat as a card.
@@ -151,6 +154,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
  * that opened one): idle again, silently — no «готово», no cost; for Codex, what was held for it goes in now.
  */
 export function endTurnQuietly(d: Daemon, s: Session): void {
+  finishStage(d, s)
   s.turn = null
   s.status = 'idle'
   s.turnEndedAt = Date.now()
@@ -159,6 +163,7 @@ export function endTurnQuietly(d: Daemon, s: Session): void {
 }
 
 function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, error = ''): void {
+  finishStage(d, s)
   if (s.stoppedAt && s.stopRequest) {
     const wasConfirmed = s.stopRequest.phase === 'confirmed'
     s.stopRequest = { at: s.stoppedAt, phase: 'confirmed' }; s.status = 'idle'; s.turn = null

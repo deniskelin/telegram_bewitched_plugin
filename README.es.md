@@ -271,3 +271,7 @@ En `/menu`, **Ajustes del chat** reúne idioma, voz, transcripción y detalle de
 El bot confirma el destino del archivo. Si no hay descripción, acción elegida ni tarea activa, ofrece botones sin consultar al modelo. El tipo de tarea no cambia permisos ni aislamiento; una respuesta breve no reduce el trabajo ni las comprobaciones.
 
 [Detalles y límites](docs/settings-and-tasks.md).
+
+### Consumo de toda la tarea
+
+La tarjeta de resultado incluye un informe plegable: entrada, caché, salida, razonamiento disponible, etapas, herramientas, duración acumulada y desglose por motor/modelo. Un ID estable une aclaraciones, reintentos, traspasos y revisiones. Un resultado listo mantiene abierta la tarea; **Continuar tarea** y **Cerrar tarea** controlan su ciclo. Selecciona **Nueva tarea** para otro trabajo. Los datos CLI tardíos actualizan la tarjeta; repetir un resultado no llama al modelo. Los precios son estimaciones API, no cargos de suscripción. [Reglas y límites](docs/task-usage.md).

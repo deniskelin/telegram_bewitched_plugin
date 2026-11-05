@@ -271,3 +271,7 @@ Dans `/menu`, **Réglages du chat** regroupe langue, voix, transcription et dét
 Le bot confirme la destination du fichier. Sans légende, action choisie ni tâche active, des boutons demandent l’action sans appel au modèle. Ce choix ne change pas les permissions ou le bac à sable ; une réponse courte ne réduit pas le travail ni les vérifications.
 
 [Détails et limites](docs/settings-and-tasks.md).
+
+### Consommation de toute la tâche
+
+La carte de résultat contient un rapport repliable : entrée, cache, sortie, raisonnement disponible, étapes, outils, durées additionnées et détail par moteur/modèle. Un ID stable relie précisions, nouvelles tentatives, transferts et revues. Un résultat prêt laisse la tâche ouverte ; **Continuer la tâche** et **Clore la tâche** gèrent son cycle. Choisissez **Nouvelle tâche** pour un autre travail. Les données CLI tardives actualisent la carte ; renvoyer un résultat n’appelle aucun modèle. Les tarifs sont des estimations API, pas des débits d’abonnement. [Règles et limites](docs/task-usage.md).

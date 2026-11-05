@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased — whole-task usage
+
+- Add persistent whole-task usage reports to result cards: explicit task lifecycle, exact-conversation accounting, delayed CLI reconciliation, auxiliary reviews and model breakdowns; document scope and unavailable usage.
+
 ## Unreleased — settings and task entry
 
 - Separate immediate chat preferences from advanced transport/notification controls and project agent settings. Show model/effort restart semantics explicitly.

@@ -288,3 +288,7 @@ Settings in `/menu` are grouped by purpose:
 File receipts show the destination session. A bare file without a selected action or active task waits for an action button, without a model call for clarification. Files with an existing task need no mandatory questionnaire. Task intent does not change permissions, sandboxing or the persistent agent mode.
 
 See [settings and tasks](docs/settings-and-tasks.md) for access rules and limitations.
+
+### Whole-task usage
+
+Result cards include a collapsed report of input, cached input, output, available reasoning tokens, stages, tools, summed duration and engine/model breakdowns. A stable task ID joins follow-ups, retries, handoffs and reviews. A ready result keeps its task open; **Continue task** and **Close task** control its lifecycle. Select **New task** for unrelated work. Late CLI usage updates the card; replaying a result invokes no model. Prices are API estimates, not subscription charges. [Accounting rules and limitations](docs/task-usage.md).

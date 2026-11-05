@@ -1,3 +1,4 @@
+import { bindTask, startStage, recoverTaskCosts } from './taskcost.ts'
 /**
  * The shared daemon. Exactly one per state dir: it alone polls getUpdates,
  * owns the SQLite store and routes Telegram traffic to the Claude Code
@@ -280,6 +281,7 @@ export class Daemon {
 
   /** Push a Telegram message into a session as a <channel> event. */
   deliver(session: Session, content: string, meta: Record<string, string>, from?: ChatRef): void {
+    if (from && meta.user_id) bindTask(this, from, meta.user_id, meta)
     countEconomy(this, 'delivery_requests')
     countEconomy(this, 'bridge_input_chars', content.length)
     if (session.notes.length) {
@@ -302,12 +304,14 @@ export class Daemon {
         this.log(`message from ${from?.chatId ?? '?'} held for codex session ${session.id} until its turn ends`)
         return
       }
+      startStage(this, session, meta)
       void codexDeliver(this, session, channelText(content, meta)).then(() => {
         deliveryPhase(this, meta, 'sent', session)
         if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
       }).catch(err => { deliveryPhase(this, meta, 'failed', session); codexUndelivered(this, session, err, from) })
     }
     else {
+      startStage(this, session, meta)
       this.send(session, { t: 'inbound', content, meta })
       deliveryPhase(this, meta, 'sent', session)
       if (meta.message_id) rememberContext(this, session, meta.chat_id ?? from?.chatId ?? '', (meta.message_ids ?? meta.message_id).split(','))
@@ -516,6 +520,7 @@ export class Daemon {
     installLang(this, this.bot)
     installEconomy(this, this.bot)
     startUx(this)
+    recoverTaskCosts(this)
     register(this.bot)
     restoreTextBatches(this)
     let warned = false

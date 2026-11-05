@@ -1,3 +1,4 @@
+import { taskForSession } from './taskcost.ts'
 /**
  * /sessions as a menu in one message, like BotFather: the list of sessions
  * with a button each; a button opens the session's card with its actions and
@@ -254,6 +255,7 @@ export async function modelScreen(d: Daemon, s: Session): Promise<Screen> {
  * owner asked for it with the button. Every step edits the menu message.
  */
 export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) => Promise<void>, o: { note?: string; after?: (n: Session) => Promise<void>; resume?: string } = {}): Promise<Session | null> {
+  const taskId = taskForSession(d, s)
   const choice = projectEngine(d, s.projectKey)
   const engine = engineOf(choice.engine)
   const same = engine.id === s.engine
@@ -267,7 +269,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
     let summary: string | null = null
     if (!o.note && settings.handoffSummarySec > 0 && !s.turn && chat) {
       await edit({ text: t('📝 {engine} пишет сводку для передачи дел (до {n} с)…', { engine: engineOf(s.engine).name, n: settings.handoffSummarySec }), kb: new InlineKeyboard() })
-      const meta = { event: 'handoff_summary', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }
+      const meta = { event: 'handoff_summary', task_id: taskForSession(d, s) ?? '', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }
       s.quietTurn = true
       summary = await askSummary(s, engine.id, text => d.deliver(s, text, meta), () => d.sessions.has(s.id), settings.handoffSummarySec * 1000)
         .catch(err => { d.log(`handoff summary of ${s.id} failed: ${err}`); return null })
@@ -298,7 +300,7 @@ export async function switchSession(d: Daemon, s: Session, edit: (sc: Screen) =>
     return null
   }
   // The new engine gets the handoff first: what was going on, where the full context is.
-  if (handoff && chat) d.deliver(r.session, handoff.message, { event: 'handoff', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }, chat)
+  if (handoff && chat) d.deliver(r.session, handoff.message, { event: 'handoff', task_id: taskId ?? '', chat_id: chat.chatId, ...(chat.threadId != null ? { thread_id: String(chat.threadId) } : {}) }, chat)
   const kept = handoff ? t('дела переданы: последние реплики и состояние git') : conv.resume || conv.continue ? t('разговор продолжается') : t('новый разговор')
   await edit({
     text: t('✅ Сессия #{id} работает на <b>{engine}</b>{model}: {kept}. Окно {v}. Можно писать.', { id: r.session.id, engine: engine.name, model: choice.model ? ` · ${escapeHtml(choice.model)}` : '', kept, v: where }),

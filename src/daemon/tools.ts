@@ -1,3 +1,4 @@
+import { taskForSession } from './taskcost.ts'
 /**
  * MCP tool calls proxied from a session's client. Executed here so all
  * outbound traffic shares one Bot instance (rate limits, history, streams).
@@ -74,6 +75,8 @@ function checkFiles(files: string[]): void {
 }
 
 function recordOut(d: Daemon, c: ChatRef, messageId: number, text: string, kind = 'text', session?: Session): void {
+  const taskId = session && taskForSession(d, session)
+  if (taskId) d.store.set(`cost:message:${c.chatId}:${messageId}`, taskId)
   if (session) rememberContext(d, session, c.chatId, [String(messageId)])
   d.store.addMessage({
     chat_id: c.chatId, thread_id: c.threadId ?? null, message_id: messageId, direction: 'out', from_id: String(d.botId),
@@ -493,6 +496,7 @@ function relayToChatSession(d: Daemon, s: Session, args: Record<string, unknown>
     ...(c.threadId != null ? { thread_id: String(c.threadId) } : {}),
     ...(ids.length ? { message_id: ids.at(-1)! } : {}),
     event: 'session_message',
+    task_id: taskForSession(d, s) ?? '',
     from_session: s.id,
     from_session_name: projectTitle(s),
     user: 'bot',
