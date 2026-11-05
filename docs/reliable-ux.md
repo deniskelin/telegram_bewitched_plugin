@@ -41,3 +41,11 @@
 Регрессии проверяют различие передачи и реального старта, отсутствие регресса фазы, смену сессии, гонку обновления карточки с API, положительное/отрицательное подтверждение остановки, новую задачу во время проверки Stop, порядок сессий, запрет выполнения старой destructive-кнопки и повтор всех частей/вложений без утечки в другой чат или топик.
 
 Изменения настроек и новые механизмы демона применяются после его перезапуска. Инструкции и схема инструмента — после переподключения MCP-клиента/нового запуска сессии.
+
+## Compact result cards
+
+A result starts as two short lines with exactly two actions: **Details** and **Close report**. Details expands the existing card to show its stored summary, checks, remaining work and task usage. Replay, files, PR, full usage export, task lifecycle and read controls appear only in this expanded view. **Collapse** returns to the compact view without losing any report data.
+
+Closing a report removes only the card, marks it read and retains the original answer, files and task. It does not close the task. If Telegram cannot delete the card, the bot replaces it with a closed line without buttons. If both operations fail, the previous record is restored and the failure is reported. An explicit last-result action can reopen the report later.
+
+Compact/expanded/dismissed state survives daemon restarts. Delayed accounting refreshes preserve the chosen view and skip dismissed cards. Per-result serialization prevents an in-flight usage edit from overwriting a newer user action. Startup refreshes the latest visible card per project, including existing cards created before this interface change.

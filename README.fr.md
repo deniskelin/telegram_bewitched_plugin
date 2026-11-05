@@ -279,3 +279,7 @@ La carte de résultat contient un rapport repliable : entrée, cache, sortie, ra
 ### Architecture des états
 
 Les transitions des sessions et tâches sont isolées de Telegram, SQLite et des processus. Les arrêts utilisent des identifiants ; la tâche et sa référence courante sont enregistrées dans une transaction. [Architecture et règles d’extension](docs/architecture.md).
+
+### Rapports compacts
+
+La carte tient sur deux lignes avec **Détails** / **Fermer le rapport**. Les détails affichent le rapport et les autres actions ; **Replier** rétablit la vue compacte. Fermer le rapport conserve la tâche et la réponse originale. Les mises à jour de consommation et les redémarrages préservent la vue choisie.

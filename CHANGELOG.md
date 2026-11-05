@@ -1,11 +1,12 @@
 # Changelog
 
-## Unreleased — lifecycle architecture
+## Unreleased — lifecycle architecture and compact reports
 
 - Extract pure session/task lifecycle rules and a task repository port; route daemon adapters through typed state events.
 - Correlate asynchronous stop outcomes with per-request tokens and ignore obsolete hooks/completions.
 - Commit task records and current-task pointers atomically; preserve task identities in offline resume batches.
 - Document architecture boundaries and verify event orderings, rollback and adapter races.
+- Make result cards compact with Details/Close report; expand secondary actions on demand and persist view state across usage updates/restarts. Report dismissal keeps the original answer and task.
 
 ## Unreleased — whole-task usage
 

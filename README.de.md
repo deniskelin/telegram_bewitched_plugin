@@ -279,3 +279,7 @@ Ergebniskarten enthalten einen einklappbaren Bericht: Eingabe, Cache, Ausgabe, v
 ### Zustandsarchitektur
 
 Sitzungs- und Aufgabenübergänge sind von Telegram, SQLite und Prozessen getrennt. Stoppvorgänge verwenden Kennungen; Aufgabe und aktueller Aufgabenverweis werden atomar gespeichert. [Architektur und Erweiterungsregeln](docs/architecture.md).
+
+### Kompakte Berichte
+
+Ergebniskarten beginnen mit zwei Zeilen und **Details** / **Bericht schließen**. Details zeigt den Bericht und weitere Aktionen; **Einklappen** stellt die kompakte Ansicht wieder her. Das Schließen erhält Aufgabe und Originalantwort. Verbrauchsaktualisierungen und Neustarts bewahren die gewählte Ansicht.

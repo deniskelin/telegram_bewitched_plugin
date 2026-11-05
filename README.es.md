@@ -279,3 +279,7 @@ La tarjeta de resultado incluye un informe plegable: entrada, caché, salida, ra
 ### Arquitectura de estados
 
 Las transiciones de sesiones y tareas están aisladas de Telegram, SQLite y los procesos. Las paradas usan identificadores; el registro de tarea y su referencia actual se guardan en una transacción. [Arquitectura y reglas de extensión](docs/architecture.md).
+
+### Informes compactos
+
+La tarjeta ocupa dos líneas y muestra solo **Detalles** / **Cerrar informe**. Los detalles revelan el informe y las demás acciones; **Contraer** restaura la vista compacta. Cerrar el informe conserva la tarea y la respuesta original. Las actualizaciones de consumo y los reinicios respetan la vista elegida.

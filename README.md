@@ -296,3 +296,7 @@ Result cards include a collapsed report of input, cached input, output, availabl
 ### Lifecycle architecture
 
 Session/task transitions are isolated in a core without Telegram, SQLite or process dependencies. Stop operations use correlation tokens; task records and current-task pointers commit atomically. [Architecture and extension rules](docs/architecture.md).
+
+### Compact result reports
+
+Result cards start with two lines and just **Details** / **Close report**. Details reveals the report and all other actions; **Collapse** folds it again. Closing the report retains the task and original answer. Delayed usage updates and restarts preserve the chosen view.
