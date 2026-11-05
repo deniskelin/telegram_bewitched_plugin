@@ -1,3 +1,4 @@
+import { applySessionEvent } from '../core/session.ts'
 import { startStage } from './taskcost.ts'
 /**
  * FR-15: the engine layer. An engine is an agent CLI the daemon runs in tmux
@@ -399,8 +400,7 @@ export async function codexUndelivered(d: Daemon, s: Session, err: unknown, from
   d.log(`deliver to codex session ${s.id} failed: ${err instanceof Error ? err.message : err}`)
   if (!from) return
   if (s.turn && !s.turn.replied) {
-    s.turn = null
-    s.status = 'idle'
+    applySessionEvent(s, { type: 'ended', at: Date.now() })
     d.streams.close(s, 'gone')
     d.onSessionsChanged()
   }

@@ -110,7 +110,7 @@ export function replacementSession(d: Daemon, id: string): Session | null {
 }
 
 export type ResultDetails = { summary?: string; checks?: string; remaining?: string; pr_url?: string }
-export type Result = { taskId?: string; cost?: string; id: string; session: string; project: string; chat: ChatRef; messages: number[]; card?: number; files: number[]; summary: string; checks?: string; remaining?: string; pr?: string; unread: boolean; at: number }
+export type Result = { expanded?: boolean; dismissed?: boolean; taskId?: string; cost?: string; id: string; session: string; project: string; chat: ChatRef; messages: number[]; card?: number; files: number[]; summary: string; checks?: string; remaining?: string; pr?: string; unread: boolean; at: number }
 export function lastResult(d: Daemon, project: string): Result | null {
   const id = d.store.get(`ux:last-result:${project}`)
   return id ? JSON.parse(d.store.get(`ux:result:${id}`) ?? 'null') : null
@@ -132,11 +132,29 @@ export async function publishResult(d: Daemon, s: Session, chat: ChatRef, messag
   current.card = posted.message_id
   d.store.set(`ux:result:${id}`, JSON.stringify(current))
 }
-export function resultText(r: Result, details: boolean): string {
-  return [`<b>${t('Результат')}</b>`, escapeHtml(clip(r.summary, details ? 500 : 200)), ...(r.checks ? [`<b>${t('Проверено')}</b>: ${escapeHtml(clip(r.checks, details ? 500 : 160))}`] : []), ...(r.remaining ? [`<b>${t('Осталось')}</b>: ${escapeHtml(clip(r.remaining, details ? 500 : 160))}`] : []), ...(r.cost ? [r.cost] : [])].join('\n\n')
+/** Serialize user actions and delayed usage refreshes for the same result. */
+const resultLocks = new WeakMap<Daemon, Map<string, Promise<void>>>()
+export async function withResultLock<T>(d: Daemon, id: string, work: () => Promise<T>): Promise<T> {
+  let locks = resultLocks.get(d)
+  if (!locks) { locks = new Map(); resultLocks.set(d, locks) }
+  const previous = locks.get(id) ?? Promise.resolve()
+  let release!: () => void
+  const gate = new Promise<void>(resolve => { release = resolve })
+  const tail = previous.then(() => gate)
+  locks.set(id, tail)
+  await previous
+  try { return await work() }
+  finally { release(); if (locks.get(id) === tail) locks.delete(id) }
+}
+export function resultText(r: Result, details = !!r.expanded): string {
+  if (r.dismissed) return t('Отчёт закрыт')
+  if (!details) return `<b>${t('Результат')}</b>\n${escapeHtml(clip(r.summary.replace(/\s+/g, ' ').trim(), 90))}`
+  return [`<b>${t('Результат')}</b>`, escapeHtml(r.summary), ...(r.checks ? [`<b>${t('Проверено')}</b>: ${escapeHtml(r.checks)}`] : []), ...(r.remaining ? [`<b>${t('Осталось')}</b>: ${escapeHtml(r.remaining)}`] : []), ...(r.cost ? [r.cost] : [])].join('\n\n')
 }
 export function resultButtons(r: Result): InlineKeyboard {
-  const kb = new InlineKeyboard([[button(t('Подробности'), `urx:show:${r.id}`), button(t('Повторить всё'), `urx:repeat:${r.id}`)], [button(t('Отметить прочитанным'), `urx:read:${r.id}`)]])
+  if (r.dismissed) return new InlineKeyboard([])
+  if (!r.expanded) return new InlineKeyboard([[button(t('Подробнее'), `urx:show:${r.id}`), button(t('Закрыть отчёт'), `urx:dismiss:${r.id}`)]])
+  const kb = new InlineKeyboard([[button(t('Свернуть'), `urx:hide:${r.id}`), button(t('Закрыть отчёт'), `urx:dismiss:${r.id}`)], [button(t('Повторить всё'), `urx:repeat:${r.id}`), button(t('Отметить прочитанным'), `urx:read:${r.id}`)]])
   if (r.taskId) kb.row().text(t('Полный отчёт по расходу'), `urx:cost:${r.id}`).row().text(t('Продолжить задачу'), `urx:continue:${r.id}`).text(t('Закрыть задачу'), `urx:close:${r.id}`)
   if (r.files?.length) kb.row().text(t('Получить файлы'), `urx:files:${r.id}`)
   if (r.pr) kb.row().url('PR', r.pr)
@@ -144,7 +162,7 @@ export function resultButtons(r: Result): InlineKeyboard {
 }
 export async function handleUxCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
   const delivery = /^ud:(-?\d+):(\d+)$/.exec(data)
-  const result = /^urx:(show|repeat|read|files|continue|close|cost):([0-9a-f]+)$/.exec(data)
+  const result = /^urx:(show|hide|dismiss|repeat|read|files|continue|close|cost):([0-9a-f]+)$/.exec(data)
   if (!delivery && !result) return false
   if (!ctx.from || !can(ctx.from.id, 'answer')) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
   const message = ctx.callbackQuery?.message
@@ -156,31 +174,72 @@ export async function handleUxCallback(d: Daemon, ctx: Context, data: string): P
     await renderDelivery(d, r.id)
     return true
   }
-  const r: Result | null = JSON.parse(d.store.get(`ux:result:${result![2]}`) ?? 'null')
-  const thread = message && 'message_thread_id' in message ? message.message_thread_id : undefined
-  if (!r || !message || String(message.chat.id) !== r.chat.chatId || (thread ?? 0) !== (r.chat.threadId ?? 0)) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
-  if (['continue', 'close'].includes(result![1]!)) {
-    const task = r.taskId ? taskOf(d, r.taskId) : null
-    if (!task || String(ctx.from.id) !== task.user) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return true }
-    changeTask(d, task.id, result![1] === 'close' ? 'closed' : 'open')
-    await ctx.answerCallbackQuery({ text: result![1] === 'close' ? t('Задача закрыта') : t('Задача открыта') })
-    await refreshTaskCards(d, [task.id]); return true
-  }
-  await ctx.answerCallbackQuery()
-  if (result![1] === 'cost' && r.taskId) {
-    const report = taskUsageData(d, r.taskId)
-    await d.bot.api.sendDocument(r.chat.chatId, new InputFile(Buffer.from(JSON.stringify(report, null, 2)), `task-${r.taskId}-usage.json`), { message_thread_id: r.chat.threadId, disable_notification: true })
-    return true
-  }
-  if (result![1] === 'repeat' || result![1] === 'files') {
-    // Copy every original part/attachment, in order; no files are re-read from arbitrary paths.
-    for (const id of result![1] === 'files' ? r.files ?? [] : r.messages) {
-      try { await d.bot.api.copyMessage(r.chat.chatId, r.chat.chatId, id, { message_thread_id: r.chat.threadId }) }
-      catch (err) { d.log(`result replay: ${err}`); await ctx.reply(t('Не доставлено'), { message_thread_id: r.chat.threadId }).catch(() => {}); return true }
+  let refreshTask: string | undefined
+  await withResultLock(d, result![2]!, async () => {
+    const r: Result | null = JSON.parse(d.store.get(`ux:result:${result![2]}`) ?? 'null')
+    const thread = message && 'message_thread_id' in message ? message.message_thread_id : undefined
+    if (!r || !message || String(message.chat.id) !== r.chat.chatId || (thread ?? 0) !== (r.chat.threadId ?? 0)) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return }
+    const action = result![1]!
+    if (r.dismissed && action !== 'show') { await ctx.answerCallbackQuery(); return }
+    if (['continue', 'close'].includes(action)) {
+      const task = r.taskId ? taskOf(d, r.taskId) : null
+      if (!task || String(ctx.from!.id) !== task.user) { await ctx.answerCallbackQuery({ text: t('Нет доступа.') }); return }
+      changeTask(d, task.id, action === 'close' ? 'closed' : 'open')
+      await ctx.answerCallbackQuery({ text: action === 'close' ? t('Задача закрыта') : t('Задача открыта') })
+      refreshTask = task.id; return
     }
-  } else if (result![1] === 'show') await ctx.editMessageText(resultText(r, true), { parse_mode: 'HTML', reply_markup: resultButtons(r) })
-  r.unread = false; d.store.set(`ux:result:${r.id}`, JSON.stringify(r))
+    await ctx.answerCallbackQuery()
+    if (action === 'dismiss') {
+      const original = { ...r }
+      r.dismissed = true; r.expanded = false; r.unread = false
+      d.store.set(`ux:result:${r.id}`, JSON.stringify(r))
+      try { await d.bot.api.deleteMessage(r.chat.chatId, message.message_id) }
+      catch {
+        try { await ctx.editMessageText(resultText(r), { reply_markup: resultButtons(r) }) }
+        catch (err) {
+          d.store.set(`ux:result:${r.id}`, JSON.stringify(original))
+          d.log(`dismiss result: ${err}`)
+          await ctx.reply(t('Не удалось закрыть отчёт.'), { message_thread_id: r.chat.threadId }).catch(() => {})
+        }
+      }
+      return
+    }
+    if (action === 'cost' && r.taskId) {
+      const report = taskUsageData(d, r.taskId)
+      await d.bot.api.sendDocument(r.chat.chatId, new InputFile(Buffer.from(JSON.stringify(report, null, 2)), `task-${r.taskId}-usage.json`), { message_thread_id: r.chat.threadId, disable_notification: true })
+      return
+    }
+    if (action === 'repeat' || action === 'files') {
+      for (const id of action === 'files' ? r.files ?? [] : r.messages) {
+        try { await d.bot.api.copyMessage(r.chat.chatId, r.chat.chatId, id, { message_thread_id: r.chat.threadId }) }
+        catch (err) { d.log(`result replay: ${err}`); await ctx.reply(t('Не доставлено'), { message_thread_id: r.chat.threadId }).catch(() => {}); return }
+      }
+    } else if (action === 'show' || action === 'hide') {
+      r.expanded = action === 'show'; r.dismissed = false
+      // Opening from the session menu makes that message the active report view.
+      if (message.message_id) r.card = message.message_id
+      if (r.taskId) r.cost = taskReport(d, r.taskId)
+      await ctx.editMessageText(resultText(r), { parse_mode: 'HTML', reply_markup: resultButtons(r) })
+    }
+    r.unread = false; d.store.set(`ux:result:${r.id}`, JSON.stringify(r))
+  })
+  if (refreshTask) await refreshTaskCards(d, [refreshTask])
   return true
+}
+
+/** Restore the latest visible report per project without reopening dismissed reports. */
+export async function refreshResultViews(d: Daemon): Promise<void> {
+  for (const index of d.store.keys('ux:last-result:')) {
+    const id = d.store.get(index)
+    if (!id) continue
+    await withResultLock(d, id, async () => {
+      const raw = d.store.get(`ux:result:${id}`)
+      if (!raw) return
+      const r: Result = JSON.parse(raw)
+      if (!r.card || r.dismissed) return
+      await inChat(d, r.chat.chatId, r.chat.threadId, () => d.bot.api.editMessageText(r.chat.chatId, r.card!, resultText(r), { parse_mode: 'HTML', reply_markup: resultButtons(r) })).catch(err => d.log(`restore result view: ${err}`))
+    })
+  }
 }
 
 /** UI payloads have bounded retention; lightweight session aliases keep old navigation working. */
@@ -195,5 +254,6 @@ export function startUx(d: Daemon): void {
     }
   }
   prune()
+  void refreshResultViews(d).catch(err => d.log(`restore result cards: ${err}`))
   setInterval(prune, 86400_000).unref?.()
 }

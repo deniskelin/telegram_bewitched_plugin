@@ -1,3 +1,4 @@
+import { applySessionEvent, isLateHook as lateHook } from '../core/session.ts'
 import { stageHook, finishStage } from './taskcost.ts'
 /**
  * Local HTTP endpoint on 127.0.0.1 (bearer token from STATE_DIR/http.token):
@@ -36,18 +37,8 @@ export type HookEvent = {
   at?: number
 }
 
-/** Without the fire time: a non-prompt hook this soon after Stop is taken for the ended turn's tail. */
-const LATE_HOOK_MS = 3000
-
-/** A hook of a turn that has already ended (it arrived after that turn's Stop). */
-export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<HookEvent, 'event' | 'at'>, now = Date.now()): boolean {
-  if (s.turn || s.turnEndedAt == null) return false
-  if (!['PreToolUse', 'PostToolUseFailure', 'MessageDisplay'].includes(h.event)) return false
-  // Claude Code shows the turn's final text after its Stop hook has fired: text alone never starts a turn
-  // (a turn begins with a prompt, a delivered message or a tool call).
-  if (h.event === 'MessageDisplay') return true
-  return h.at != null ? h.at < s.turnEndedAt : now - s.turnEndedAt < LATE_HOOK_MS
-}
+/** Backwards-compatible adapter: callers may omit the wall clock. */
+export const isLateHook = (s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<HookEvent, 'event' | 'at'>, now = Date.now()): boolean => lateHook(s, h, now)
 
 /**
  * Mark a turn as started on the first activity of an idle session (turns begun in the terminal).
@@ -55,11 +46,8 @@ export function isLateHook(s: Pick<Session, 'turn' | 'turnEndedAt'>, h: Pick<Hoo
  * would mark it working, and an Escape-interrupted turn sends no Stop hook to end it.
  */
 function touchTurn(s: Session, prompt = false): void {
-  if (prompt) { s.stoppedAt = null; s.stopRequest = undefined }
-  s.lastActivity = Date.now()
-  if (s.stoppedAt) return
-  if (!s.turn) { s.turn = { start: Date.now(), replied: false, ...(prompt ? {} : { byHook: true }) }; turnStarted(s) }
-  if (s.status === 'idle') s.status = 'working'
+  const result = applySessionEvent(s, { type: prompt ? 'prompt' : 'activity', at: Date.now() })
+  if (result.openedTurn) turnStarted(s)
 }
 
 export function handleHook(d: Daemon, h: HookEvent): void {
@@ -73,6 +61,11 @@ export function handleHook(d: Daemon, h: HookEvent): void {
 }
 
 function onHook(d: Daemon, s: Session, h: HookEvent): void {
+  // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
+  if (isLateHook(s, h)) {
+    if (h.event !== 'MessageDisplay') d.log(`hook ${h.event} of an ended turn ignored: session ${s.id}`)
+    return
+  }
   const data = h.data
   s.lastHookAt = Date.now()
   if (typeof data.session_id === 'string') {
@@ -82,11 +75,6 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
   if (typeof data.transcript_path === 'string') s.claude.transcript = data.transcript_path
   stageHook(d, s)
   if (typeof data.permission_mode === 'string') s.claude.permissionMode = data.permission_mode
-  // The turn's edges in the log: when a session took a message and when it finished (tools are too many to log).
-  if (isLateHook(s, h)) {
-    if (h.event !== 'MessageDisplay') d.log(`hook ${h.event} of an ended turn ignored: session ${s.id}`)
-    return
-  }
   // A tool call of a background agent (Claude Code's own work after a turn, a subagent left running) between turns:
   // the session is not working for anyone — it opens no turn.
   if (!s.turn && typeof data.agent_id === 'string' && (h.event === 'PreToolUse' || h.event === 'PostToolUseFailure')) {
@@ -142,7 +130,6 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
     }
     case 'Stop':
     case 'StopFailure':
-      s.turnEndedAt = h.at ?? Date.now()
       onTurnEnd(d, s, h.event === 'StopFailure', typeof data.last_assistant_message === 'string' ? data.last_assistant_message : '', String(data.error ?? ''))
       break
   }
@@ -155,9 +142,7 @@ function onHook(d: Daemon, s: Session, h: HookEvent): void {
  */
 export function endTurnQuietly(d: Daemon, s: Session): void {
   finishStage(d, s)
-  s.turn = null
-  s.status = 'idle'
-  s.turnEndedAt = Date.now()
+  applySessionEvent(s, { type: 'ended', at: Date.now() })
   d.streams.close(s, 'stop')
   if (s.engine === 'codex') codexFlushHeld(d, s)
 }
@@ -166,23 +151,21 @@ function onTurnEnd(d: Daemon, s: Session, failed: boolean, lastText: string, err
   finishStage(d, s)
   if (s.stoppedAt && s.stopRequest) {
     const wasConfirmed = s.stopRequest.phase === 'confirmed'
-    s.stopRequest = { at: s.stoppedAt, phase: 'confirmed' }; s.status = 'idle'; s.turn = null
+    applySessionEvent(s, { type: 'stop_hook', at: Date.now() })
     const c = s.lastChat ?? sessionTarget(d, s)
     if (!wasConfirmed && c && process.env.STOP_NOTICES !== 'off') void d.bot.api.sendMessage(c.chatId, t('Остановка подтверждена'), { message_thread_id: c.threadId, disable_notification: true }).catch(err => d.log(`stop notice: ${err}`))
     sessionPhase(d, s, 'stopped'); d.streams.close(s, 'stopped'); d.onSessionsChanged(); return
   }
   if (failed && classify(error, lastText)) {
     // Out of tokens: the pause module tells the chat and holds what comes next.
-    s.turn = null
-    s.status = 'idle'
+    applySessionEvent(s, { type: 'ended', at: Date.now() })
     d.streams.close(s, 'stop')
     void onLimitFailure(d, s, error, lastText).catch(err => d.log(`out-of-tokens failed: ${err}`))
     return
   }
   sessionPhase(d, s, failed ? 'failed' : 'done')
   const turn = s.turn
-  s.turn = null
-  s.status = 'idle'
+  applySessionEvent(s, { type: 'ended', at: Date.now() })
   d.streams.close(s, 'stop')
   void checkContext(d, s).catch(err => d.log(`context check failed: ${err}`))
   if (s.engine === 'codex') codexFlushHeld(d, s)

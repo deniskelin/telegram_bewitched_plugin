@@ -141,6 +141,9 @@ export class Store {
     this.db.exec(SCHEMA)
   }
 
+  /** Commit related synchronous writes together, or roll all of them back on failure. */
+  atomic(write: () => void): void { this.db.transaction(write)() }
+
   // --- kv ---
 
   get(key: string): string | null {

@@ -275,3 +275,11 @@ Der Bot bestätigt das Dateiziel. Ohne Beschreibung, ausgewählte Aktion oder ak
 ### Verbrauch der gesamten Aufgabe
 
 Ergebniskarten enthalten einen einklappbaren Bericht: Eingabe, Cache, Ausgabe, verfügbare Reasoning-Token, Schritte, Werkzeuge, aufsummierte Dauer und Aufschlüsselung nach Engine/Modell. Eine stabile ID verbindet Rückfragen, Wiederholungen, Übergaben und Reviews. Ein fertiges Ergebnis lässt die Aufgabe offen; **Aufgabe fortsetzen** und **Aufgabe abschließen** steuern ihren Zustand. Für andere Arbeiten **Neue Aufgabe** wählen. Späte CLI-Daten aktualisieren die Karte; erneutes Senden ruft kein Modell auf. Preise sind API-Schätzungen, keine Abo-Abbuchungen. [Regeln und Grenzen](docs/task-usage.md).
+
+### Zustandsarchitektur
+
+Sitzungs- und Aufgabenübergänge sind von Telegram, SQLite und Prozessen getrennt. Stoppvorgänge verwenden Kennungen; Aufgabe und aktueller Aufgabenverweis werden atomar gespeichert. [Architektur und Erweiterungsregeln](docs/architecture.md).
+
+### Kompakte Berichte
+
+Ergebniskarten beginnen mit zwei Zeilen und **Details** / **Bericht schließen**. Details zeigt den Bericht und weitere Aktionen; **Einklappen** stellt die kompakte Ansicht wieder her. Das Schließen erhält Aufgabe und Originalantwort. Verbrauchsaktualisierungen und Neustarts bewahren die gewählte Ansicht.

@@ -161,3 +161,18 @@ test('native agents keep their parent task even when finishing during a neighbor
   expect(first.unallocatedRequests).toBe(1)
   expect(taskReport(d,id)).toContain('без подтверждённой связи')
 })
+
+test('task persistence rolls back the task and current-scope pointer together on write failure', async () => {
+  const { JsonTaskRepository } = await import('../src/daemon/taskstore.ts')
+  const { Tasks } = await import('../src/core/task.ts')
+  const store = new Store(':memory:')
+  const port = new JsonTaskRepository({
+    get:key => store.get(key), atomic:write => store.atomic(write),
+    set:(key,value) => { if (key.startsWith('cost:current:')) throw new Error('simulated write failure'); store.set(key,value) },
+  })
+  const tasks = new Tasks(port,()=> '0000000000000001',()=>1)
+  expect(()=>tasks.create(chat,'111')).toThrow('simulated write failure')
+  expect(store.keys('cost:task:')).toEqual([])
+  expect(store.keys('cost:current:')).toEqual([])
+  store.close()
+})

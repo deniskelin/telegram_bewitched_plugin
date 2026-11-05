@@ -292,3 +292,11 @@ See [settings and tasks](docs/settings-and-tasks.md) for access rules and limita
 ### Whole-task usage
 
 Result cards include a collapsed report of input, cached input, output, available reasoning tokens, stages, tools, summed duration and engine/model breakdowns. A stable task ID joins follow-ups, retries, handoffs and reviews. A ready result keeps its task open; **Continue task** and **Close task** control its lifecycle. Select **New task** for unrelated work. Late CLI usage updates the card; replaying a result invokes no model. Prices are API estimates, not subscription charges. [Accounting rules and limitations](docs/task-usage.md).
+
+### Lifecycle architecture
+
+Session/task transitions are isolated in a core without Telegram, SQLite or process dependencies. Stop operations use correlation tokens; task records and current-task pointers commit atomically. [Architecture and extension rules](docs/architecture.md).
+
+### Compact result reports
+
+Result cards start with two lines and just **Details** / **Close report**. Details reveals the report and all other actions; **Collapse** folds it again. Closing the report retains the task and original answer. Delayed usage updates and restarts preserve the chosen view.

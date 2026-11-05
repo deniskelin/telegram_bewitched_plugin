@@ -289,6 +289,10 @@ describe('topics', () => {
     const resume = await again.inbound(x => x.meta.event === 'session_resume')
     expect(resume.content).toContain('ты тут?')
     expect(resume.meta.pending_count).toBe('1')
+    expect(resume.meta.task_id).toMatch(/^[0-9a-f]{16}$/)
+    const { activeStage } = await import('../src/daemon/taskcost.ts')
+    const resumed = d.sessionForProject('/tmp/other')!
+    expect(activeStage(d, resumed)?.tasks).toContain(resume.meta.task_id)
     again.close()
   })
 

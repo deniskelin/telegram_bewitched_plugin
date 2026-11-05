@@ -2,6 +2,11 @@ import type { Dict } from './index.ts'
 
 // Interface strings: Russian source → de. Keys are the exact strings passed to t()/k() in the code.
 const dict: Dict = {
+  "Отчёт закрыт": "Bericht geschlossen",
+  "Закрыть отчёт": "Bericht schließen",
+  "Свернуть": "Einklappen",
+  "Не удалось закрыть отчёт.": "Der Bericht konnte nicht geschlossen werden.",
+
   "Есть расходы субагентов без подтверждённой связи с задачей": "Ein Teil des Unteragentenverbrauchs hat keine bestätigte Aufgabenzuordnung",
   "Полный отчёт по расходу": "Vollständiger Verbrauchsbericht",
   "Продолжить задачу": "Aufgabe fortsetzen",
@@ -1067,7 +1072,6 @@ const dict: Dict = {
   "Результат": "Ergebnis",
   "Проверено": "Geprüft",
   "Осталось": "Offen",
-  "Подробности": "Details",
   "Повторить всё": "Alles erneut senden",
   "Отметить прочитанным": "Als gelesen markieren",
   "Получить файлы": "Dateien erhalten",

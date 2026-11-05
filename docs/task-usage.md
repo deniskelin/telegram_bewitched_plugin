@@ -2,7 +2,7 @@
 
 The **Full usage report** button downloads a JSON report with exact counts and every stage/request, without transcript text or server paths. The card previews up to eight engine/model groups.
 
-Result cards include a collapsed **Task usage** report, with a durable task ID. A result being ready does not close the task: corrections, answers to questions, retries, engine handoffs and another-engine reviews can contribute further stages. **Close task** ends that identity; **Continue task** reopens it. Both buttons run inside the daemon and invoke no model. Repeating an existing result also invokes no model and adds no stage.
+Use **Details** on the compact result card to reveal its **Task usage** report and additional actions. **Close report** hides only the report, while **Close task** changes the task lifecycle. Result cards include a collapsed **Task usage** report, with a durable task ID. A result being ready does not close the task: corrections, answers to questions, retries, engine handoffs and another-engine reviews can contribute further stages. **Close task** ends that identity; **Continue task** reopens it. Both buttons run inside the daemon and invoke no model. Repeating an existing result also invokes no model and adds no stage.
 
 ## Boundaries
 

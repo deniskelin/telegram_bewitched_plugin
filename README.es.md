@@ -275,3 +275,11 @@ El bot confirma el destino del archivo. Si no hay descripción, acción elegida 
 ### Consumo de toda la tarea
 
 La tarjeta de resultado incluye un informe plegable: entrada, caché, salida, razonamiento disponible, etapas, herramientas, duración acumulada y desglose por motor/modelo. Un ID estable une aclaraciones, reintentos, traspasos y revisiones. Un resultado listo mantiene abierta la tarea; **Continuar tarea** y **Cerrar tarea** controlan su ciclo. Selecciona **Nueva tarea** para otro trabajo. Los datos CLI tardíos actualizan la tarjeta; repetir un resultado no llama al modelo. Los precios son estimaciones API, no cargos de suscripción. [Reglas y límites](docs/task-usage.md).
+
+### Arquitectura de estados
+
+Las transiciones de sesiones y tareas están aisladas de Telegram, SQLite y los procesos. Las paradas usan identificadores; el registro de tarea y su referencia actual se guardan en una transacción. [Arquitectura y reglas de extensión](docs/architecture.md).
+
+### Informes compactos
+
+La tarjeta ocupa dos líneas y muestra solo **Detalles** / **Cerrar informe**. Los detalles revelan el informe y las demás acciones; **Contraer** restaura la vista compacta. Cerrar el informe conserva la tarea y la respuesta original. Las actualizaciones de consumo y los reinicios respetan la vista elegida.
