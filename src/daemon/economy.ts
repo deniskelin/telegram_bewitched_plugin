@@ -174,8 +174,10 @@ export function cancelTextBatch(d: Daemon, chat: ChatRef, from: string): boolean
 
 /** Preserve a chosen intent when later messages in the same batch have no explicit mode. */
 export function taskBatchMeta(metas: Record<string, string>[]): Record<string, string> {
+  const ids = [...new Set(metas.flatMap(m => (m.task_ids ?? m.task_id ?? '').split(',')).filter(Boolean))]
+  const identity: Record<string, string> = ids.length === 1 ? { task_id: ids[0]! } : ids.length ? { task_id: '', task_ids: ids.join(',') } : {}
   const kinds = [...new Set(metas.map(m => m.task_kind).filter(Boolean))]
-  if (kinds.length === 1) return { task_kind: kinds[0]! }
-  if (kinds.length > 1) return { task_kind: '', task_kinds: kinds.join(',') }
-  return {}
+  if (kinds.length === 1) return { ...identity, task_kind: kinds[0]! }
+  if (kinds.length > 1) return { ...identity, task_kind: '', task_kinds: kinds.join(',') }
+  return identity
 }

@@ -1,3 +1,4 @@
+import { bindTask } from './taskcost.ts'
 /**
  * Inbound Telegram traffic: access gate, routing to the right session,
  * reply/quote/forward enrichment, forward batching, permission relay and the
@@ -145,6 +146,7 @@ export function resolveTarget(d: Daemon, chat: ChatRef, fromId: string): Target 
  * as a message — the serving session, else queue and start it if we can.
  */
 export async function routeText(d: Daemon, chat: ChatRef, fromId: string, text: string, meta: Record<string, string>): Promise<void> {
+  if (meta.user_id || fromId) bindTask(d, chat, meta.user_id ?? fromId, meta)
   const target = resolveTarget(d, chat, fromId)
   switch (target.kind) {
     case 'session':

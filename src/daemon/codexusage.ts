@@ -1,3 +1,4 @@
+import { taskMarkers } from './usage.ts'
 /**
  * Codex in /usage (FR-16): what Codex sessions spent and how much of its
  * ChatGPT-plan windows is used, read from its own session logs
@@ -18,7 +19,7 @@ import type { Entry, Limit } from './usage.ts'
 
 const CODEX_HOME = process.env.CODEX_HOME ?? join(homedir(), '.codex')
 
-type Totals = { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number }
+type Totals = { input_tokens?: number; cached_input_tokens?: number; output_tokens?: number; reasoning_output_tokens?: number }
 type Window = { used_percent?: number; window_minutes?: number; resets_at?: number } | null
 export type CodexLimits = { at: number; plan: string | null; items: Limit[] }
 
@@ -35,8 +36,9 @@ export function parseRollout(text: string, file: string, since: number): { entri
   let cwd = ''
   let model = 'codex'
   let effort: string | undefined
-  let prev = { input: 0, cached: 0, output: 0 }
+  let prev = { input: 0, cached: 0, output: 0, reasoning: 0 }
   let limits: CodexLimits | null = null
+  let tasks: string[] | undefined
   for (const [n, line] of text.split('\n').entries()) {
     if (!line) continue
     let m: { timestamp?: string; type?: string; payload?: Record<string, unknown> }
@@ -46,6 +48,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
       continue
     }
     const p = m.payload ?? {}
+    if (m.type === 'event_msg' && p.type === 'user_message' && typeof p.message === 'string') tasks = taskMarkers(p.message)
     if (m.type === 'session_meta' && typeof p.cwd === 'string') cwd = p.cwd
     else if (m.type === 'turn_context' && typeof p.model === 'string') {
       model = p.model
@@ -58,14 +61,15 @@ export function parseRollout(text: string, file: string, since: number): { entri
       const ts = Date.parse(m.timestamp ?? '')
       const total = (p.info as { total_token_usage?: Totals } | null)?.total_token_usage
       if (total) {
-        const now = { input: total.input_tokens ?? 0, cached: total.cached_input_tokens ?? 0, output: total.output_tokens ?? 0 }
+        const now = { input: total.input_tokens ?? 0, cached: total.cached_input_tokens ?? 0, output: total.output_tokens ?? 0, reasoning: total.reasoning_output_tokens ?? 0 }
         const grew = now.input + now.output > prev.input + prev.output
         if (grew && ts >= since) {
           const cached = Math.max(0, now.cached - prev.cached)
           entries.push({
-            id: `codex:${file}:${n}`, ts, model, cwd, ...(effort ? { effort } : {}),
+            id: `codex:${file}:${n}`, ts, model, cwd, ...(tasks ? { tasks } : {}), ...(effort ? { effort } : {}),
             input: Math.max(0, now.input - prev.input - cached),
             output: Math.max(0, now.output - prev.output),
+            ...(total.reasoning_output_tokens !== undefined ? { reasoning: Math.max(0, now.reasoning - prev.reasoning) } : {}),
             write5m: 0, write1h: 0, read: cached,
           })
         }

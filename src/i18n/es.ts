@@ -2,6 +2,24 @@ import type { Dict } from './index.ts'
 
 // Interface strings: Russian source → es. Keys are the exact strings passed to t()/k() in the code.
 const dict: Dict = {
+  "Есть расходы субагентов без подтверждённой связи с задачей": "Hay consumo de subagentes sin vínculo confirmado con la tarea",
+  "Полный отчёт по расходу": "Informe completo de consumo",
+  "Продолжить задачу": "Continuar tarea",
+  "Закрыть задачу": "Cerrar tarea",
+  "Задача закрыта": "Tarea cerrada",
+  "Задача открыта": "Tarea abierta",
+  "Результат готов; задача открыта": "Resultado listo; tarea abierta",
+  "Расход задачи": "Consumo de la tarea",
+  "Расход уточняется": "Consumo pendiente",
+  "Учтённые данные CLI": "Consumo registrado por CLI",
+  "Вход / кэш / выход": "Entrada / caché / salida",
+  "Рассуждения (в составе выхода)": "Razonamiento (incluido en salida)",
+  "Этапы / инструменты / время": "Etapas / herramientas / tiempo",
+  "Оценка API, не списание подписки": "Estimación API, no cargo de suscripción",
+  "есть модели без цены": "hay modelos sin precio",
+  "Совместный ход нескольких задач: расход не распределён": "Turno compartido entre tareas: consumo sin asignar",
+  "Кэш входит во вход; рассуждения входят в выход. Время этапов суммируется.": "La caché forma parte de la entrada; el razonamiento, de la salida. Se suman las duraciones de las etapas.",
+
   "… ещё {n}": "… {n} más",
   "Для этой сессии здесь ничего нет.": "Nada aquí para esta sesión.",
   "🤖 Агент": "🤖 Agente",

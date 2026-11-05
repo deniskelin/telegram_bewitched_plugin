@@ -271,3 +271,7 @@ In `/menu` enthalten **Chat-Einstellungen** Sprache, Stimme, Transkript sowie An
 Der Bot bestätigt das Dateiziel. Ohne Beschreibung, ausgewählte Aktion oder aktive Aufgabe fragt er per Schaltfläche statt durch einen Modellaufruf. Die Auswahl ändert keine Rechte oder Sandbox; kurze Antworten verringern weder Arbeit noch notwendige Prüfungen.
 
 [Details und Grenzen](docs/settings-and-tasks.md).
+
+### Verbrauch der gesamten Aufgabe
+
+Ergebniskarten enthalten einen einklappbaren Bericht: Eingabe, Cache, Ausgabe, verfügbare Reasoning-Token, Schritte, Werkzeuge, aufsummierte Dauer und Aufschlüsselung nach Engine/Modell. Eine stabile ID verbindet Rückfragen, Wiederholungen, Übergaben und Reviews. Ein fertiges Ergebnis lässt die Aufgabe offen; **Aufgabe fortsetzen** und **Aufgabe abschließen** steuern ihren Zustand. Für andere Arbeiten **Neue Aufgabe** wählen. Späte CLI-Daten aktualisieren die Karte; erneutes Senden ruft kein Modell auf. Preise sind API-Schätzungen, keine Abo-Abbuchungen. [Regeln und Grenzen](docs/task-usage.md).

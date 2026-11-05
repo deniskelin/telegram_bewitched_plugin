@@ -1,3 +1,4 @@
+import { startStage } from './taskcost.ts'
 /**
  * FR-15: the engine layer. An engine is an agent CLI the daemon runs in tmux
  * for a session. Claude Code talks to the daemon over the channel (MCP in,
@@ -373,6 +374,7 @@ export function codexFlushHeld(d: Daemon, s: Session): void {
     ? h.texts[0]
     : `While you were working, ${h.texts.length} messages came in. Answer them together, in order:\n\n${h.texts.join('\n\n')}` // i18n-ignore
   d.log(`codex ${s.id}: ${h.texts.length} held message(s) delivered after the turn`)
+  for (const meta of h.metas) startStage(d, s, meta)
   void codexDeliver(d, s, text).then(() => {
     for (const meta of h.metas) deliveryPhase(d, meta, 'sent', s)
   }).catch(err => {

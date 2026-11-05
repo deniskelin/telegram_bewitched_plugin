@@ -1,3 +1,4 @@
+import { bindTask } from './taskcost.ts'
 /** One-shot task intent, scoped to the sender and chat/topic; this is not a permission mode. */
 import { randomBytes } from 'crypto'
 import { InlineKeyboard, type Bot, type Context } from 'grammy'
@@ -44,7 +45,8 @@ export function selectTask(d: Daemon, c: ChatRef, user: string, kind: TaskKind |
 export function taskName(kind: TaskKind): string { return t(NAMES[kind]) }
 export function applyTask(d: Daemon, c: ChatRef, user: string, text: string, meta: Record<string, string>, explicit?: TaskKind): string {
   const kind = explicit ?? selectedTask(d, c, user)
-  if (!kind) return text
+  if (!kind) { bindTask(d, c, user, meta); return text }
+  bindTask(d, c, user, meta, true)
   if (!explicit) selectTask(d, c, user, null)
   meta.task_kind = kind
   // A user-level instruction: never a new system role or an automatic tool/permission override.

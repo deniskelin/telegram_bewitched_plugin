@@ -158,6 +158,10 @@ export type Entry = {
   effort?: string
   input: number
   output: number
+  /** Subset of output, when the CLI exposes it. */
+  reasoning?: number
+  tasks?: string[]
+  agent?: string
   write5m: number
   write1h: number
   read: number
@@ -176,6 +180,11 @@ export function costOf(e: Entry): number | null {
   if (/haiku-5-5/.test(e.model) && e.input + e.write5m + e.write1h + e.read > 100_000) price = HAIKU_LONG
   const [i, o, w5, w1, r] = price
   return (e.input * i + e.output * o + e.write5m * w5 + e.write1h * w1 + e.read * r) / 1e6
+}
+
+/** Task IDs are bridge metadata in an actual user prompt, not timestamps. */
+export function taskMarkers(text: string): string[] {
+  return [...new Set([...text.matchAll(/<channel\b[^>]*\btask_ids?="([0-9a-f,]+)"/g)].flatMap(m => m[1]!.split(',')))].filter(id => /^[0-9a-f]{16}$/.test(id))
 }
 
 type Usage = {
@@ -198,7 +207,11 @@ export function parseTranscript(text: string, since: number): Entry[] {
     root = first ? JSON.parse(first[1]) : ''
   } catch {}
   const seen = new Map<string, Entry>()
+  let tasks: string[] | undefined
   for (const [n, line] of text.split('\n').entries()) {
+    if (line.includes('"user"')) {
+      try { const event = JSON.parse(line); if (event.type === 'user' && !event.isMeta && !JSON.stringify(event.message?.content).includes('tool_result')) { const text = typeof event.message?.content === 'string' ? event.message.content : (event.message?.content ?? []).filter((x: {type: string}) => x.type === 'text').map((x: {text: string}) => x.text).join('\n'); tasks = taskMarkers(text) } } catch {}
+    }
     if (!line.includes('"usage"') || !line.includes('"assistant"')) continue
     let m: { type?: string; timestamp?: string; cwd?: string; requestId?: string; effort?: string; message?: { id?: string; model?: string; usage?: Usage } }
     try {
@@ -215,7 +228,7 @@ export function parseTranscript(text: string, since: number): Entry[] {
     const w1 = u.cache_creation?.ephemeral_1h_input_tokens ?? 0
     const id = m.message?.id ? `${m.message.id}:${m.requestId ?? ''}` : `line:${n}`
     const e: Entry = {
-      id, ts, model,
+      id, ts, model, ...(tasks ? { tasks } : {}),
       ...(typeof m.effort === 'string' && EFFORT.test(m.effort) ? { effort: m.effort } : {}),
       input: u.input_tokens ?? 0,
       output: u.output_tokens ?? 0,

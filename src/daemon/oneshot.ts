@@ -1,3 +1,4 @@
+import { startAuxiliary, finishAuxiliary, taskForSession, bindTask } from './taskcost.ts'
 /**
  * FR-17: one-shot turns, without a session.
  *   /once [claude|codex] <text> — one turn in the topic's folder: `claude -p
@@ -87,12 +88,16 @@ export const onceRunner = {
   },
 }
 
-export async function runOnce(d: Daemon, engine: EngineId, cwd: string, prompt: string, model?: string): Promise<OnceResult> {
+export async function runOnce(d: Daemon, engine: EngineId, cwd: string, prompt: string, model?: string, taskId?: string): Promise<OnceResult> {
   const start = Date.now()
   const cmd = onceArgv(engine, prompt, model)
   if (!cmd) return { ok: false, text: t('{engine} не установлен.', { engine: engineOf(engine).name }), ms: 0 }
   d.log(`once ${engine} in ${cwd}: ${prompt.length} chars`)
-  const r = await onceRunner.run(cmd.bin, cmd.args, cwd, 10 * 60_000)
+  const stage = taskId ? startAuxiliary(d, taskId, engine) : undefined
+  let r
+  try { r = await onceRunner.run(cmd.bin, cmd.args, cwd, 10 * 60_000) }
+  catch (err) { if (stage) finishAuxiliary(d, stage, ''); throw err }
+  if (stage) finishAuxiliary(d, stage, r.out, model)
   const p = parseOnceOutput(r.out)
   const ms = Date.now() - start
   d.log(`once ${engine}: exit ${r.code}, ${p.text.length} chars in ${ms} ms${p.error ? `, error ${p.error}` : ''}`)
@@ -144,7 +149,7 @@ export async function reviewSession(d: Daemon, s: Session, c: ChatRef): Promise<
   const extra = c.threadId != null ? { message_thread_id: c.threadId } : {}
   const note = await d.bot.api.sendMessage(c.chatId, t('🔍 {engine} смотрит изменения сессии #{id}…', { engine: engineOf(other).name, id: s.id }), extra).catch(() => null)
   void (async () => {
-    const r = await runOnce(d, other, s.cwd, reviewPrompt(task, diff, engineOf(s.engine).name))
+    const r = await runOnce(d, other, s.cwd, reviewPrompt(task, diff, engineOf(s.engine).name), undefined, taskForSession(d, s))
     if (note) await d.bot.api.deleteMessage(c.chatId, note.message_id).catch(() => {})
     await post(d, c, t('🔍 **Ревью {engine}** изменений #{id}', { engine: engineOf(other).name, id: s.id }) + (r.ok ? '' : ' · ⚠️'), r)
   })().catch(err => d.log(`review of ${s.id} failed: ${err}`))
@@ -179,7 +184,9 @@ export function registerOnceCommands(d: Daemon, bot: Bot): void {
     const note = await ctx.reply(t('⚡ Разовый ход {engine}…', { engine: engineOf(engine).name }), extra).catch(() => null)
     void (async () => {
       const model = projectEngine(d, dir).engine === engine ? projectEngine(d, dir).model : undefined
-      const r = await runOnce(d, engine, dir, text, model)
+      const meta: Record<string, string> = {}
+      const taskId = bindTask(d, c, String(ctx.from!.id), meta, true)
+      const r = await runOnce(d, engine, dir, text, model, taskId)
       if (note) await d.bot.api.deleteMessage(c.chatId, note.message_id).catch(() => {})
       await post(d, c, t('⚡ **Разовый ход {engine}**', { engine: engineOf(engine).name }) + (r.ok ? '' : ' · ⚠️'), r)
     })().catch(err => d.log(`once failed: ${err}`))

@@ -1,3 +1,4 @@
+import { taskForSession } from './taskcost.ts'
 /**
  * Answer buttons: `ask_user` and `reply(buttons)` post a question with inline
  * buttons; a tap (or a text reply to the question) goes back to the session
@@ -84,6 +85,8 @@ export async function postQuestion(
     closed: 0,
   }
   d.store.addQuestion(row)
+  const taskId = taskForSession(d, s)
+  if (taskId) d.store.set(`cost:question:${id}`, taskId)
   if (o.copies?.length) d.store.set(copiesKey(id), JSON.stringify(o.copies))
   const extra = {
     ...(chat.threadId != null ? { message_thread_id: chat.threadId } : {}),
