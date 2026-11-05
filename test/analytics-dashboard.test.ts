@@ -17,7 +17,7 @@ import { sessionView } from '../src/daemon/sessionview.ts'
 import { mainScreen } from '../src/daemon/hub.ts'
 import { queueReport, flushReportQueue } from '../src/daemon/reportqueue.ts'
 import { InlineKeyboard } from 'grammy'
-import { exportStats, csvStats } from '../src/daemon/analytics-ui.ts'
+import { exportStats, csvStats, quotaSummary } from '../src/daemon/analytics-ui.ts'
 const record=(over:Partial<AccountingRecord>={}):AccountingRecord=>({id:'one',ts:1,engine:'codex',model:'gpt-6.1-sol',cwd:'/a',input:100,read:50,output:20,write5m:0,write1h:0,apiCost:.1,...over})
 describe('shared analytics and published price equivalents',()=>{
   test('known prices, cache subsets, context thresholds and unknown models/tiers',()=>{
@@ -80,6 +80,19 @@ describe('consistent report/UI adapters',()=>{
     mkdirSync(join(path,'..'),{recursive:true})
     writeFileSync(path,JSON.stringify({type:'assistant',timestamp:'2026-10-28T10:00:00Z',cwd:'/fixture/unknown',message:{id:'unified-active',model:'unpublished-model',usage:{input_tokens:10,output_tokens:2}}})+'\n')
     try{const report=await buildReport(d,{kind:'day',start:new Date('2026-10-28T00:00:00Z'),end:new Date('2026-10-29T00:00:00Z')});expect(report.text).toContain('Активных часов: 1');expect(report.text).toContain('Без цены: 1')}finally{rmSync(path,{force:true})}
+  })
+  test('primary usage summary exposes both agents and exact primary windows with honest remaining quota',async()=>{
+    const now=Date.now(),reset=new Date(now+3600_000)
+    const text=quotaSummary('claude',[{label:'Неделя, Opus',percent:99,resetsAt:reset},{label:'Неделя',percent:36,resetsAt:reset},{label:'5 часов',percent:31,resetsAt:reset}],now,now)
+    expect(text).toContain('5 часов: <b>Осталось: 69%</b>')
+    expect(text).toContain('Неделя: <b>Осталось: 64%</b>')
+    expect(text).not.toContain('Opus');expect(text).toContain('сброс');expect(text).toContain('5256261335682941418')
+    const unknown=quotaSummary('codex',[{label:'Codex: 5 часов',percent:76,resetsAt:new Date(now-1)}],now,now)
+    expect(unknown.match(/Текущий лимит неизвестен/g)).toHaveLength(2)
+    expect(unknown).not.toContain('Осталось: 100%');expect(unknown).toContain('5255760585445901285')
+    const {d}=setup(),screen=await usageScreen(d,{chatId:'111'})
+    expect(screen.text).toContain('Claude Code');expect(screen.text).toContain('Codex');expect(screen.text).toContain('Текущий лимит неизвестен')
+    expect(screen.kb.inline_keyboard.flat()).toHaveLength(2)
   })
   test('an expired Codex observation is unknown rather than a fabricated new-window zero',()=>{
     const at=new Date(Date.now()-1000),l=freshCodexLimits({at:1,plan:'plus',items:[{label:'Codex: 5 часов',percent:76,resetsAt:at}]})[0]!

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased — quota on the usage summary
+
+- Show both agents’ five-hour and weekly remaining quota, resets and observation times on the initial `/usage` screen; preserve unknown/expired states.
+
+
 ## Unreleased — report presentation
 
 - Replace dense usage details with collapsed sections, spaced cards and shared custom menu/agent emoji.

@@ -289,3 +289,5 @@ Ergebniskarten beginnen mit zwei Zeilen und **Details** / **Bericht schließen**
 Das Pult priorisiert Sitzungen mit Handlungsbedarf; Listen speichern Filter und Seite. Kompakte Berichte vereinen Claude/Codex, kennzeichnen rollierende und Kalenderzeiträume und bieten API-Schätzungen, Diagramme sowie CSV/JSON. Geplante Zustellungen werden bei Fehlern wiederholt. Veraltete Kontingente bleiben unbekannt. [Details](docs/usage-pages.md).
 
 Berichtsdetails klappen Vergleich, Kontingente, Modelle und Projekte getrennt ein; Benachrichtigungen haben eine eigene Ansicht mit Agentensymbolen je Fenster.
+
+Die erste `/usage`-Ansicht zeigt für beide Agenten das verbleibende Fünf-Stunden- und Wochenkontingent sowie Rücksetz- und Beobachtungszeiten.
