@@ -1,6 +1,6 @@
 /** Task lifecycle and scope rules; adapters own IDs, clocks and persistence. */
 export type TaskScope = { chatId: string; threadId?: number; isPrivate: boolean }
-export type Task = { id: string; chat: TaskScope; user: string; state: 'open' | 'ready' | 'closed'; at: number; updated: number }
+export type Task = { title?:string; id: string; chat: TaskScope; user: string; state: 'open' | 'ready' | 'closed'; at: number; updated: number }
 export function ownsTask(task: Task, chat: TaskScope, user: string): boolean {
   return task.user === user && task.chat.chatId === chat.chatId && (task.chat.threadId ?? 0) === (chat.threadId ?? 0)
 }

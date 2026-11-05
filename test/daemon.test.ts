@@ -453,27 +453,31 @@ describe('topics', () => {
     try {
       tg.push(textMessage({ text: '/usage' }))
       const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊'))
-      const text = String(r.body.text)
+      const viewId=/uv:([a-f0-9]+):/.exec(JSON.stringify(r.body.reply_markup))![1]
+      expect((r.body.reply_markup as {inline_keyboard:unknown[][]}).inline_keyboard.flat()).toHaveLength(2)
+      tg.push(callbackQuery(`uv:${viewId}:s:details`))
+      const details=await tg.waitFor('editMessageText',c=>String(c.body.text).includes('🟠 <b>Claude</b> · подписка: Max 20x'))
+      const text=String(details.body.text)
       expect(auth).toBe('Bearer tok')
       expect(text).toContain('🟠 <b>Claude</b> · подписка: Max 20x')
       expect(text).toContain('5 часов: <b>42%</b> ▰▰▰▰▰▰▰▰▱▱▱▱▱▱▱▱▱▱▱▱')
       expect(text).toContain('Неделя: <b>7%</b>')
-      expect(text).toContain('через 3 д')
+      expect(text).toMatch(/через (?:3 д|2 д 23 ч)/)
       expect(text).toContain('За неделю: Claude Code 90%, Chats 10%')
       // opus: 2 × (1000·4 + 1000·20 + 1M·0.2)/1M = $0.448; haiku: (1000·0.5 + 1000·2.5 + 1M·0.05)/1M = $0.053
-      expect(text).toContain('opus-5-5: 2.0 млн ток. · $0.45')
-      expect(text).toContain('haiku-5-5: 1.0 млн ток. · $0.05')
-      expect(text).toContain('📂 proj: 3.0 млн ток. · $0.50')
+      expect(text).toContain('opus-5-5: Токены: 2.0 млн · Ответов модели: 2 · ≈$0.45')
+      expect(text).toContain('haiku-5-5: Токены: 1.0 млн · Ответов модели: 1 · ≈$0.05')
+      expect(text).toContain('📂 proj: Токены: 3.0 млн · Ответов модели: 3 · ≈$0.50')
       expect(text).not.toContain('📂 sub')
-      expect(text).toContain('🗂 <b>По сессиям</b>, 7 дней')
+      expect(text).toContain('Проекты и пользователи')
 
       // The period of the sections: buttons, remembered; a day shows shares of spending.
       const { usageReport } = await import('../src/daemon/usage.ts')
       d.store.set('usage_period', 'd')
       const day = await usageReport(d)
-      expect(day).toContain('🧠 <b>По моделям</b>, сутки')
-      expect(day).toContain('👥 <b>Кто тратит</b>, сутки')
-      expect(day).toMatch(/📂 проекты: 100% расхода · \$0\.50/)
+      expect(day).toContain('🧠 <b>Модели</b>')
+      expect(day).toContain('Доля наблюдаемого расхода')
+      expect(day).toContain('📂 проекты: 100.0% · Токены: 3.0 млн')
       d.store.set('usage_period', null)
       // The same replies: today's cost in the session card and in the daily digest.
       const { sessionCostLine } = await import('../src/daemon/usage.ts')
@@ -500,37 +504,26 @@ describe('topics', () => {
       expect(String(rs.body.text)).toContain('✅ За сутки')
       const tomorrow = new Date(Date.now() + 86_400_000)
       tomorrow.setHours(0, 30, 0, 0)
-      const photos = () => tg.callsOf('sendPhoto').length
-      const riches = () => tg.callsOf('sendRichMessage').filter(c => String(c.body.rich_message).includes('🌙'))
-      const before = photos()
-      await sendDueReports(d, tomorrow)
-      expect(riches().length).toBe(1)
-      expect(photos()).toBe(before)
-      const call = riches()[0]
-      const rich = JSON.parse(String(call.body.rich_message)) as { markdown: string; media: { id: string; media: { type: string; media: string } }[] }
-      expect(rich.markdown).toStartWith('# 🌙 Итоги дня · ')
-      expect(rich.markdown).toContain('![](tg://photo?id=chart)')
-      expect(rich.markdown).toContain('## 🟠 Claude')
-      expect(rich.markdown).toContain('**$0.50** в ценах API · 3.0 млн ток.')
-      expect(rich.markdown).toContain('| opus-5-5 | 0.45 | 2.0 млн | 89% |')
-      expect(rich.markdown).toContain('| 📂 proj | $0.50 | — |')
-      expect(rich.media[0]).toMatchObject({ id: 'chart', media: { type: 'photo' } })
-      expect(rich.media[0].media.media).toStartWith('attach://')
-      expect(Object.values(call.body)).toContain('(file)')
-      await sendDueReports(d, tomorrow)
-      expect(riches().length).toBe(1)
-      // Without rich messages: the chart as a photo and the text, as before.
-      tg.failures.set('sendRichMessage', { code: 400, description: 'Bad Request: rich messages unsupported' })
-      try {
-        tg.push(callbackQuery('rp:now:day'))
-        await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за сутки</b>'))
-        expect(photos()).toBe(before + 1)
-      } finally {
-        tg.failures.delete('sendRichMessage')
-      }
+      const photos=()=>tg.callsOf('sendPhoto').length
+      const before=photos()
+      await sendDueReports(d,tomorrow)
+      const jobs=d.store.keys('report:job:').map(k=>JSON.parse(d.store.get(k)!))
+      const daily=jobs.find(j=>j.period.kind==='day')!
+      expect(daily.status).toBe('sent');expect(daily.text).toContain('≈$0.50')
+      const deliveries=()=>tg.callsOf('sendMessage').filter(c=>c.body.text===daily.text)
+      expect(deliveries()).toHaveLength(1);expect(photos()).toBe(before)
+      await sendDueReports(d,tomorrow);expect(deliveries()).toHaveLength(1)
+      const {sendDaily}=await import('../src/daemon/daily.ts')
+      const end=new Date(tomorrow);end.setHours(0,0,0,0);const start=new Date(end);start.setDate(start.getDate()-1)
+      await sendDaily(d,'111',{kind:'day',start,end})
+      const richCall=tg.callsOf('sendRichMessage').find(c=>String(c.body.rich_message).includes('🌙'))!
+      const rich=JSON.parse(String(richCall.body.rich_message))
+      expect(rich.markdown).toContain('## 🟠 Claude');expect(rich.markdown).toContain('opus-5-5');expect(rich.markdown).toContain('≈$0.50')
+      expect(rich.media[0]).toMatchObject({id:'chart',media:{type:'photo'}})
+      tg.failures.set('sendRichMessage',{code:400,description:'Bad Request: rich messages unsupported'})
+      try{await sendDaily(d,'111',{kind:'day',start,end});expect(photos()).toBe(before)}finally{tg.failures.delete('sendRichMessage')}
       tg.push(callbackQuery('rp:now:week'))
-      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📊 <b>Статистика за неделю</b>'))
-      expect(photos()).toBe(before + 2)
+      await tg.waitFor('sendMessage',c=>String(c.body.text).startsWith('📊 <b>Подписки и расход</b>')&&String(c.body.text).includes('Оценка API'))
       tg.push(callbackQuery('rp:t:day'))
       await tg.waitFor('editMessageText', c => String(c.body.text).includes('⬜️ За сутки'))
     } finally {
@@ -673,7 +666,7 @@ describe('topics', () => {
       expect(await renderDashboard(d, 1)).toContain('📊 Claude: 5 часов 3%')
       const limitsPart = await renderDashboard(d, 2)
       expect(limitsPart).toContain('📊 <b>Лимиты</b>\n\n🟠 <b>Claude</b>')
-      expect(limitsPart).toMatch(/<blockquote>5 часов: <b>3%<\/b> ▰?▱+\n {3}сброс /)
+      expect(limitsPart).toMatch(/<blockquote>5 часов: <b>3%<\/b> ▰?▱+ · Осталось: 97%\n {3}сброс /)
       const { screenToRich: toRich } = await import('../src/rich.ts')
       expect(toRich(limitsPart)).toContain('<h4>📊 Лимиты</h4>')
       expect(toRich(limitsPart)).toContain('<h4>🟠 Claude')
@@ -692,9 +685,9 @@ describe('topics', () => {
       process.env.JOURNAL_CHAT_ID = '-5300'
       try {
         const status = await renderDashboard(d)
-        expect(status).toContain('📊 <b>Лимиты</b>')
-        expect(status).toContain('\n🟠 <b>Claude</b>')
-        expect(status).toMatch(/5 часов: <b>3%<\/b> ▰?▱+\n {3}сброс .*\d\d:\d\d \(через /)
+        expect(status).toContain('📊 Claude: 5 часов 3%')
+        expect(status).not.toContain('Прогноз:')
+        expect(status.length).toBeLessThan(4096)
       } finally {
         delete process.env.JOURNAL_CHAT_ID
       }
@@ -707,9 +700,9 @@ describe('topics', () => {
       scheduleResetNotice(d, 'Тест', new Date(at0 - 400))
       scheduleResetNotice(d, 'Тест', new Date(at0 + 300))
       scheduleResetNotice(d, 'Тест', new Date(at0))
-      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест» сброшен'), 3_000)
+      await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('Наступило время сброса «Тест»'), 3_000)
       await Bun.sleep(400)
-      expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('✅ Токены обновились: лимит «Тест»')).length).toBe(1)
+      expect(tg.callsOf('sendMessage').filter(c => String(c.body.text).startsWith('Наступило время сброса «Тест»')).length).toBe(1)
       expect(JSON.parse(d.store.get('limit:Тест')!)).toMatchObject({ level: 0, notified: true })
 
       // /usage offers 🔔 per limit; pressing it remembers the request.
@@ -736,7 +729,7 @@ describe('topics', () => {
       expect(tg.calls.some(c => c.method === 'sendMessage' && String(c.body.text).includes('«Выкл»'))).toBe(false)
       const { requestResetNotice } = await import('../src/daemon/usage.ts')
       requestResetNotice(d, 'Тихий', new Date(Date.now() - 29_900), true)
-      const quiet = await tg.waitFor('sendMessage', c => String(c.body.text).includes('лимит «Тихий» сброшен'))
+      const quiet = await tg.waitFor('sendMessage', c => String(c.body.text).includes('сброса «Тихий»'))
       expect(quiet.body.disable_notification).toBe(true)
       tg.push(callbackQuery('lr:0', { from: 222 }))
       await tg.waitFor('answerCallbackQuery', c => c.body.text === 'Только для владельца подписки.')
@@ -862,7 +855,7 @@ describe('topics', () => {
     tg.push(textMessage({ text: '/sessions' }))
     const r = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('📋 <b>Сессии</b>') && String(c.body.text).includes('📂 <b>Проекты</b>'))
     const listText = String(r.body.text)
-    expect(listText).toMatch(/\n\d+\. 📂 <b>proj<\/b> · /)
+    expect(listText).toContain('<b>proj</b> · <tg-emoji')
     // Sections in order — the owner's, the users', the projects' — numbered through; each line with the agent.
     const at = (x: string) => listText.indexOf(x)
     expect(at('👤 <b>Владелец</b>')).toBeLessThan(at('📂 <b>Проекты</b>'))
@@ -872,7 +865,7 @@ describe('topics', () => {
     const kb = JSON.stringify(r.body.reply_markup)
     // Buttons preserve the agent and status around the project name.
     const btn = (r.body.reply_markup as { inline_keyboard: { text: string; callback_data: string }[][] }).inline_keyboard.flat().find(b => b.callback_data === `sm:s:${sessionId}`)!
-    expect(btn.text).toMatch(/^\d+\. proj (💤|⚙️|🔐)$/u)
+    expect(btn.text).toMatch(/^(💤|⚙️|🔐) proj$/u)
     expect(kb).toContain(`sm:s:${sessionId}`)
     expect(kb).toContain('sm:list')
 
@@ -1371,28 +1364,21 @@ describe('topics', () => {
       { timestamp: at(50_000), type: 'event_msg', payload: { type: 'token_count', info: { total_token_usage: { input_tokens: 30_000, cached_input_tokens: 20_000, output_tokens: 500 } }, rate_limits: rl } },
     ].map(x => JSON.stringify(x)).join('\n'))
     const text = await usageReport(d, now, 'd')
-    // Its own section, after Claude's: plan, windows, tokens, models and sessions of Codex only.
-    const codex = text.slice(text.indexOf('⚫️ <b>Codex</b>'))
-    expect(text.indexOf('🟠 <b>Claude</b>')).toBeLessThan(text.indexOf('⚫️ <b>Codex</b>'))
-    expect(codex).toStartWith('⚫️ <b>Codex</b> · подписка: plus')
-    expect(codex).toContain('5 часов: <b>12%</b>')
-    expect(codex).toContain('по последнему запросу')
-    expect(codex).toContain('5 часов: 31 тыс. ток.')
-    expect(codex).toContain('gpt-6.1-sol: 31 тыс. ток.')
-    expect(codex).toContain('cxusage: 31 тыс. ток.')
-    // Who spends Codex: in tokens, not dollars.
-    expect(codex).toContain('👥 <b>Кто тратит</b>, сутки')
-    expect(codex).toContain('📂 проекты: 100% токенов · 31 тыс. ток.')
-    expect(text.slice(0, text.indexOf('⚫️ <b>Codex</b>'))).not.toContain('gpt-6.1-sol')
+    expect(text).toContain('<b>Codex</b> · plus')
+    expect(text).toContain('5 часов: <b>12%</b>')
+    expect(text).toContain('Данные источника:')
+    expect(text).toContain('codex · gpt-6.1-sol: Токены: 31 тыс.')
+    expect(text).toContain('cxusage: Токены: 31 тыс.')
+    expect(text).toContain('Доля наблюдаемого расхода')
     const { limitsHtml, limitsLine } = await import('../src/daemon/usage.ts')
     expect(limitsHtml(now)).toContain('⚫️ <b>Codex</b> · plus\n<blockquote>5 часов: <b>12%</b>')
     expect(limitsLine(now)).toContain('Codex: 5 часов 12% · неделя 4%')
     // The turn's cost of a Codex session: from its rollouts, tokens and cache, no $.
     const { turnCostLine, turnCostBlock, sessionCostLine } = await import('../src/daemon/usage.ts')
     const cx = { engine: 'codex', cwd: '/tmp/cxusage', projectKey: '/tmp/cxusage' } as never
-    expect(turnCostLine(cx, now - 120_000, now)).toBe('🔢 Ход: 31 тыс. ток. · кэш 66%')
-    expect(turnCostBlock(cx, now - 120_000, now)).not.toContain('В ценах API')
-    expect(sessionCostLine(cx, now)).toBe('💸 сегодня 31 тыс. ток. (Codex)')
+    expect(turnCostLine(cx,now-120_000,now)).toContain('· $0.03')
+    expect(turnCostBlock(cx,now-120_000,now)).toContain('В ценах API')
+    expect(sessionCostLine(cx,now)).toBe('💸 сегодня $0.03 · 31 тыс. ток.')
     // Codex's windows cross the alert thresholds too (85% ≥ 80).
     writeFileSync(join(dir, 'rollout-alert.jsonl'), [
       { timestamp: at(30_000), type: 'session_meta', payload: { cwd: '/tmp/cxusage' } },
@@ -1723,7 +1709,7 @@ describe('user labels', () => {
     expect(sessionRows.length).toBeGreaterThan(0)
     for (const row of sessionRows) {
       expect(row).toHaveLength(1)
-      expect(row[0]!.text).toMatch(/ (💤|⚙️|🔐)$/u)
+      expect(row[0]!.text).toMatch(/^(💤|⚙️|🔐) /u)
       expect([...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(row[0]!.text)].length).toBeLessThanOrEqual(28)
     }
     expect(sessionRows.some(row => (row[0] as { icon_custom_emoji_id?: string }).icon_custom_emoji_id === '5256261335682941418')).toBe(true)
@@ -1856,7 +1842,7 @@ describe('menu', () => {
     try {
       tg.push(textMessage({ text: '/menu' }))
       const m = await tg.waitFor('sendRichMessage', c => String((c.body.rich_message as { html?: string } | undefined)?.html ?? '').startsWith('<h3>🎛 Меню</h3><hr/>'))
-      expect(JSON.stringify(m.body.reply_markup)).toContain('hub:stats')
+      expect(JSON.stringify(m.body.reply_markup)).toContain('hub:periods')
       expect(m.body.text).toBeUndefined()
       tg.push(callbackQuery('hub:help'))
       await tg.waitFor('editMessageText', c => String((c.body.rich_message as { html?: string } | undefined)?.html ?? '').startsWith('<h3>❓ Помощь</h3><hr/>'), 6000)
@@ -1875,7 +1861,10 @@ describe('menu', () => {
     tg.push(textMessage({ text: '/menu' }))
     const m = await tg.waitFor('sendMessage', c => String(c.body.text).startsWith('🎛 <b>Меню</b>'))
     const kb = JSON.stringify(m.body.reply_markup)
-    for (const cb of ['sm:list', 'tm:list', 'hub:stats', 'hub:people', 'hub:rem', 'hub:set', 'hub:help']) expect(kb).toContain(cb)
+    for(const cb of ['sm:list','hub:usage','hub:periods','hub:more'])expect(kb).toContain(cb)
+    tg.push(callbackQuery('hub:more'))
+    const more=await tg.waitFor('editMessageText',c=>JSON.stringify(c.body.reply_markup??'').includes('hub:people'))
+    for(const cb of ['tm:list','hub:stats','hub:people','hub:rem','hub:set','hub:help'])expect(JSON.stringify(more.body.reply_markup)).toContain(cb)
 
     const open = async (data: string, startsWith: string) => {
       tg.push(callbackQuery(data))
@@ -2160,7 +2149,7 @@ describe('convenience', () => {
     const e = (cwd: string, output: number) => ({ id: `${cwd}${output}`, ts: now - 60_000, model: 'claude-opus-5-5', input: 0, output, write5m: 0, write1h: 0, read: 0, cwd })
     const ws = windowShares(d, { items: [{ label: '5 часов', percent: 50, resetsAt: new Date(now + 3600_000) }], breakdown: null },
       [e(join(settings.usersDir, '222'), 3_000_000), e('/tmp/proj', 1_000_000)], now)!
-    expect(ws.shares.map(s => [s.userId, Math.round(s.percent)])).toEqual([['222', 38], [null, 13]])
+    expect(ws.shares.map(s => [s.userId, Math.round(s.percent)])).toEqual([['222',75],[null,25]])
 
     d.store.set('quiet_hours', '00:00-23:59')
     await d.bot.api.sendMessage('111', 'тихо')

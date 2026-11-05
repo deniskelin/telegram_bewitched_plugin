@@ -1,3 +1,5 @@
+import { viewScope } from './usageview.ts'
+import { sessionView } from './sessionview.ts'
 import { taskBatchMeta } from '../core/task.ts'
 /**
  * Forum topics in a connected supergroup: one topic per project, a pinned
@@ -15,7 +17,7 @@ import { join } from 'path'
 import { can, loadAccess, NOTIFY_DONE_INFO, owner, prefsBadge, prefsFor, saveAccess, setPref, verboseBadge, VERBOSE_INFO } from '../access.ts'
 import { MEMORY_DIR, settings } from '../config.ts'
 import type { TopicRow } from '../db.ts'
-import { clip, escapeHtml, fmtDuration, safeMeta } from '../format.ts'
+import { clip, clipHtml, escapeHtml, fmtDuration, safeMeta } from '../format.ts'
 import { k, locale, t as tr } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
 import { groupForProject } from './groups.ts'
@@ -289,7 +291,7 @@ const DASH_LEVELS: Record<DashDetail, string> = { 1: k('🔹 Кратко'), 2: 
 
 export function dashDetail(d: Daemon): DashDetail {
   const v = Number(d.store.get('dash_detail'))
-  return v === 1 || v === 3 ? v : 2
+  return v === 2 || v === 3 ? v : 1
 }
 
 /**
@@ -300,7 +302,17 @@ export function dashDetail(d: Daemon): DashDetail {
 export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(d)): Promise<string> {
   const now = Date.now()
   const blocks = [tr('🎛 <b>Пульт</b>')]
-  const sections = sessionSections(d)
+  const all=d.activeSessions()
+  const rank=(s:Session)=>s.status==='waiting'?0:s.turn?.stuck||s.stopRequest?.phase==='failed'||d.store.get(`ux:error:${s.projectKey}`)?1:2
+  blocks.push(tr('Подключено: {connected} · работает: {working} · ждёт: {waiting} · не запущено: {offline}',{connected:all.length,working:all.filter(s=>s.status==='working').length,waiting:all.filter(s=>s.status==='waiting').length,offline:owner()&&d.userSession(owner()!)?0:1}))
+  if(d.permissions.size)blocks.push(tr('🔐 Ждут разрешения: {size} — /permissions',{size:d.permissions.size}))
+  let remaining=7
+  const original=sessionSections(d),ownId=owner()?d.userSession(owner()!)?.id:undefined
+  const urgent=all.filter(s=>s.id!==ownId&&rank(s)<2).sort((a,b)=>rank(a)-rank(b)).map(s=>({s}))
+  const urgentIds=new Set(urgent.map(x=>x.s.id))
+  const ownerSection=original.find(sec=>sec.title===tr('👤 <b>Владелец</b>'))
+  const ordered=[...(ownerSection?[ownerSection]:[]),...(urgent.length?[{title:`<b>${tr('Требуют внимания')}</b>`,items:urgent}]:[]),...original.filter(sec=>sec!==ownerSection).map(sec=>({...sec,items:sec.items.filter(i=>!('s'in i)||!urgentIds.has(i.s.id))}))]
+  const sections=ordered.map(sec=>{const take=sec.items.slice(0,remaining);remaining-=take.length;return{...sec,items:take}}).filter(s=>s.items.length)
   let n = 0
   for (const sec of sections) {
     const lines: string[] = []
@@ -320,7 +332,7 @@ export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(
         const extra: string[] = []
         if (s.branch && !user) extra.push(`🌿 ${escapeHtml(s.branch)}`)
         if (s.turn) extra.push(escapeHtml(tr('⏱ ход {v}', { v: fmtDuration(now - s.turn.start) })))
-        if (s.lastTool) extra.push(`🔧 ${escapeHtml(clip(s.lastTool.text, 60))}`)
+        if (s.lastTool && !user) extra.push(`🔧 ${escapeHtml(clip(s.lastTool.text, 60))}`)
         const cost = sessionCostLine(s)
         if (cost) extra.push(escapeHtml(cost))
         if (extra.length) lines.push(`    ${extra.join(' · ')}`)
@@ -328,6 +340,7 @@ export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(
     }
     blocks.push(`${sec.title}\n${lines.join('\n')}`)
   }
+  if(all.length+(owner()&&!d.userSession(owner()!)?1:0)>n)blocks.push(tr('… ещё {n}',{n:all.length+(owner()&&!d.userSession(owner()!)?1:0)-n}))
   if (!n) blocks.push(tr('Нет запущенных сессий.'))
   // Limits: one line when brief; otherwise a section per subscription, as in /usage.
   if (level === 1) {
@@ -338,13 +351,13 @@ export async function renderDashboard(d: Daemon, level: DashDetail = dashDetail(
     if (limits) blocks.push(`${tr('📊 <b>Лимиты</b>')}\n\n${limits}`)
   }
   blocks.push(`<i>${escapeHtml(tr('Обновлено {time}', { time: new Date().toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' }) }))} · /menu · /sessions · /help</i>`)
-  return blocks.join('\n\n')
+  return clipHtml(blocks.join('\n\n'),3900)
 }
 
 /** The detail buttons under the dashboard; the current level marked. */
 function dashboardKb(d: Daemon): InlineKeyboard {
   const cur = dashDetail(d)
-  return new InlineKeyboard([([1, 2, 3] as const).map(v => button(`${cur === v ? '• ' : ''}${tr(DASH_LEVELS[v])}`, `dash:lv:${v}`, cur === v ? 'primary' : undefined))])
+  return new InlineKeyboard([[button(tr('📋 Сессии'),'sm:list'),button(tr('Лимиты'),'hub:usage'),button(tr('Отчёты'),'hub:periods')],[...(d.permissions.size?[button(tr('🔐 Разрешения ({size})',{size:d.permissions.size}),'sm:perms')]:[]),...(d.activeSessions().some(s=>s.turn?.stuck||s.stopRequest?.phase==='failed')?[button(tr('Требуют внимания'),'sl:attention')]:[]),button(tr('🎛 Меню'),'hub:main')],([1, 2, 3] as const).map(v => button(`${cur === v ? '• ' : ''}${tr(DASH_LEVELS[v])}`, `dash:lv:${v}`, cur === v ? 'primary' : undefined))])
 }
 
 /** dash:lv:<1-3> — the dashboard's detail (anyone who may control sessions). */
@@ -619,7 +632,7 @@ export function registerTopicCommands(d: Daemon, bot: Bot): void {
 
   bot.command('sessions', async ctx => {
     if (!requireControl(ctx)) return
-    const { text, kb } = await sessionsList(d)
+    const { text, kb } = await sessionsList(d,sessionView(d,ctx),viewScope(ctx))
     await ctx.reply(text, { parse_mode: 'HTML', link_preview_options: { is_disabled: true }, reply_markup: kb })
   })
 

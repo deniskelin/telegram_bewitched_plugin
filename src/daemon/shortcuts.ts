@@ -116,7 +116,7 @@ export async function withoutModel(d: Daemon, ctx: Context, text: string, s: Ses
   }
 
   if (LIMITS_RE.test(text) && String(here.from) === owner()) {
-    const screen = await usageScreen(d, here)
+    const screen=await usageScreen(d,here,undefined,Date.now(),'current',undefined,'limits')
     await reply(screen.text, screen.kb)
     saved(d, 'limits')
     return true

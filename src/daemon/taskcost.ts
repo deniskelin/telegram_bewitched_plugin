@@ -6,7 +6,7 @@ export type { Task } from '../core/task.ts'
 import { randomBytes } from 'crypto'
 import { readFileSync, readdirSync } from 'fs'
 import { dirname, basename, join } from 'path'
-import { escapeHtml, fmtDuration } from '../format.ts'
+import { escapeHtml, fmtDuration, maskSecrets, clip } from '../format.ts'
 import { t } from '../i18n/index.ts'
 import { inChat } from './lang.ts'
 import type { ChatRef, Daemon, Session } from './daemon.ts'
@@ -44,6 +44,8 @@ export function bindTask(d: Daemon, c: ChatRef, user: string, meta: Record<strin
   const task = id ? taskOf(d, id) : null
   if (!task || task.state === 'closed') id = newTask(d, c, user).id
   meta.task_id = id!; changeTask(d, id!, 'open')
+  const current=taskOf(d,id!)
+  if(current&&!current.title&&meta.message_id){const message=d.store.getMessage(c.chatId,Number(meta.message_id));if(message?.text){const repo=repository(d);repo.commit({...current,title:clip(maskSecrets(message.text.replace(/\s+/g,' ').trim()),120)},repo.current(c,user))}}
   return id!
 }
 const stages = (d: Daemon): Stage[] => d.store.keys('cost:stage:').map(k => JSON.parse(d.store.get(k)!) as Stage)

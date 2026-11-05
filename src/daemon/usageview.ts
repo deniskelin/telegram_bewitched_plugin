@@ -2,8 +2,10 @@
 import { randomBytes } from 'crypto'
 import type { Context } from 'grammy'
 import type { Daemon } from './daemon.ts'
+import type { Range, RangeMode } from '../core/analytics.ts'
+import type { Snapshot } from './analytics.ts'
 import type { Period } from './usage.ts'
-export type UsageView = { id: string; chatId: string; threadId?: number; period: Period; page: number; pages: string[]; at: number; limits: { label: string; percent: number; resetsAt: string | null }[] }
+export type UsageView = { id: string; category?:'limits'|'usage'; mode?:RangeMode; section?:string; sections?:Record<string,string[]>; stats?:Snapshot; range?:Range; fixedRange?:boolean; dismissed?:boolean; chatId: string; threadId?: number; period: Period; page: number; pages: string[]; at: number; limits: { label: string; percent: number; resetsAt: string | null; stale?:boolean }[] }
 const key = (id: string) => `usage:view:${id}`
 export const saveUsageView = (d: Daemon, v: UsageView): void => d.store.set(key(v.id), JSON.stringify(v))
 export const loadUsageView = (d: Daemon, id: string): UsageView | null => JSON.parse(d.store.get(key(id)) ?? 'null')

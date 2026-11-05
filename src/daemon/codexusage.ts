@@ -36,6 +36,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
   let cwd = ''
   let model = 'codex'
   let effort: string | undefined
+  let serviceTier: string | undefined
   let prev = { input: 0, cached: 0, output: 0, reasoning: 0 }
   let limits: CodexLimits | null = null
   let tasks: string[] | undefined
@@ -52,6 +53,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
     if (m.type === 'session_meta' && typeof p.cwd === 'string') cwd = p.cwd
     else if (m.type === 'turn_context' && typeof p.model === 'string') {
       model = p.model
+      serviceTier = typeof p.service_tier === 'string' ? p.service_tier : undefined
       // The effort of the turn: set explicitly (-c model_reasoning_effort) or the collaboration mode's; none — the model's default.
       const mode = (p.collaboration_mode as { settings?: { reasoning_effort?: unknown } } | undefined)?.settings?.reasoning_effort
       const e = typeof p.effort === 'string' ? p.effort : typeof mode === 'string' ? mode : undefined
@@ -66,7 +68,7 @@ export function parseRollout(text: string, file: string, since: number): { entri
         if (grew && ts >= since) {
           const cached = Math.max(0, now.cached - prev.cached)
           entries.push({
-            id: `codex:${file}:${n}`, ts, model, cwd, ...(tasks ? { tasks } : {}), ...(effort ? { effort } : {}),
+            id: `codex:${file}:${n}`, ts, model, cwd, ...(serviceTier ? { serviceTier } : {}), ...(tasks ? { tasks } : {}), ...(effort ? { effort } : {}),
             input: Math.max(0, now.input - prev.input - cached),
             output: Math.max(0, now.output - prev.output),
             ...(total.reasoning_output_tokens !== undefined ? { reasoning: Math.max(0, now.reasoning - prev.reasoning) } : {}),

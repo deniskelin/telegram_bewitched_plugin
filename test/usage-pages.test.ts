@@ -51,9 +51,11 @@ describe('durable usage pagination',()=>{
   test('all models and owners remain reachable; pages fit, are balanced and edit one message',async()=>{
     const {d,ctx,edits}=setup()
     const screen=await usageScreen(d,{chatId:'111'})
-    const v=viewOf(d)
+    let v=viewOf(d)
+    expect(screen.kb.inline_keyboard.flat().length).toBe(2)
+    await handleResetCallback(d,ctx,`uv:${v.id}:s:details`);v=loadUsageView(d,v.id)!;edits.length=0
     expect(v.pages.length).toBeGreaterThan(1)
-    expect(screen.text).toContain('Страница 1 из')
+    expect(renderUsageView(d,v).text).toContain('Страница 1 из')
     const all=v.pages.map(plain).join('')
     for(let i=0;i<60;i++){const id=String(i).padStart(3,'0');expect(all).toContain(`page-model-${id}-`);expect(all).toContain(`page-owner-${id}:`)}
     for(const p of v.pages){expect(p.length).toBeLessThanOrEqual(3600);balanced(p)}
@@ -63,7 +65,7 @@ describe('durable usage pagination',()=>{
   })
   test('navigation survives reconstruction, clamps boundaries and settings retain the page',async()=>{
     const {d,ctx,edits}=setup();await usageScreen(d,{chatId:'111'})
-    const v=viewOf(d), restarted={...d} as Daemon
+    let v=viewOf(d);await handleResetCallback(d,ctx,`uv:${v.id}:s:details`);v=loadUsageView(d,v.id)!;const restarted={...d} as Daemon
     await handleResetCallback(restarted,ctx,`uv:${v.id}:g:999999`)
     expect(loadUsageView(d,v.id)?.page).toBe(v.pages.length-1)
     await handleResetCallback(restarted,ctx,`uv:${v.id}:a:us:w:off`)
@@ -105,7 +107,8 @@ test('an expired limit in a still-valid snapshot cannot schedule an obsolete res
 })
 
 test('overlapping page clicks serialize against the latest persisted view',async()=>{
-  const {d,ctx,edits}=setup();await usageScreen(d,{chatId:'111'});const v=viewOf(d)
+  const {d,ctx,edits}=setup();await usageScreen(d,{chatId:'111'});let v=viewOf(d)
+  await handleResetCallback(d,ctx,`uv:${v.id}:s:details`);v=loadUsageView(d,v.id)!;edits.length=0
   let release!:()=>void,started!:()=>void
   const began=new Promise<void>(resolve=>{started=resolve})
   const original=ctx.editMessageText.bind(ctx)

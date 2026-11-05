@@ -40,9 +40,10 @@ function axisMoney(v: number, step: number): string {
 }
 
 /** labelEvery: show every n-th x label (24 hours don't fit side by side). */
-export function columnChartSvg(o: { title: string; subtitle: string; columns: Column[]; labelEvery?: number }): string {
+export function columnChartSvg(o: { title: string; subtitle: string; columns: Column[]; labelEvery?: number; metric?: 'cost'|'tokens'|'requests' }): string {
+  const axis = (v:number,step=1) => o.metric && o.metric !== 'cost' ? new Intl.NumberFormat('en',{notation:'compact',maximumFractionDigits:1}).format(v) : axisMoney(v,step)
   const W = 1000, H = 520
-  const left = 72, right = 24, top = 104, bottom = 56
+  const left = 72, right = 24, top = 132, bottom = 56
   const pw = W - left - right, ph = H - top - bottom
   const max = Math.max(0, ...o.columns.map(c => c.value))
   const { top: yTop, step } = niceScale(max)
@@ -54,12 +55,16 @@ export function columnChartSvg(o: { title: string; subtitle: string; columns: Co
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}" font-family="${FONT}">`)
   out.push(`<rect width="${W}" height="${H}" fill="${C.surface}"/>`)
   out.push(`<text x="${left}" y="44" font-size="26" font-weight="bold" fill="${C.primary}">${escapeHtml(o.title)}</text>`)
-  out.push(`<text x="${left}" y="76" font-size="17" fill="${C.secondary}">${escapeHtml(o.subtitle)}</text>`)
+  const subtitleLines:string[]=[]
+  let line=''
+  for(const word of o.subtitle.split(/\s+/)){if(line.length+word.length>100){subtitleLines.push(line);line=''}line+=(line?' ':'')+word}
+  if(line)subtitleLines.push(line)
+  for(const [i,text]of subtitleLines.slice(0,3).entries())out.push(`<text x="${left}" y="${70+i*20}" font-size="16" fill="${C.secondary}">${escapeHtml(text)}</text>`)
   for (let v = step; v <= yTop + 1e-9; v += step) {
     out.push(`<line x1="${left}" x2="${W - right}" y1="${y(v)}" y2="${y(v)}" stroke="${C.grid}" stroke-width="1"/>`)
-    out.push(`<text x="${left - 10}" y="${y(v) + 5}" font-size="14" fill="${C.muted}" text-anchor="end">${axisMoney(v, step)}</text>`)
+    out.push(`<text x="${left - 10}" y="${y(v) + 5}" font-size="14" fill="${C.muted}" text-anchor="end">${axis(v, step)}</text>`)
   }
-  out.push(`<text x="${left - 10}" y="${top + ph + 5}" font-size="14" fill="${C.muted}" text-anchor="end">$0</text>`)
+  out.push(`<text x="${left - 10}" y="${top + ph + 5}" font-size="14" fill="${C.muted}" text-anchor="end">${o.metric && o.metric !== 'cost'?'0':'$0'}</text>`)
   const peak = o.columns.reduce((best, c, i) => (c.value > (o.columns[best]?.value ?? 0) ? i : best), 0)
   for (const [i, c] of o.columns.entries()) {
     const cx = left + slot * i + slot / 2
@@ -68,12 +73,12 @@ export function columnChartSvg(o: { title: string; subtitle: string; columns: Co
       const x0 = cx - bw / 2, y0 = top + ph - h, r = Math.min(4, h, bw / 2)
       // Rounded data end, square at the baseline.
       out.push(`<path d="M${x0},${top + ph} V${y0 + r} Q${x0},${y0} ${x0 + r},${y0} H${x0 + bw - r} Q${x0 + bw},${y0} ${x0 + bw},${y0 + r} V${top + ph} Z" fill="${C.bar}"/>`)
-      if (i === peak) out.push(`<text x="${cx}" y="${y0 - 10}" font-size="15" font-weight="bold" fill="${C.primary}" text-anchor="middle">${money(c.value)}</text>`)
+      if (i === peak) out.push(`<text x="${cx}" y="${y0 - 10}" font-size="15" font-weight="bold" fill="${C.primary}" text-anchor="middle">${o.metric && o.metric !== 'cost'?axis(c.value):money(c.value)}</text>`)
     }
     if (i % (o.labelEvery ?? 1) === 0) out.push(`<text x="${cx}" y="${top + ph + 28}" font-size="14" fill="${C.muted}" text-anchor="middle">${escapeHtml(c.label)}</text>`)
   }
   out.push(`<line x1="${left}" x2="${W - right}" y1="${top + ph}" y2="${top + ph}" stroke="${C.baseline}" stroke-width="1"/>`)
-  if (max <= 0) out.push(`<text x="${left + pw / 2}" y="${top + ph / 2}" font-size="18" fill="${C.muted}" text-anchor="middle">${escapeHtml(t('Нет активности за период'))}</text>`)
+  if (max <= 0) out.push(`<text x="${left + pw / 2}" y="${top + ph / 2}" font-size="18" fill="${C.muted}" text-anchor="middle">${escapeHtml(t('Нет данных для этой метрики'))}</text>`)
   out.push('</svg>')
   return out.join('\n')
 }

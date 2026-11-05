@@ -1,3 +1,6 @@
+import { viewScope } from './usageview.ts'
+import { sessionView, saveSessionView, SESSION_FILTERS, type SessionView } from './sessionview.ts'
+import { taskOf } from './taskcost.ts'
 import { taskForSession } from './taskcost.ts'
 /**
  * /sessions as a menu in one message, like BotFather: the list of sessions
@@ -14,8 +17,8 @@ import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { can, NOTIFY_DONE_INFO, owner, prefsFor, setPref, verboseBadge } from '../access.ts'
 import { join } from 'path'
 import { settings } from '../config.ts'
-import { clip, clipHtml, escapeHtml } from '../format.ts'
-import { locale, t } from '../i18n/index.ts'
+import { clip, clipHtml, escapeHtml, fmtDuration } from '../format.ts'
+import { locale, t, k } from '../i18n/index.ts'
 import { isMessageNotModified, topicLink } from '../tg.ts'
 import type { Daemon, Session } from './daemon.ts'
 import { gitDiff, gitInfo } from './git.ts'
@@ -43,59 +46,53 @@ export type Btn = ReturnType<typeof button> | ReturnType<typeof InlineKeyboard.u
  * through, each line with the agent, model and effort; the buttons one after
  * another, in the same order.
  */
-export async function sessionsList(d: Daemon): Promise<Screen> {
-  const original = sessionSections(d)
-  const own = original.find(x => x.title === t('👤 <b>Владелец</b>'))
-  const needs = d.activeSessions().filter(s => s.status === 'waiting' || s.turn?.stuck || s.stopRequest?.phase === 'failed' || d.store.get(`ux:error:${s.projectKey}`) != null || lastResult(d, s.projectKey)?.unread)
-  const ownIds = new Set(own?.items.flatMap(i => 's' in i ? [i.s.id] : []) ?? [])
-  const attention = needs.filter(s => !ownIds.has(s.id)).map(s => ({ s }))
-  const used = new Set([...ownIds, ...attention.map(i => i.s.id)])
-  const sections = [...(own ? [own] : []), ...(attention.length ? [{ title: `<b>${t('Требуют внимания')}</b>`, items: attention }] : []), ...original.filter(x => x !== own).map(sec => ({ ...sec, items: sec.items.filter(i => !('s' in i) || !used.has(i.s.id)) })).filter(x => x.items.length)]
-  let n = 0
-  const textBlocks: string[] = []
-  const rows: Btn[][] = []
-  const seg = new Intl.Segmenter(undefined, { granularity: 'grapheme' })
-  for (const sec of sections) {
-    const lines: string[] = []
-    for (const item of sec.items) {
-      n++
-      if ('offline' in item) {
-        lines.push(`${n}. 👤 <b>${escapeHtml(d.userShortName(item.offline))}</b> · ⏻ ${t('не запущена')}`)
-        rows.push([button(`${n}. ${clip(d.userShortName(item.offline), 20)} ⏻`, 'sm:owner')])
-        continue
-      }
-      const s = item.s
-      const label = sessionLabel(d, s)
-      const icon = label.slice(0, label.indexOf(' '))
-      lines.push(`${n}. ${icon} <b>${escapeHtml(label.slice(icon.length + 1))}</b> · ${menuStatus(s)}${s.group ? ' · 👥' : ''}\n    ${await agentLine(s)}`)
-      const active = d.store.get(`ux:active:${s.id}`)
-      const task = active ? (JSON.parse(active) as Record<string, string>[]).at(-1) : null
-      const taskText = task?.chat_id ? (task.message_ids ?? task.message_id ?? '').split(',').map(id => d.store.getMessage(task.chat_id!, Number(id))?.text ?? '').filter(Boolean).join(' · ') : ''
-      if (taskText && s.turn) lines.push(`    ${t('Текущая задача')}: ${escapeHtml(clip(taskText.replace(/\s+/g, ' '), 100))}`)
-      if (d.store.get(`ux:error:${s.projectKey}`)) lines.push(`    ${t('Не доставлено')}`)
-      if (lastResult(d, s.projectKey)?.unread) lines.push(`    ${t('Непрочитанный результат')}`)
-      // One full-width row keeps the status visible on narrow phone screens.
-      const prefix = `${n}. `
-      const suffix = ` ${menuStatusIcon(s)}`
-      const name = sessionShortName(d, s).replace(/\s+/g, ' ').trim()
-      const chars = [...seg.segment(name)].map(x => x.segment)
-      const budget = Math.max(1, 28 - Array.from(prefix + suffix).length)
-      const title = chars.length > budget ? chars.slice(0, budget - 1).join('') + '…' : name
-      rows.push([{ ...button(`${prefix}${title}${suffix}`, `sm:s:${s.id}`), icon_custom_emoji_id: AGENT_EMOJI[s.engine] }])
-    }
-    textBlocks.push(`${sec.title}\n${lines.join('\n')}`)
+export async function sessionsList(d:Daemon,view:SessionView={filter:'all',page:0},scope:{chatId:string;threadId?:number}={chatId:owner()??''}):Promise<Screen>{
+  const all=d.activeSessions(),o=owner(),own=o?d.userSession(o):undefined
+  const rank=(s:Session)=>s.status==='waiting'?0:s.turn?.stuck||s.stopRequest?.phase==='failed'||d.store.get(`ux:error:${s.projectKey}`)?1:lastResult(d,s.projectKey)?.unread?2:s.status==='working'?3:4
+  let others=all.filter(s=>s!==own)
+  if(view.filter==='attention')others=others.filter(s=>rank(s)<3)
+  if(view.filter==='working')others=others.filter(s=>s.status==='working')
+  if(view.filter==='projects')others=others.filter(s=>!d.userIdOf(s))
+  if(view.filter==='users')others=others.filter(s=>!!d.userIdOf(s))
+  others.sort((a,b)=>rank(a)-rank(b)||sessionShortName(d,a).localeCompare(sessionShortName(d,b))||a.id.localeCompare(b.id))
+  const passive=[...d.sessions.values()].filter(s=>s.passive)
+  const pageSize=view.filter==='passive'?1:7
+  const length=view.filter==='passive'?passive.length:others.length,pages=Math.max(1,Math.ceil(length/pageSize)),page=Math.min(view.page,pages-1)
+  const lines=[t('📋 <b>Сессии</b> ({length})',{length:all.length}),t('Подключено: {connected} · работает: {working} · ждёт: {waiting} · не запущено: {offline}',{connected:all.length,working:all.filter(s=>s.status==='working').length,waiting:all.filter(s=>s.status==='waiting').length,offline:own?0:1})]
+  const rows:Btn[][]=[]
+  const shortName=(name:string)=>{const parts=[...new Intl.Segmenter(undefined,{granularity:'grapheme'}).segment(name.replace(/\s+/g,' ').trim())].map(x=>x.segment);return parts.length>22?parts.slice(0,21).join('')+'…':parts.join('')}
+  const add=(s:Session)=>{
+    const taskId=taskForSession(d,s),task=taskId?taskOf(d,taskId):null
+    const taskText=task&&task.chat.chatId===scope.chatId&&(task.chat.threadId??0)===(scope.threadId??0)?task.title:undefined
+    const elapsed=fmtDuration(Date.now()-(s.turn?.start??s.lastActivity))
+    lines.push(`${menuStatusIcon(s)} <b>${escapeHtml(clip(sessionShortName(d,s),70))}</b> · <tg-emoji emoji-id="${AGENT_EMOJI[s.engine]}">🤖</tg-emoji> ${s.engine==='codex'?'Codex':'Claude'} · ${elapsed}`)
+    if(taskText&&s.turn)lines.push(`  ${t('Текущая задача')}: ${escapeHtml(clip(taskText,90))}`)
+    if(d.store.get(`ux:error:${s.projectKey}`))lines.push(`  ${t('Не доставлено')}`)
+    if(s.stopRequest?.phase==='failed')lines.push(`  ${t('Остановка не подтверждена')}`)
+    if(s.turn?.stuck)lines.push(`  ${t('Не берёт сообщение')}`)
+    if(lastResult(d,s.projectKey)?.unread)lines.push(`  ${t('Непрочитанный результат')}`)
+    const short=shortName(sessionShortName(d,s))
+    rows.push([{...button(short,`sm:s:${s.id}`),text:`${menuStatusIcon(s)} ${short}`,icon_custom_emoji_id:AGENT_EMOJI[s.engine]}])
   }
-  const blocks = [t('📋 <b>Сессии</b> ({length})', { length: n }), ...(n ? textBlocks : [t('Нет запущенных сессий.')])]
-  if (d.permissions.size) blocks.push(t('🔐 Ждут разрешения: {size} — /permissions', { size: d.permissions.size }))
-  const passive = await passiveBlock(d)
-  if (passive) blocks.push(passive)
-  let text = blocks.join('\n\n')
-  text = clipHtml(text, MAX_MESSAGE)
-
-  rows.push([...(d.permissions.size ? [button(t('🔐 Разрешения ({size})', { size: d.permissions.size }), 'sm:perms')] : []), button(t('👥 Пригласить'), 'inv:start'), button(t('🔄 Обновить'), 'sm:list')])
-  if (d.topicsChatId) rows.push([button(t('📂 Проекты'), 'tm:list')])
-  rows.push([button(t('« Меню'), 'hub:main')])
-  return { text, kb: new InlineKeyboard(rows as never) }
+  lines.push(t('👤 <b>Владелец</b>'))
+  if(own)add(own);else if(o){lines.push(`👤 <b>${escapeHtml(d.userShortName(o))}</b> · ⏻ ${t('не запущена')}`);rows.push([button(`⏻ ${shortName(d.userShortName(o))}`,'sm:owner')])}
+  if(view.filter==='passive'){
+    const subset=new Map(passive.slice(page*pageSize,page*pageSize+pageSize).map(s=>[s.id,s]))
+    const adapter=new Proxy(d,{get:(target,key)=>key==='sessions'?subset:Reflect.get(target,key,target)})
+    const block=await passiveBlock(adapter);if(block)lines.push(block)
+  }else{
+    if(others.some(s=>rank(s)<3))lines.push(`<b>${t('Требуют внимания')}</b>`)
+    if(view.filter==='projects'||others.some(s=>!d.userIdOf(s)))lines.push(t('📂 <b>Проекты</b>'))
+    for(const s of others.slice(page*7,page*7+7))add(s)
+    if(passive.length){const subset=new Map(passive.slice(0,1).map(s=>[s.id,s]));const adapter=new Proxy(d,{get:(target,key)=>key==='sessions'?subset:Reflect.get(target,key,target)});const block=await passiveBlock(adapter);if(block)lines.push(clipHtml(block,600))}
+  }
+  const labels=[k('Все'),k('Требуют внимания'),k('Работают'),k('Проекты'),k('Пользователи'),k('без канала')]
+  for(let i=0;i<SESSION_FILTERS.length;i+=3)rows.push(SESSION_FILTERS.slice(i,i+3).map((f,j)=>button(`${view.filter===f?'• ':''}${t(labels[i+j]!)}`,`sl:${f}`,view.filter===f?'primary':undefined)))
+  if(pages>1)rows.push([...(page?[button('◀',`sl:page:${page-1}`)]:[]),button(`${page+1}/${pages}`,`sl:page:${page}`),...(page+1<pages?[button('▶',`sl:page:${page+1}`)]:[])])
+  rows.push([...(d.permissions.size?[button(t('🔐 Разрешения ({size})',{size:d.permissions.size}),'sm:perms')]:[]),button(t('🔄 Обновить'),'sm:list'),button(t('👥 Пригласить'),'inv:start')])
+  if(d.topicsChatId)rows.push([button(t('📂 Проекты'),'tm:list')])
+  rows.push([button(t('« Меню'),'hub:main')])
+  return{text:clipHtml(lines.join('\n'),MAX_MESSAGE),kb:new InlineKeyboard(rows as never)}
 }
 
 /** Sub-menus of a session card: c — 🤖 Агент (the engine: Claude Code or Codex), n — 🔔 notifications, m — ⚙️ management. */
@@ -447,6 +444,13 @@ export async function show(ctx: Context, sc: Screen): Promise<void> {
 
 /** sm:list, sm:s:<id>, sm:g:<id>:<c|n|m>, sm:stop|main|ar|arok|rc|cmp|cmpn|clr|clrok|mdl|hist|prm:<id>, sm:rs|rsok:<id>:<conversation id without dashes>, sm:prmd:<id>:<n>, sm:model:<id>:<alias>, sm:mdldef:<id>, sm:eff:<id>:<level>, sm:effdef:<id>, sm:eng:<id>:<engine>, sm:engre:<id>, sm:v:<id>:<0-2>, sm:n:<id>:<off|long|always> */
 export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  const list=/^sl:(all|attention|working|projects|users|passive|page)(?::(\d{1,6}))?$/.exec(data)
+  if(list){
+    if(!ctx.from||!can(ctx.from.id,'control')){await ctx.answerCallbackQuery({text:t('Нет доступа.')}).catch(()=>{});return true}
+    const state=sessionView(d,ctx)
+    if(list[1]==='page')state.page=Number(list[2]??0);else{state.filter=list[1] as SessionView['filter'];state.page=0}
+    saveSessionView(d,ctx,state);await ctx.answerCallbackQuery().catch(()=>{});await show(ctx,await sessionsList(d,state,viewScope(ctx)));return true
+  }
   const m = /^sm:([a-z]+)(?::([0-9a-f]+))?(?::(\w+))?$/.exec(data)
   if (!m) return false
   const [, action, id, value] = m
@@ -467,7 +471,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
       if (chosen?.available() && chosen.id !== projectEngine(d, dir).engine) setProjectEngine(d, dir, { engine: chosen.id })
       await answer(t('🚀 Запускаю'))
       await launchUserSession(d, ownerId, d.userShortName(ownerId))
-      await show(ctx, await sessionsList(d))
+      await show(ctx, await sessionsList(d,sessionView(d,ctx),viewScope(ctx)))
       return true
     }
     await show(ctx, { text: `👤 <b>${escapeHtml(d.userShortName(ownerId))}</b>\n\n⏻ ${t('не запущена')}`, kb: launchEngineKb(d, dir, e => `sm:ownerlaunch:${e}`, [[button(t('« К списку'), 'sm:list')]]) })
@@ -480,7 +484,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     return true
   }
   if (action === 'list') {
-    await show(ctx, await sessionsList(d))
+    await show(ctx, await sessionsList(d,sessionView(d,ctx),viewScope(ctx)))
     await answer()
     return true
   }
@@ -491,7 +495,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
   }
   if (!s || s.passive) {
     await answer(t('Сессия уже отключена.'))
-    await show(ctx, await sessionsList(d))
+    await show(ctx, await sessionsList(d,sessionView(d,ctx),viewScope(ctx)))
     return true
   }
   if (action === 'qclear') {

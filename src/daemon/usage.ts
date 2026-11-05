@@ -1,3 +1,10 @@
+import { totalText } from './analytics.ts'
+import { observeQuota } from './quotahistory.ts'
+import { analyticsRange, type RangeMode, type Range } from '../core/analytics.ts'
+import { analyticsContent, exportStats, csvStats } from './analytics-ui.ts'
+import { bucketStats, freezeAnalytics } from './analytics.ts'
+import { columnChartSvg, svgToPng } from './chart.ts'
+import { openaiCost } from '../core/openai-pricing.ts'
 import { htmlPages } from '../core/html-pages.ts'
 import { newUsageViewId, saveUsageView, loadUsageView, viewScope, ownsUsageView, lockUsageView, type UsageView } from './usageview.ts'
 /**
@@ -13,7 +20,7 @@ import { homedir } from 'os'
 import { basename, join, relative } from 'path'
 import { CONFIG_DIR, settings } from '../config.ts'
 import { escapeHtml, fmtDuration } from '../format.ts'
-import { InlineKeyboard, type Context } from 'grammy'
+import { InlineKeyboard, InputFile, type Context } from 'grammy'
 import { owner } from '../access.ts'
 import { button } from './stream.ts'
 import { isMessageNotModified } from '../tg.ts'
@@ -51,7 +58,7 @@ export function planName(o: OAuth | null): string | null {
 // Limits (undocumented endpoint)
 // --------------------------------------------------------------------------
 
-export type Limit = { label: string; percent: number; resetsAt: Date | null }
+export type Limit = { label: string; percent: number; resetsAt: Date | null; stale?: boolean; observedAt?: number }
 export type Limits = { items: Limit[]; breakdown: string | null }
 
 type Window = { utilization?: number | null; resets_at?: string | null } | null
@@ -158,6 +165,7 @@ export type Entry = {
   model: string
   /** Reasoning effort of the request (low … max), when the transcript has it. */
   effort?: string
+  serviceTier?: string
   input: number
   output: number
   /** Subset of output, when the CLI exposes it. */
@@ -177,6 +185,7 @@ export function modelKey(e: Pick<Entry, 'model' | 'effort'>): string {
 
 /** Dollars at API rates; null for a model we have no price for. */
 export function costOf(e: Entry): number | null {
+  if (/^gpt-|^codex-/.test(e.model)) return openaiCost(e)
   let price = PRICES.find(([re]) => re.test(e.model))?.[1]
   if (!price) return null
   if (/haiku-5-5/.test(e.model) && e.input + e.write5m + e.write1h + e.read > 100_000) price = HAIKU_LONG
@@ -292,7 +301,7 @@ export function collectEntries(now = Date.now(), days = 7, configDir = CONFIG_DI
       c = { mtime: st.mtimeMs, size: st.size, entries: parseTranscript(text, now - CACHE_DAYS * 86_400_000) }
       fileCache.set(file, c)
     }
-    for (const e of c.entries) if (e.ts >= since) out.set(e.id.startsWith('line:') ? `${file}:${e.id}` : e.id, e)
+    for (const e of c.entries) if (e.ts >= since) out.set(e.id.startsWith('line:') ? `${file}:${e.id}` : e.id, e.id.startsWith('line:') ? {...e,id:`${file}:${e.id}`} : e)
   }
   for (const f of fileCache.keys()) if (!alive.has(f)) fileCache.delete(f)
   return [...out.values()]
@@ -318,12 +327,12 @@ export function fmtTok(n: number): string {
   return String(n)
 }
 
-/** Tokens only: for Codex, which has no API price here. */
+/** Tokens-only display for unavailable prices. */
 function fmtTokens(s: Sum): string {
   return tr('{v} ток.', { v: fmtTok(s.tokens) })
 }
 
-/** A sum of mixed engines: tokens only when nothing in it has a price (Codex models). */
+/** A sum of mixed engines: tokens only when nothing in it has a price. */
 function fmtAny(s: Sum): string {
   return s.cost === 0 && s.unpriced > 0 ? fmtTokens(s) : fmtSum(s)
 }
@@ -368,9 +377,9 @@ export type Share = { who: string; userId: string | null; cost: number; tokens: 
  */
 export function windowShares(d: Daemon, limits: Limits, entries: Entry[], now = Date.now()): { limit: Limit; shares: Share[] } | null {
   const limit = limits.items.find(l => l.label === LIMIT_LABELS.session)
-  if (!limit) return null
+  if(!limit||limit.resetsAt&&limit.resetsAt.getTime()<=now)return null
   const start = limit.resetsAt ? limit.resetsAt.getTime() - 5 * 3600_000 : now - 5 * 3600_000
-  return { limit, shares: sharesSince(d, entries, start, limit.percent) }
+  return { limit, shares: sharesSince(d, entries, start, 100, 'tokens') }
 }
 
 /** Cost by person since start; percent = scale × their part of the cost (scale 100: share of spending). */
@@ -406,101 +415,9 @@ export function usagePeriod(d: Daemon): Period {
 }
 
 export async function usageReport(d: Daemon, now = Date.now(), period: Period = usagePeriod(d)): Promise<string> {
-  const oauth = readOAuth()
-  const plan = planName(oauth)
-  // Codex (FR-16): from its own session logs; no section when it was never used here.
-  const cx = collectCodex(now, 31)
-  const limits = await fetchLimits(oauth)
-  const since = now - PERIOD_MS[period]
-  const name = tr(PERIOD_NAME[period])
-  const none = tr('ничего')
-  const limitLine = (l: Limit) => `${escapeHtml(shortLabel(l.label))}: <b>${Math.round(l.percent)}%</b> ${bar(l.percent)}${l.resetsAt ? `\n   ${fmtReset(l.resetsAt, now)}` : ''}`
-  const windows: [string, number][] = [[tr('5 часов'), 5 * 3600_000], [tr('Сутки'), 86_400_000], [tr('7 дней'), 7 * 86_400_000]]
-  const sumOf = (list: Entry[], ms: number) => {
-    const s: Sum = { tokens: 0, cost: 0, unpriced: 0 }
-    for (const e of list) if (e.ts >= now - ms) add(s, e)
-    return s
-  }
-  const group = (list: Entry[], key: (e: Entry) => string) => {
-    const m = new Map<string, Sum>()
-    for (const e of list) {
-      if (e.ts < since) continue
-      const k = key(e)
-      const s = m.get(k) ?? { tokens: 0, cost: 0, unpriced: 0 }
-      add(s, e)
-      m.set(k, s)
-    }
-    return [...m.entries()].sort((a, b) => b[1].cost - a[1].cost || b[1].tokens - a[1].tokens)
-  }
-  /** «По моделям» and «По сессиям» of one subscription, for the chosen period. */
-  const breakdown = (list: Entry[]) => {
-    if (!list.some(e => e.ts >= since)) return []
-    const models = group(list, modelKey)
-    const owners = group(list, e => ownerOf(d, e.cwd))
-    return [
-      tr('🧠 <b>По моделям</b>, {period}\n<blockquote>{v}</blockquote>', { period: name, v: models.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
-      tr('🗂 <b>По сессиям</b>, {period}\n<blockquote expandable>{v}</blockquote>', { period: name, v: owners.map(([k, s]) => `${escapeHtml(k)}: ${fmtAny(s)}`).join('\n') || none }),
-    ]
-  }
-
-  const out: string[] = [tr('📊 <b>Подписки и расход</b>')]
-
-  // --- Claude ---
-  const claude: string[] = [tr('🟠 <b>Claude</b> · подписка: {v}', { v: plan ? escapeHtml(plan) : tr('не найдена (вход по API-ключу или учётные данные в keychain)') })]
-  if (typeof limits === 'string') claude.push(tr('Лимиты: {v}', { v: escapeHtml(limits) }))
-  else if (limits.items.length) {
-    const lines = limits.items.map(limitLine)
-    if (limits.breakdown) lines.push(tr('За неделю: {v}', { v: escapeHtml(limits.breakdown) }))
-    claude.push(`<blockquote>${lines.join('\n')}</blockquote>`)
-  }
-  const claudeEntries = collectEntries(now, 31)
-  claude.push(tr('💸 <b>Потребление</b>, в ценах API\n<blockquote>{v}</blockquote>', { v: windows.map(([label, ms]) => `${label}: ${fmtSum(sumOf(claudeEntries, ms))}`).join('\n') }))
-  if (claudeEntries.length) {
-    // For 5 hours and a week the share is of the subscription window (its own start), otherwise of the spending.
-    const window = typeof limits === 'string' ? null : limits.items.find(l => l.label === (period === 'h5' ? LIMIT_LABELS.session : period === 'w' ? LIMIT_LABELS.weekly_all : ''))
-    const windowStart = window?.resetsAt ? window.resetsAt.getTime() - PERIOD_MS[period] : since
-    const shares = window ? sharesSince(d, claudeEntries, windowStart, window.percent) : sharesSince(d, claudeEntries, since)
-    if (shares.length) {
-      const head = window
-        ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(tr(window.label)), v2: Math.round(window.percent) })
-        : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
-      const line = (sh: Share) => window ? tr('{who}: ≈{p}% окна · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
-        : tr('{who}: {p}% расхода · ${cost}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), cost: sh.cost.toFixed(2) })
-      claude.push(`${head}\n<blockquote>${shares.map(line).join('\n')}</blockquote>`)
-    }
-    claude.push(...breakdown(claudeEntries))
-  }
-  out.push(claude.join('\n\n'))
-
-  // --- Codex ---
-  if (cx.limits || cx.entries.length) {
-    const codex: string[] = [tr('⚫️ <b>Codex</b> · подписка: {v}', { v: escapeHtml(cx.limits?.plan ?? '?') })]
-    if (cx.limits?.items.length) {
-      const at = new Date(cx.limits.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
-      codex.push(`<blockquote>${[...freshCodexLimits(cx.limits, now).map(limitLine), tr('<i>по последнему запросу, {at}</i>', { at })].join('\n')}</blockquote>`)
-    }
-    codex.push(tr('💸 <b>Потребление</b>, токены (цены API для Codex нет)\n<blockquote>{v}</blockquote>', { v: windows.map(([label, ms]) => `${label}: ${fmtTokens(sumOf(cx.entries, ms))}`).join('\n') }))
-    // Who spends, in tokens: Codex has no API price; for 5 hours and a week — of its own window.
-    const cxWindow = freshCodexLimits(cx.limits, now).find(l => l.label === (period === 'h5' ? k('Codex: 5 часов') : period === 'w' ? k('Codex: неделя') : ''))
-    const cxStart = cxWindow?.resetsAt ? cxWindow.resetsAt.getTime() - PERIOD_MS[period] : since
-    const cxShares = cxWindow?.resetsAt ? sharesSince(d, cx.entries, cxStart, cxWindow.percent, 'tokens') : sharesSince(d, cx.entries, since, 100, 'tokens')
-    if (cxShares.length) {
-      const head = cxWindow?.resetsAt
-        ? tr('👥 <b>Кто тратит окно «{v}»</b> ({v2}%)', { v: escapeHtml(shortLabel(cxWindow.label)), v2: Math.round(cxWindow.percent) })
-        : tr('👥 <b>Кто тратит</b>, {period}', { period: name })
-      const line = (sh: Share) => cxWindow?.resetsAt ? tr('{who}: ≈{p}% окна · {v}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), v: tr('{v} ток.', { v: fmtTok(sh.tokens) }) })
-        : tr('{who}: {p}% токенов · {v}', { who: escapeHtml(sh.who), p: Math.round(sh.percent), v: tr('{v} ток.', { v: fmtTok(sh.tokens) }) })
-      codex.push(`${head}\n<blockquote>${cxShares.map(line).join('\n')}</blockquote>`)
-    }
-    codex.push(...breakdown(cx.entries))
-    out.push(codex.join('\n\n'))
-  }
-
-  const noModel = savedLine(d)
-  if (noModel) out.push(noModel)
-  if (lastLimits()?.limits.items.some(l => l.resetsAt)) out.push(tr('<i>Напомнить о сбросе окна: 🔔 — со звуком, 🔕 — без звука.</i>'))
-  out.push(tr('<i>Стоимость: если бы те же токены шли через API. Подписка оплачивается фиксированно.</i>'))
-  return out.join('\n\n')
+  const range=analyticsRange(period,'rolling',now,Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const content=await analyticsContent(d,range,planName(readOAuth()))
+  return content.sections.details!.join('\n\n')
 }
 
 /** A limit's name inside its subscription's section: «Codex: 5 часов» → «5 часов». */
@@ -528,11 +445,13 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
   if (thresholds.length) await checkCodexLimits(d, thresholds, now)
   const limits = await fetchLimits()
   if (typeof limits === 'string') return
+  for(const l of limits.items)observeQuota(d,'claude',l,lastLimits()?.at??now,now)
   // ⚡ Start the next 5-hour window right at its reset.
   const session = limits.items.find(l => l.label === LIMIT_LABELS.session)
   if (warmupOn(d) && session?.resetsAt) scheduleWarmup(d, session.resetsAt, now)
   if (!thresholds.length) return
   for (const [i, l] of limits.items.entries()) {
+    if(l.resetsAt&&l.resetsAt.getTime()<=now)continue
     const key = `limit:${l.label}`
     const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
     const resetsAt = l.resetsAt?.toISOString() ?? null
@@ -555,6 +474,8 @@ export async function checkLimits(d: Daemon, now = Date.now()): Promise<void> {
 
 async function checkCodexLimits(d: Daemon, thresholds: number[], now: number): Promise<void> {
   for (const l of freshCodexLimits(collectCodex(now, 31).limits, now)) {
+    if(l.stale) continue
+    observeQuota(d,'codex',l,l.observedAt??now,now)
     const key = `limit:${l.label}`
     const prev: LimitState = JSON.parse(d.store.get(key) ?? '{"level":0,"resetsAt":null}')
     const resetsAt = l.resetsAt?.toISOString() ?? null
@@ -653,7 +574,7 @@ async function checkShares(d: Daemon, to: string, limits: Limits, now: number): 
     if (d.store.get(key) === winKey) continue
     d.store.set(key, winKey)
     const reset = ws.limit.resetsAt ? `\n${fmtReset(ws.limit.resetsAt, now)}` : ''
-    await sendNotice(d, 'limits', () => tr('👥 {v} израсходовал(а) ≈<b>{v2}%</b> окна «{v3}» (всего занято {v4}%).{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }))
+    await sendNotice(d, 'limits', () => tr('👥 {v}: <b>{v2}%</b> наблюдаемых токенов окна «{v3}»; общий лимит использован на {v4}%.{reset}', { v: escapeHtml(sh.who), v2: Math.round(sh.percent), v3: escapeHtml(tr(ws.limit.label)), v4: Math.round(ws.limit.percent), reset }))
   }
 }
 
@@ -692,7 +613,7 @@ async function fireResetNotice(d: Daemon, label: string, key: string): Promise<v
   // The 10-minute check would otherwise announce the same reset again.
   d.store.set(`limit:${label}`, JSON.stringify({ level: 0, resetsAt: null, notified: true } satisfies LimitState))
   if (mine && req.off) return
-  await d.bot.api.sendMessage(to, tr('✅ Токены обновились: лимит «{v}» сброшен, можно пользоваться.', { v: escapeHtml(tr(label)) }), { parse_mode: 'HTML', disable_notification: silent })
+  await d.bot.api.sendMessage(to, tr('Наступило время сброса «{v}». Проверьте актуальные лимиты.', { v: escapeHtml(tr(label)) }), { parse_mode: 'HTML', disable_notification: silent })
     .catch(err => d.log(`reset notice failed: ${err}`))
 }
 
@@ -719,17 +640,20 @@ function rescheduleRequested(d: Daemon): void {
 
 /** Under /usage: per limit, a reminder with sound and a silent one; ✅ marks what was asked. */
 /** One screen is a frozen report snapshot; changing its period does not change other screens. */
-export async function usageScreen(d: Daemon, c: { chatId: string; threadId?: number }, period = usagePeriod(d), now = Date.now()): Promise<{ text: string; kb: InlineKeyboard }> {
-  const pages = htmlPages(await usageReport(d, now, period))
-  const v: UsageView = { id: newUsageViewId(d), ...c, period, page: 0, pages, at: now, limits: (lastLimits()?.limits.items ?? []).map(l => ({ ...l, resetsAt: l.resetsAt?.toISOString() ?? null })) }
-  saveUsageView(d, v)
-  return renderUsageView(d, v)
+export async function usageScreen(d: Daemon, c:{chatId:string;threadId?:number},period=usagePeriod(d),now=Date.now(),mode:RangeMode='current',fixedRange?:Range,initialSection='summary'):Promise<{text:string;kb:InlineKeyboard}>{
+  const range=fixedRange??analyticsRange(period,mode,now,Intl.DateTimeFormat().resolvedOptions().timeZone)
+  const content=await analyticsContent(d,range,planName(readOAuth()))
+  const category=initialSection==='limits'?'limits':'usage'
+  if(category==='limits'){content.sections.summary=content.sections.quota!;initialSection='summary'}
+  const v:UsageView={category,id:newUsageViewId(d),chatId:c.chatId,threadId:c.threadId,period,mode:range.mode,range,stats:freezeAnalytics(content.stats),section:initialSection,sections:content.sections,page:0,pages:content.sections[initialSection]??content.sections.summary!,at:now,limits:content.limits,fixedRange:!!fixedRange}
+  saveUsageView(d,v);return renderUsageView(d,v)
 }
-export function renderUsageView(d: Daemon, v: UsageView): { text: string; kb: InlineKeyboard } {
-  return { text: (v.page ? tr('📊 <b>Подписки и расход</b>') + '\n\n' : '') + v.pages[v.page]! + (v.pages.length > 1 ? `\n\n<i>${tr('Страница {page} из {total}', { page: v.page + 1, total: v.pages.length })}</i>` : ''), kb: usageKeyboard(d, v) }
+export function renderUsageView(d:Daemon,v:UsageView):{text:string;kb:InlineKeyboard}{
+  return{text:(v.page?tr('📊 <b>Подписки и расход</b>')+'\n\n':'')+v.pages[v.page]!+(v.pages.length>1?`\n\n<i>${tr('Страница {page} из {total}',{page:v.page+1,total:v.pages.length})}</i>`:''),kb:usageKeyboard(d,v)}
 }
 
 export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
+  if(view?.sections&&(view.section??'summary')==='summary')return new InlineKeyboard([[button(tr('Подробнее'),`uv:${view.id}:s:details`),button(tr('Закрыть отчёт'),`uv:${view.id}:x`)]])
   const l = lastLimits()
   const period = view?.period ?? usagePeriod(d)
   const rows: ReturnType<typeof button>[][] = [
@@ -741,11 +665,21 @@ export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
     ...(view.page + 1 < view.pages.length ? [button('▶', `uv:${view.id}:g:${view.page + 1}`)] : []),
   ])
   const wrap = (data: string) => view ? `uv:${view.id}:a:${data}` : data
+  if(view?.sections){
+    const summary=(view.section??'summary')==='summary'
+    rows.push([button(tr(summary?k('Подробнее'):k('Свернуть')),`uv:${view.id}:s:${summary?'details':'summary'}`),button(tr('Закрыть отчёт'),`uv:${view.id}:x`)])
+    if(summary)return new InlineKeyboard([...rows,[button(tr('« Статистика'),'hub:stats'),button(tr('🔄 Обновить'),`uv:${view.id}:r`)]])
+    rows.push(['models','projects','users','limits'].map((name,i)=>button(tr([k('Модели'),k('Проекты и пользователи'),k('Пользователи'),k('Лимиты')][i]!),`uv:${view.id}:s:${name}`)))
+    rows.push([button(tr('График'),`uv:${view.id}:c:tokens`),button(tr('Ответов модели'),`uv:${view.id}:c:requests`),button('API $',`uv:${view.id}:c:cost`)])
+    rows.push([button(tr('Коммиты'),`uv:${view.id}:s:commits`)])
+    rows.push([button('CSV',`uv:${view.id}:e:csv`),button('JSON',`uv:${view.id}:e:json`)])
+    if(view.period!=='h5')rows.push((['rolling','current','previous'] as const).map((mode,i)=>button(tr([k('Последние дни'),k('Текущий период'),k('Предыдущий период')][i]!),`uv:${view.id}:m:${mode}`,view.mode===mode?'primary':undefined)))
+  }
   // One row per limit, like the periods: off / with sound / silent, the chosen one marked.
   const seg = (on: boolean, text: string, data: string) => button(`${on ? '• ' : ''}${text}`, wrap(data), on ? 'primary' : undefined)
   const shownLimits = view ? view.limits.map(l => ({ ...l, resetsAt: l.resetsAt ? new Date(l.resetsAt) : null })) : l?.limits.items ?? []
   for (const [i, it] of shownLimits.entries()) {
-    if (!it.resetsAt) continue
+    if (!it.resetsAt || it.stale || it.resetsAt.getTime()<=Date.now()) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req && windowKey(new Date(req.at)) === windowKey(it.resetsAt) && !req.off ? req : null
     rows.push([
@@ -762,23 +696,55 @@ export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
 
 /** lr:<n>[:s] — remind about the reset of limit n (silently); us:p:<period> — the period of /usage sections; us:r — refresh. */
 export async function handleResetCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
-  const view = /^uv:([a-f0-9]{8}):(g|p|r|a)(?::(.+))?$/.exec(data)
+  const view = /^uv:([a-f0-9]{8}):(g|p|r|a|s|m|e|c|x)(?::(.+))?$/.exec(data)
   if (!view) return handleUsageAction(d, ctx, data)
   if (!ctx.from || String(ctx.from.id) !== owner()) { await ctx.answerCallbackQuery({ text: tr('Только для владельца подписки.') }).catch(() => {}); return true }
   return lockUsageView(d, view[1]!, async () => {
     const v = loadUsageView(d, view[1]!)
     if (!v || !ownsUsageView(v, ctx) || Date.now() - v.at > 7 * 86400_000) { await ctx.answerCallbackQuery({ text: tr('Отчёт устарел. Откройте /usage заново.') }).catch(() => {}); return true }
+    if(v.dismissed){await ctx.answerCallbackQuery().catch(()=>{});return true}
     if (view[2] === 'a') return handleUsageAction(d, ctx, view[3]!, v)
     await ctx.answerCallbackQuery().catch(() => {})
-    if (view[2] === 'g') {
+    if(view[2]==='x'){
+      v.dismissed=true;saveUsageView(d,v)
+      await ctx.deleteMessage().catch(()=>ctx.editMessageText(tr('Отчёт закрыт'),{reply_markup:new InlineKeyboard([])}).catch(err=>d.log(`usage close: ${err}`)));return true
+    }
+    if(view[2]==='e'&&v.stats){
+      const csv=view[3]==='csv',data=csv?csvStats(v.stats):JSON.stringify(exportStats(v.stats),null,2)
+      await d.bot.api.sendDocument(v.chatId,new InputFile(Buffer.from(data),`usage-${v.id}.${csv?'csv':'json'}`),{message_thread_id:v.threadId,disable_notification:true});return true
+    }
+    if(view[2]==='c'&&v.stats){
+      const metric=(['tokens','requests','cost'].includes(view[3]??'')?view[3]:'tokens') as 'tokens'|'requests'|'cost'
+      const metricName=metric==='tokens'?tr('Токены'):metric==='requests'?tr('Ответов модели'):tr('В ценах API')
+      const {rangeText}=await import('./analytics.ts')
+      const svg=columnChartSvg({title:tr('График'),subtitle:`${metricName} · ${rangeText(v.stats.range)}`,columns:bucketStats(v.stats).map(b=>({label:b.label,value:b[metric]})),metric,labelEvery:2})
+      const png=await svgToPng(svg)
+      const caption=rangeText(v.stats.range)+(metric==='cost'?` · ${totalText(v.stats.total)} · ${tr('Оценка API, не списание подписки')}`:'')
+      if(png)await d.bot.api.sendPhoto(v.chatId,new InputFile(png,`usage-${v.id}.png`),{caption,message_thread_id:v.threadId,disable_notification:true})
+      else await d.bot.api.sendDocument(v.chatId,new InputFile(Buffer.from(svg),`usage-${v.id}.svg`),{message_thread_id:v.threadId,disable_notification:true});return true
+    }
+    if(view[2]==='s'&&v.sections){
+      if(view[3]==='commits'&&v.stats){
+        const {commitsSince}=await import('./git.ts')
+        const lines=[tr('Коммиты')]
+        for(const project of v.stats.projects){const commits=await commitsSince(project.key,new Date(v.stats.range.start),new Date(v.stats.range.end));if(commits?.length)lines.push(`<b>${escapeHtml(project.label)}</b>`,...commits.map(c=>escapeHtml(c)))}
+        v.sections.commits=htmlPages(lines.join('\n'))
+      }
+      if(!v.sections[view[3]!])return true
+      v.section=view[3];v.pages=v.sections[v.section!]!;v.page=0
+    } else if (view[2] === 'g') {
       if (!/^\d{1,6}$/.test(view[3] ?? '')) return true
       v.page = Math.min(v.pages.length - 1, Math.max(0, Number(view[3])))
     } else {
-      if (view[2] === 'p') { if (!PERIODS.includes(view[3] as Period)) return true; v.period = view[3] as Period; v.page = 0 }
+      if(view[2]==='p'){if(!PERIODS.includes(view[3] as Period))return true;v.period=view[3] as Period;v.page=0;v.fixedRange=false}
+      else if(view[2]==='m'){if(!['rolling','current','previous'].includes(view[3]??''))return true;v.mode=view[3] as RangeMode;v.page=0;v.fixedRange=false}
       else resetLimitsCache()
-      v.at = Date.now(); v.pages = htmlPages(await usageReport(d, v.at, v.period))
-      v.page = Math.min(v.page, v.pages.length - 1)
-      v.limits = (lastLimits()?.limits.items ?? []).map(l => ({ ...l, resetsAt: l.resetsAt?.toISOString() ?? null }))
+      v.at=Date.now();v.range=v.fixedRange&&v.range?v.range:analyticsRange(v.period,v.mode??'current',v.at,Intl.DateTimeFormat().resolvedOptions().timeZone)
+      const content=await analyticsContent(d,v.range,planName(readOAuth()))
+      if(v.category==='limits')content.sections.summary=content.sections.quota!
+      if(v.section==='commits')v.section='details'
+      v.stats=freezeAnalytics(content.stats);v.sections=content.sections;v.pages=v.sections[v.section??'summary']??v.sections.summary!;v.limits=content.limits
+      v.page=Math.min(v.page,v.pages.length-1)
     }
     saveUsageView(d, v)
     const screen = renderUsageView(d, v)
@@ -857,9 +823,9 @@ export function startLimitWatch(d: Daemon): void {
   setInterval(tick, min * 60_000).unref?.()
 }
 
-/** Codex's windows as of its last request; one that has reset since is empty until the next request brings numbers. */
+/** An expired observation is unknown; never fabricate a new-window zero. */
 export function freshCodexLimits(l: CodexLimits | null, now = Date.now()): Limit[] {
-  return (l?.items ?? []).map(i => i.resetsAt && i.resetsAt.getTime() <= now ? { ...i, percent: 0, resetsAt: null } : i)
+  return (l?.items ?? []).map(i => ({ ...i, observedAt:l?.at, ...(i.resetsAt && i.resetsAt.getTime() <= now ? { stale:true } : {}) }))
 }
 
 /**
@@ -867,12 +833,18 @@ export function freshCodexLimits(l: CodexLimits | null, now = Date.now()): Limit
  * subscription — its plan in the heading, the windows in a quote with the
  * percent in bold, a bar and when it resets. null before the first fetch.
  */
+export function limitText(i:Limit,now=Date.now()):string {
+  if(i.stale||i.resetsAt&&i.resetsAt.getTime()<=now)return `${escapeHtml(shortLabel(i.label))}: <b>${tr('Текущий лимит неизвестен')}</b> · ${tr('Последнее значение')}: ${Math.round(i.percent)}%`
+  return `${escapeHtml(shortLabel(i.label))}: <b>${Math.round(i.percent)}%</b> ${bar(i.percent)} · ${tr('Осталось')}: ${Math.max(0,100-i.percent).toFixed(0)}%${i.resetsAt?`\n   ${escapeHtml(fmtReset(i.resetsAt,now))}`:''}`
+}
+export function freshness(at:number):string{return new Date(at).toLocaleString(locale(),{day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'})}
+
 export function limitsHtml(now = Date.now()): string | null {
   const l = lastLimits()
   const cx = collectCodex(now, 31).limits
   const codex = freshCodexLimits(cx, now)
   if (!l?.limits.items.length && !codex.length) return null
-  const line = (i: Limit) => `${escapeHtml(shortLabel(i.label))}: <b>${Math.round(i.percent)}%</b> ${bar(i.percent)}${i.resetsAt ? `\n   ${escapeHtml(fmtReset(i.resetsAt, now))}` : ''}`
+  const line = (i: Limit) => limitText(i,now)
   const out: string[] = []
   if (l?.limits.items.length) {
     const plan = planName(readOAuth())
@@ -880,7 +852,7 @@ export function limitsHtml(now = Date.now()): string | null {
     out.push(`${plan ? tr('🟠 <b>Claude</b> · {v}', { v: escapeHtml(plan) }) : '🟠 <b>Claude</b>'}\n<blockquote>${[...l.limits.items.map(line), ...extra].join('\n')}</blockquote>`)
   }
   if (codex.length) {
-    const at = new Date(cx!.at).toLocaleTimeString(locale(), { hour: '2-digit', minute: '2-digit' })
+    const at = freshness(cx!.at)
     out.push(`${cx!.plan ? tr('⚫️ <b>Codex</b> · {v}', { v: escapeHtml(cx!.plan) }) : '⚫️ <b>Codex</b>'}\n<blockquote>${[...codex.map(line), `<i>${escapeHtml(tr('по последнему запросу, {at}', { at }))}</i>`].join('\n')}</blockquote>`)
   }
   return out.join('\n\n')
@@ -890,7 +862,7 @@ export function limitsHtml(now = Date.now()): string | null {
 export function limitsLine(now = Date.now()): string | null {
   const claude = lastLimits()?.limits.items ?? []
   const codex = freshCodexLimits(collectCodex(now, 31).limits, now)
-  const part = (name: string, items: Limit[]) => `${name}: ` + items.map(i => `${shortLabel(i.label)} ${Math.round(i.percent)}%`).join(' · ')
+  const part = (name: string, items: Limit[]) => `${name}: ` + items.map(i => `${shortLabel(i.label)} ${i.stale||i.resetsAt&&i.resetsAt.getTime()<=now?tr('неизвестно'):`${Math.round(i.percent)}%`}`).join(' · ')
   const parts = [...(claude.length ? [part('Claude', claude)] : []), ...(codex.length ? [part('Codex', codex)] : [])]
   return parts.length ? '📊 ' + parts.join(' │ ') : null
 }
@@ -910,7 +882,7 @@ function startOfDay(now: number): number {
  * What one turn of a session cost: its transcript entries since the turn
  * began. «🔢 18 тыс. ток. · кэш 96% · $0.05»; null when nothing was counted.
  */
-/** A session's requests of the last day, from its engine's own logs (Codex: rollouts, no API price). */
+/** A session's requests of the last day, from its engine's own logs (Codex: its exact usage counters). */
 function sessionEntries(s: Session, now: number): Entry[] {
   return s.engine === 'codex' ? collectCodex(now, 1).entries : collectEntries(now, 1)
 }
@@ -926,8 +898,8 @@ export function turnCostLine(s: Session, since: number, now = Date.now(), rich =
   if (!sum.tokens) return null
   const cache = Math.round((read / sum.tokens) * 100)
   const vars = { v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2), took: fmtDuration(now - since) }
-  // Codex has no API price: tokens and the cache only.
-  if (s.engine === 'codex') return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}%', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}%', vars)
+  // Unknown model prices remain explicit rather than a fabricated zero.
+  if (sum.unpriced > 0 && sum.cost === 0) return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}%', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}%', vars)
   // Rich (Markdown) for sendRichMessage, plain text if that fails.
   return rich ? tr('🔢 **Ход** · {took}\n{v} ток. · кэш {cache}% · **${cost}**', vars) : tr('🔢 Ход: {v} ток. · кэш {cache}% · ${cost}', vars)
 }
@@ -942,7 +914,6 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
   const k = { input: 0, output: 0, read: 0, write5m: 0, write1h: 0 }
   const models = new Map<string, number>()
   let requests = 0
-  const codex = s.engine === 'codex'
   for (const e of sessionEntries(s, now)) {
     if (e.ts < since || (e.cwd !== s.cwd && e.cwd !== s.projectKey)) continue
     add(sum, e)
@@ -965,9 +936,9 @@ export function turnCostBlock(s: Session, since: number, now = Date.now()): stri
     row(tr('Чтение кэша'), `${fmtTok(k.read)} (${cache}%)`),
     row(tr('Запись в кэш'), fmtTok(k.write5m + k.write1h)),
     row(tr('Всего'), tr('{v} ток.', { v: fmtTok(sum.tokens) })),
-    ...(codex ? [] : [row(tr('В ценах API'), `<b>$${sum.cost.toFixed(2)}</b>` + (sum.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: sum.unpriced }) : ''))]),
+    row(tr('В ценах API'), (sum.unpriced===requests?'—':`<b>≈$${sum.cost.toFixed(2)}</b>`) + (sum.unpriced ? tr(' (+{unpriced} без цены)', { unpriced: sum.unpriced }) : '')),
   ]
-  const gist = codex
+  const gist = sum.unpriced===requests
     ? tr('🔢 {took} · {v} ток. · кэш {cache}%', { took, v: fmtTok(sum.tokens), cache })
     : tr('🔢 {took} · {v} ток. · кэш {cache}% · ${cost}', { took, v: fmtTok(sum.tokens), cache, cost: sum.cost.toFixed(2) })
   return `<details><summary>${escapeHtml(tr('🔢 Расход хода'))}</summary><table bordered striped compact>${rows.join('')}</table></details><footer>${escapeHtml(gist)}</footer>`
@@ -978,6 +949,6 @@ export function sessionCostLine(s: Session, now = Date.now()): string | null {
   const sum: Sum = { tokens: 0, cost: 0, unpriced: 0 }
   for (const e of sessionEntries(s, now)) if (e.ts >= since && (e.cwd === s.cwd || e.cwd === s.projectKey)) add(sum, e)
   if (!sum.tokens) return null
-  return s.engine === 'codex' ? tr('💸 сегодня {v} ток. (Codex)', { v: fmtTok(sum.tokens) }) : tr('💸 сегодня ${v} · {v2} ток.', { v: sum.cost.toFixed(2), v2: fmtTok(sum.tokens) })
+  return sum.unpriced&&sum.cost===0?tr('💸 сегодня {v} ток. (Codex)',{v:fmtTok(sum.tokens)}):tr('💸 сегодня ${v} · {v2} ток.',{v:sum.cost.toFixed(2),v2:fmtTok(sum.tokens)})
 }
 
