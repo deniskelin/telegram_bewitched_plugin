@@ -172,13 +172,18 @@ export function taskReport(d: Daemon, id: string): string {
 }
 export async function refreshTaskCards(d: Daemon, ids: string[]): Promise<void> {
   // Import lazily: result publication also calls task accounting.
-  const { resultText, resultButtons } = await import('./ux.ts')
+  const { resultText, resultButtons, withResultLock } = await import('./ux.ts')
   for (const key of d.store.keys('ux:result:')) {
-    const r = JSON.parse(d.store.get(key)!)
-    if (!r.taskId || !ids.includes(r.taskId) || !r.card) continue
-    await inChat(d, r.chat.chatId, r.chat.threadId, async () => {
-      r.cost = taskReport(d, r.taskId); d.store.set(key, JSON.stringify(r))
-      await d.bot.api.editMessageText(r.chat.chatId, r.card, resultText(r, false), { parse_mode: 'HTML', reply_markup: resultButtons(r) }).catch(err => d.log(`task cost card: ${err}`))
+    const id = key.slice('ux:result:'.length)
+    await withResultLock(d, id, async () => {
+      const raw = d.store.get(key)
+      if (!raw) return
+      const r = JSON.parse(raw)
+      if (!r.taskId || !ids.includes(r.taskId) || !r.card || r.dismissed) return
+      await inChat(d, r.chat.chatId, r.chat.threadId, async () => {
+        r.cost = taskReport(d, r.taskId); d.store.set(key, JSON.stringify(r))
+        await d.bot.api.editMessageText(r.chat.chatId, r.card, resultText(r), { parse_mode: 'HTML', reply_markup: resultButtons(r) }).catch(err => d.log(`task cost card: ${err}`))
+      })
     })
   }
 }

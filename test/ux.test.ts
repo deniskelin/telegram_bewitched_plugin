@@ -180,3 +180,93 @@ test('a failed interrupt of a disconnected session cannot notify its replacement
   await Promise.resolve(); await Promise.resolve()
   expect(calls.some(c=>c.method === 'sendMessage')).toBe(false)
 })
+
+function resultFixture(d: Daemon, fields: Partial<import('../src/daemon/ux.ts').Result> = {}) {
+  const r: import('../src/daemon/ux.ts').Result = { id:'abc123', session:'a1234567', project:'/project', chat, card:100, messages:[10,11], files:[11], summary:'Completed a substantial task\n'+'details '.repeat(60), checks:'Verified checks', remaining:'Pending deployment', cost:'<blockquote expandable>Usage details</blockquote>', pr:'https://github.com/a/b/pull/1', unread:true, at:Date.now(), ...fields }
+  d.store.set(`ux:result:${r.id}`,JSON.stringify(r)); d.store.set(`ux:last-result:${r.project}`,r.id)
+  return r
+}
+
+test('a compact report has exactly two buttons and expanded details retain all actions', async () => {
+  const { resultText, resultButtons } = await import('../src/daemon/ux.ts')
+  const {d} = setup(); const r = resultFixture(d)
+  const compact = resultText(r)
+  expect(compact.split('\n')).toHaveLength(2)
+  expect(compact.length).toBeLessThan(140)
+  expect(compact).not.toContain(r.checks!)
+  expect(compact).not.toContain('Usage details')
+  expect(resultButtons(r).inline_keyboard.flat().map(b=>b.text)).toEqual(['Подробнее','Закрыть отчёт'])
+  const {ctx,replies} = context()
+  await handleUxCallback(d,ctx,`urx:show:${r.id}`)
+  const expanded = lastResult(d,r.project)!
+  expect(expanded.expanded).toBe(true)
+  expect(replies.at(-1)).toContain('Verified checks')
+  expect(replies.at(-1)).toContain('Usage details')
+  const controls = resultButtons(expanded).inline_keyboard.flat().map(b=>b.text)
+  expect(controls).toContain('Свернуть'); expect(controls).toContain('Повторить всё'); expect(controls).toContain('Получить файлы'); expect(controls).toContain('PR')
+  await handleUxCallback(d,ctx,`urx:hide:${r.id}`)
+  const folded = lastResult(d,r.project)!
+  expect(folded.expanded).toBe(false)
+  expect(resultButtons(folded).inline_keyboard.flat()).toHaveLength(2)
+  expect(folded.summary).toBe(r.summary); expect(folded.messages).toEqual([10,11])
+})
+
+test('closing the report hides only its card, keeps the task open and survives late refreshes', async () => {
+  const { newTask, refreshTaskCards, taskOf } = await import('../src/daemon/taskcost.ts')
+  const { refreshResultViews } = await import('../src/daemon/ux.ts')
+  const {d,calls} = setup(); const task = newTask(d,chat,'111')
+  const r = resultFixture(d,{taskId:task.id,expanded:true})
+  await handleUxCallback(d,context().ctx,`urx:dismiss:${r.id}`)
+  expect(calls.filter(c=>c.method === 'deleteMessage').map(c=>c.args[1])).toEqual([100])
+  expect(lastResult(d,r.project)).toMatchObject({dismissed:true,unread:false,messages:[10,11]})
+  expect(taskOf(d,task.id)?.state).toBe('open')
+  const before = calls.length
+  await refreshTaskCards(d,[task.id]); await refreshResultViews(d)
+  expect(calls).toHaveLength(before)
+  await handleUxCallback(d,context(222).ctx,`urx:show:${r.id}`)
+  expect(lastResult(d,r.project)?.dismissed).toBe(true)
+  await handleUxCallback(d,context().ctx,`urx:show:${r.id}`)
+  expect(lastResult(d,r.project)).toMatchObject({dismissed:false,expanded:true})
+})
+
+test('an undeletable report falls back to a closed line without buttons', async () => {
+  const { resultButtons } = await import('../src/daemon/ux.ts')
+  const {d} = setup(); const r = resultFixture(d)
+  Object.assign(d.bot,{api:{deleteMessage:async()=>{throw new Error('message too old')}}})
+  const {ctx,replies} = context()
+  await handleUxCallback(d,ctx,`urx:dismiss:${r.id}`)
+  expect(replies).toEqual(['Отчёт закрыт'])
+  expect(resultButtons(lastResult(d,r.project)!).inline_keyboard).toEqual([])
+})
+
+test('a delayed usage edit cannot overwrite a newer expansion', async () => {
+  const { newTask, refreshTaskCards } = await import('../src/daemon/taskcost.ts')
+  const {d} = setup(); const task = newTask(d,chat,'111'); const r = resultFixture(d,{taskId:task.id})
+  let release!: ()=>void, began!: ()=>void
+  const started = new Promise<void>(resolve=>{began = resolve})
+  const edits: unknown[][] = []
+  Object.assign(d.bot,{api:{editMessageText:async(...args:unknown[])=>{edits.push(args); began(); if(edits.length === 1) await new Promise<void>(resolve=>{release = resolve})}}})
+  const updating = refreshTaskCards(d,[task.id]); await started
+  const {ctx,replies} = context()
+  const expanding = handleUxCallback(d,ctx,`urx:show:${r.id}`)
+  release(); await updating; await expanding
+  expect(lastResult(d,r.project)?.expanded).toBe(true)
+  expect(replies.at(-1)).toContain('Verified checks')
+  await refreshTaskCards(d,[task.id])
+  expect(edits.at(-1)![2]).toContain('Verified checks')
+  expect(JSON.stringify(edits.at(-1)![3])).toContain('urx:hide:')
+})
+
+test('restart restores the latest report in its persisted compact or expanded state', async () => {
+  const {refreshResultViews} = await import('../src/daemon/ux.ts')
+  const {d,calls} = setup(); resultFixture(d)
+  await refreshResultViews(d)
+  let edit = calls.filter(c=>c.method === 'editMessageText').at(-1)!
+  expect(String(edit.args[2])).not.toContain('Verified checks')
+  expect(JSON.stringify(edit.args[3])).not.toContain('urx:repeat:')
+  const r = lastResult(d,'/project')!; r.expanded = true; d.store.set(`ux:result:${r.id}`,JSON.stringify(r))
+  await refreshResultViews(d)
+  edit = calls.filter(c=>c.method === 'editMessageText').at(-1)!
+  expect(String(edit.args[2])).toContain('Verified checks')
+  expect(JSON.stringify(edit.args[3])).toContain('urx:repeat:')
+})
