@@ -304,3 +304,5 @@ Result cards start with two lines and just **Details** / **Close report**. Detai
 ### Usage report pages
 
 The control panel now prioritizes attention and links to compact reports. Sessions have saved filters and pages. Usage reports share Claude/Codex accounting, explicit rolling/calendar ranges, API-equivalent estimates, on-demand charts and CSV/JSON exports. Scheduled reports retry after failed delivery. Unknown or expired quota data stays unknown. [Behavior and limitations](docs/usage-pages.md).
+
+Usage details now fold comparison, quotas, models and projects into separate sections; notifications open separately and agent icons distinguish reminder windows.

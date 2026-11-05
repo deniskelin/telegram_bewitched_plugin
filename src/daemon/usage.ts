@@ -1,7 +1,8 @@
+import { AGENT_EMOJI, agentEmoji } from './button-emoji.ts'
 import { totalText } from './analytics.ts'
 import { observeQuota } from './quotahistory.ts'
 import { analyticsRange, type RangeMode, type Range } from '../core/analytics.ts'
-import { analyticsContent, exportStats, csvStats } from './analytics-ui.ts'
+import { analyticsContent, exportStats, csvStats, notificationPanel } from './analytics-ui.ts'
 import { bucketStats, freezeAnalytics } from './analytics.ts'
 import { columnChartSvg, svgToPng } from './chart.ts'
 import { openaiCost } from '../core/openai-pricing.ts'
@@ -653,7 +654,7 @@ export function renderUsageView(d:Daemon,v:UsageView):{text:string;kb:InlineKeyb
 }
 
 export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
-  if(view?.sections&&(view.section??'summary')==='summary')return new InlineKeyboard([[button(tr('Подробнее'),`uv:${view.id}:s:details`),button(tr('Закрыть отчёт'),`uv:${view.id}:x`)]])
+  if(view?.sections&&(view.section??'summary')==='summary')return new InlineKeyboard([[button('🔎 '+tr('Подробнее'),`uv:${view.id}:s:details`),button('✖️ '+tr('Закрыть отчёт'),`uv:${view.id}:x`)]])
   const l = lastLimits()
   const period = view?.period ?? usagePeriod(d)
   const rows: ReturnType<typeof button>[][] = [
@@ -665,31 +666,34 @@ export function usageKeyboard(d: Daemon, view?: UsageView): InlineKeyboard {
     ...(view.page + 1 < view.pages.length ? [button('▶', `uv:${view.id}:g:${view.page + 1}`)] : []),
   ])
   const wrap = (data: string) => view ? `uv:${view.id}:a:${data}` : data
-  if(view?.sections){
+  if(view?.sections&&view.section!=='notifications'){
     const summary=(view.section??'summary')==='summary'
-    rows.push([button(tr(summary?k('Подробнее'):k('Свернуть')),`uv:${view.id}:s:${summary?'details':'summary'}`),button(tr('Закрыть отчёт'),`uv:${view.id}:x`)])
+    rows.push([button(tr(summary?k('Подробнее'):k('Свернуть')),`uv:${view.id}:s:${summary?'details':'summary'}`),button('✖️ '+tr('Закрыть отчёт'),`uv:${view.id}:x`)])
     if(summary)return new InlineKeyboard([...rows,[button(tr('« Статистика'),'hub:stats'),button(tr('🔄 Обновить'),`uv:${view.id}:r`)]])
-    rows.push(['models','projects','users','limits'].map((name,i)=>button(tr([k('Модели'),k('Проекты и пользователи'),k('Пользователи'),k('Лимиты')][i]!),`uv:${view.id}:s:${name}`)))
-    rows.push([button(tr('График'),`uv:${view.id}:c:tokens`),button(tr('Ответов модели'),`uv:${view.id}:c:requests`),button('API $',`uv:${view.id}:c:cost`)])
-    rows.push([button(tr('Коммиты'),`uv:${view.id}:s:commits`)])
+    rows.push(['models','projects','users','limits'].map((name,i)=>button(['📋 ','📂 ','👥 ','📊 '][i]+tr([k('Модели'),k('Проекты и пользователи'),k('Пользователи'),k('Лимиты')][i]!),`uv:${view.id}:s:${name}`)))
+    rows.push([button('📈 '+tr('График'),`uv:${view.id}:c:tokens`),button('💬 '+tr('Ответов модели'),`uv:${view.id}:c:requests`),button('API $',`uv:${view.id}:c:cost`)])
+    rows.push([button('🌿 '+tr('Коммиты'),`uv:${view.id}:s:commits`),button(tr('🔔 Уведомления'),`uv:${view.id}:s:notifications`)])
     rows.push([button('CSV',`uv:${view.id}:e:csv`),button('JSON',`uv:${view.id}:e:json`)])
     if(view.period!=='h5')rows.push((['rolling','current','previous'] as const).map((mode,i)=>button(tr([k('Последние дни'),k('Текущий период'),k('Предыдущий период')][i]!),`uv:${view.id}:m:${mode}`,view.mode===mode?'primary':undefined)))
   }
   // One row per limit, like the periods: off / with sound / silent, the chosen one marked.
   const seg = (on: boolean, text: string, data: string) => button(`${on ? '• ' : ''}${text}`, wrap(data), on ? 'primary' : undefined)
   const shownLimits = view ? view.limits.map(l => ({ ...l, resetsAt: l.resetsAt ? new Date(l.resetsAt) : null })) : l?.limits.items ?? []
+  if(!view?.sections||view.section==='notifications'){
+  if(view?.sections)rows.push([button(tr('« Назад'),`uv:${view.id}:s:details`)])
   for (const [i, it] of shownLimits.entries()) {
     if (!it.resetsAt || it.stale || it.resetsAt.getTime()<=Date.now()) continue
     const req = parseRequest(d.store.get(`limit_notify:${it.label}`))
     const asked = req && windowKey(new Date(req.at)) === windowKey(it.resetsAt) && !req.off ? req : null
     rows.push([
-      seg(!asked, tr('{v}: выкл', { v: tr(it.label) }), `lr:${i}:x`),
+      {...seg(!asked,tr('{v}: выкл',{v:tr(it.label.replace(/^Codex:\s*/,''))}),`lr:${i}:x`),icon_custom_emoji_id:AGENT_EMOJI[it.label.startsWith('Codex:')?'codex':'claude']},
       seg(!!asked && !asked.silent, '🔔', `lr:${i}`),
       seg(!!asked?.silent, '🔕', `lr:${i}:s`),
     ])
   }
   const wOn = warmupOn(d)
   rows.push([seg(!wOn, tr('⚡ Окно: обычно'), 'us:w:off'), seg(wOn, tr('⚡ Сразу после сброса'), 'us:w:on')])
+  }
   rows.push([button(tr('« Статистика'), 'hub:stats'), button(tr('🔄 Обновить'), view ? `uv:${view.id}:r` : 'us:r')])
   return new InlineKeyboard(rows)
 }
@@ -724,6 +728,7 @@ export async function handleResetCallback(d: Daemon, ctx: Context, data: string)
       else await d.bot.api.sendDocument(v.chatId,new InputFile(Buffer.from(svg),`usage-${v.id}.svg`),{message_thread_id:v.threadId,disable_notification:true});return true
     }
     if(view[2]==='s'&&v.sections){
+      if(view[3]==='notifications'&&!v.sections.notifications)v.sections.notifications=htmlPages(notificationPanel(v.limits))
       if(view[3]==='commits'&&v.stats){
         const {commitsSince}=await import('./git.ts')
         const lines=[tr('Коммиты')]
@@ -849,11 +854,11 @@ export function limitsHtml(now = Date.now()): string | null {
   if (l?.limits.items.length) {
     const plan = planName(readOAuth())
     const extra = l.limits.breakdown ? [`<i>${escapeHtml(tr('За неделю: {v}', { v: l.limits.breakdown }))}</i>`] : []
-    out.push(`${plan ? tr('🟠 <b>Claude</b> · {v}', { v: escapeHtml(plan) }) : '🟠 <b>Claude</b>'}\n<blockquote>${[...l.limits.items.map(line), ...extra].join('\n')}</blockquote>`)
+    out.push(`${agentEmoji('claude')} <b>Claude Code</b>${plan?' · '+escapeHtml(plan):''}\n<blockquote>${[...l.limits.items.map(line), ...extra].join('\n')}</blockquote>`)
   }
   if (codex.length) {
     const at = freshness(cx!.at)
-    out.push(`${cx!.plan ? tr('⚫️ <b>Codex</b> · {v}', { v: escapeHtml(cx!.plan) }) : '⚫️ <b>Codex</b>'}\n<blockquote>${[...codex.map(line), `<i>${escapeHtml(tr('по последнему запросу, {at}', { at }))}</i>`].join('\n')}</blockquote>`)
+    out.push(`${agentEmoji('codex')} <b>Codex</b>${cx!.plan?' · '+escapeHtml(cx!.plan):''}\n<blockquote>${[...codex.map(line), `<i>${escapeHtml(tr('по последнему запросу, {at}', { at }))}</i>`].join('\n')}</blockquote>`)
   }
   return out.join('\n\n')
 }

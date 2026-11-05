@@ -1,3 +1,4 @@
+import { BUTTON_EMOJI } from './daemon/button-emoji.ts'
 /**
  * Telegram rich messages (Bot API 10.1+), pure helpers:
  *  - screenToRich: a daemon screen in Telegram HTML ("🎛 <b>Меню</b>\n…") →
@@ -65,11 +66,16 @@ export function screenToRich(html: string): string | null {
   for (const b of body.matchAll(BLOCK)) {
     // A heading right before a quote ("💸 <b>Потребление</b>\n<blockquote>") stays with it.
     flush(body.slice(last, b.index))
-    out.push(b[1] === 'blockquote' ? b[0].replace(/\n/g, '<br>') : b[0])
+    if(b[1]==='blockquote'&&/^<blockquote expandable>/.test(b[0])) {
+      const inner=b[0].replace(/^<blockquote expandable>/,'').replace(/<\/blockquote>$/,'')
+      const title=/^<b>([^]*?)<\/b>\n/.exec(inner)
+      out.push(title?`<details><summary>${title[1]}</summary><p>${inner.slice(title[0].length).replace(/\n/g,'<br>')}</p></details>`:b[0].replace(/\n/g,'<br>'))
+    } else out.push(b[1] === 'blockquote' ? b[0].replace(/\n/g, '<br>') : b[0])
     last = b.index + b[0].length
   }
   flush(body.slice(last))
-  return out.join('')
+  // Preserve existing agent tags and never replace emoji inside attributes/code.
+  return out.join('').split(/(<tg-emoji\b[^>]*>[^]*?<\/tg-emoji>|<pre\b[^>]*>[^]*?<\/pre>|<code\b[^>]*>[^]*?<\/code>|<[^>]+>)/g).map(part=>part.startsWith('<')?part:part.replace(/\p{Extended_Pictographic}\uFE0F?/gu,e=>{const id=BUTTON_EMOJI[e.replace(/\uFE0F/g,'')];return id?`<tg-emoji emoji-id="${id}">${e}</tg-emoji>`:e})).join('')
 }
 
 const FENCE = /^\s*(```|~~~)/

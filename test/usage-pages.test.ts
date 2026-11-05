@@ -57,7 +57,7 @@ describe('durable usage pagination',()=>{
     expect(v.pages.length).toBeGreaterThan(1)
     expect(renderUsageView(d,v).text).toContain('Страница 1 из')
     const all=v.pages.map(plain).join('')
-    for(let i=0;i<60;i++){const id=String(i).padStart(3,'0');expect(all).toContain(`page-model-${id}-`);expect(all).toContain(`page-owner-${id}:`)}
+    for(let i=0;i<60;i++){const id=String(i).padStart(3,'0');expect(all).toContain(`page-model-${id}-`);expect(all).toContain(`page-owner-${id}`)}
     for(const p of v.pages){expect(p.length).toBeLessThanOrEqual(3600);balanced(p)}
     await handleResetCallback(d,ctx,`uv:${v.id}:g:1`)
     expect(edits).toHaveLength(1);expect(edits[0]!.text).toContain('Страница 2 из')
