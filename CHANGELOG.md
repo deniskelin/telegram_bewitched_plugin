@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased — independent investments module
+
+- Add broker-enforced read-only account synchronization, exact-money accounting, operation history and upcoming coupon/dividend calendar.
+- Run ten-minute monitoring, morning/exchange-close reports, cash receipts, calendar reminders and durable Telegram delivery without LLM sessions.
+- Add owner-scoped `/invest` UI, JSON/CSV/ICS exports, a local configuration CLI and disabled-by-default profile.
+- Keep active background modules alive without agent sessions; reserve the bound topic for the module.
+- Provide optional local paper allocation, explicitly separate from broker sandbox/real orders; document data, news, accounting and security limits.
+
+
 ## Unreleased — opt-in session result reports
 
 - Default automatic standalone result reports to off per logical session, with persistent opt-in through `/settings`, user `/menu`, and the owner’s session notification controls.

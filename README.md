@@ -310,3 +310,5 @@ Usage details now fold comparison, quotas, models and projects into separate sec
 The initial `/usage` summary includes remaining five-hour and weekly quota for both agents, reset times and source timestamps.
 
 Automatic separate result reports are off by default. Each user can enable their own via `/settings` (or `/menu`); the owner configures project sessions in their settings or session notification controls. Preferences survive reconnects; ordinary answers and task accounting continue.
+
+Investments is an independent daemon module: read-only accounts, monitoring, scheduled reports, payments and optional local paper simulation run without an LLM. `/invest` opens its menu. Configuration is private and disabled by default; live credentials and explicit news sources are required. [Setup, scope and limitations](docs/investments.md).

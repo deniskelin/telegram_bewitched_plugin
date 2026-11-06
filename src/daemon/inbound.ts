@@ -1,3 +1,4 @@
+import { registerInvestments } from '../modules/investments/ui.ts'
 import { applySessionEvent } from '../core/session.ts'
 import { bindTask } from './taskcost.ts'
 /**
@@ -593,6 +594,7 @@ async function handleStopCallback(d: Daemon, ctx: Context, data: string): Promis
 // --------------------------------------------------------------------------
 
 export function registerInbound(d: Daemon, bot: Bot, token: string): void {
+  registerInvestments(d,bot)
   d.routeText = (chat, fromId, text, meta) => routeText(d, chat, fromId, text, meta)
   bot.command('economy', async ctx => {
     if (!ctx.from || !can(ctx.from.id, 'control')) return

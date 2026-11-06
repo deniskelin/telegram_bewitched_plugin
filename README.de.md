@@ -293,3 +293,5 @@ Berichtsdetails klappen Vergleich, Kontingente, Modelle und Projekte getrennt ei
 Die erste `/usage`-Ansicht zeigt für beide Agenten das verbleibende Fünf-Stunden- und Wochenkontingent sowie Rücksetz- und Beobachtungszeiten.
 
 Separate automatische Ergebnisberichte sind standardmäßig aus. Nutzer aktivieren sie für ihre Sitzung über `/settings` oder `/menu`; der Besitzer verwaltet Projektsitzungen in deren Einstellungen oder Benachrichtigungsbereich. Die Auswahl bleibt nach Neuverbindung erhalten; normale Antworten und Verbrauchserfassung laufen weiter.
+
+Investitionen ist ein unabhängiges Daemon-Modul: Konten mit Lesezugriff, Überwachung, geplante Berichte, Zahlungen und optionale lokale Simulation laufen ohne LLM. Menü: `/invest`. Private Konfiguration, standardmäßig deaktiviert; eigene Zugangsdaten und Nachrichtenquellen erforderlich. [Details](docs/investments.md).
