@@ -308,3 +308,5 @@ The control panel now prioritizes attention and links to compact reports. Sessio
 Usage details now fold comparison, quotas, models and projects into separate sections; notifications open separately and agent icons distinguish reminder windows.
 
 The initial `/usage` summary includes remaining five-hour and weekly quota for both agents, reset times and source timestamps.
+
+Automatic separate result reports are off by default. Each user can enable their own via `/settings` (or `/menu`); the owner configures project sessions in their settings or session notification controls. Preferences survive reconnects; ordinary answers and task accounting continue.

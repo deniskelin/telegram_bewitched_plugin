@@ -291,3 +291,5 @@ Le panneau privilégie les sessions demandant une intervention et conserve filtr
 Les détails replient séparément comparaison, quotas, modèles et projets ; les notifications ont leur propre vue et une icône d’agent par fenêtre.
 
 Le premier écran `/usage` affiche les quotas restants sur cinq heures et une semaine des deux agents, les réinitialisations et l’heure des données.
+
+Les rapports de résultat séparés sont désactivés par défaut. Chaque utilisateur les active pour sa session via `/settings` ou `/menu` ; le propriétaire configure les sessions de projet dans leurs paramètres ou notifications. Le choix survit aux reconnexions ; réponses normales et comptabilisation restent actives.

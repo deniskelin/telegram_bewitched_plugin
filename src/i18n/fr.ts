@@ -1087,6 +1087,13 @@ const dict: Dict = {
   "Обычно": "Normal",
   "Подробно": "Détaillé",
   "🔐 Ждут разрешения: {size} — /permissions": "🔐 En attente d’autorisation : {size} — /permissions",
+  "⚙️ <b>Настройки сессии</b>": "⚙️ <b>Paramètres de session</b>",
+  "Отдельный итоговый отчёт: {state}": "Rapport de résultat séparé : {state}",
+  "включён": "activé",
+  "Обычные ответы приходят всегда. Настройка итогов сохраняется для этой сессии.": "Les réponses normales arrivent toujours. Le réglage des résultats est conservé pour cette session.",
+  "📋 Итоги: включить": "📋 Résultats : activer",
+  "📋 Итоги: выключить": "📋 Résultats : désactiver",
+  "📋 Итоги сессии": "📋 Résultats de session",
 }
 
 export default dict

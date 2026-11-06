@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased — opt-in session result reports
+
+- Default automatic standalone result reports to off per logical session, with persistent opt-in through `/settings`, user `/menu`, and the owner’s session notification controls.
+- Restrict members to their own user session; preserve ordinary answers, task accounting and explicit result reopening while reports are disabled.
+
+
 ## Unreleased — quota on the usage summary
 
 - Show both agents’ five-hour and weekly remaining quota, resets and observation times on the initial `/usage` screen; preserve unknown/expired states.

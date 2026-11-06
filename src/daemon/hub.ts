@@ -1,3 +1,4 @@
+import { handleResultSettings, resultSettingsTarget, resultSettingsScreen } from './resultsettings.ts'
 import { lastResult } from './ux.ts'
 import { sessionShortName } from './report.ts'
 /**
@@ -118,7 +119,7 @@ export function settingsScreen(d: Daemon, c: { chatId: string; threadId?: number
     if (settings.ttsProvider === 'silero') kb.push(SILERO_VOICES.map(v => button(mark(voice === v, v), `hub:tv:${v}`, voice === v ? 'primary' : undefined)))
     kb.push(SPEEDS.map(v => button(mark(p.ttsSpeed === v, `×${v}`), `hub:ts:${Math.round(v * 100)}`, p.ttsSpeed === v ? 'primary' : undefined)))
   }
-  kb.push([button(t('🧠 Настройки агента'), 'hub:agent'), button(t('Дополнительно'), 'hub:advanced')], [BACK()])
+  kb.push([button(t('📋 Итоги сессии'),'rs:open')],[button(t('🧠 Настройки агента'), 'hub:agent'), button(t('Дополнительно'), 'hub:advanced')], [BACK()])
   return { text: lines.join('\n'), kb: new InlineKeyboard(kb as never) }
 }
 
@@ -179,8 +180,19 @@ export function helpScreen(): Screen {
 }
 
 export function registerHubCommands(d: Daemon, bot: Bot): void {
+  bot.command('settings',async ctx=>{
+    const project=resultSettingsTarget(d,ctx)
+    if(!project){await ctx.reply(t('Нет доступа.'));return}
+    const screen=resultSettingsScreen(d,project)
+    await ctx.reply(screen.text,{parse_mode:'HTML',reply_markup:screen.kb,message_thread_id:ctx.message?.message_thread_id})
+  })
   bot.command('menu', async ctx => {
-    if (!ctx.from || !can(ctx.from.id, 'control')) return
+    if(!ctx.from)return
+    if(!can(ctx.from.id,'control')){
+      const project=resultSettingsTarget(d,ctx);if(!project)return
+      const screen=resultSettingsScreen(d,project)
+      await ctx.reply(screen.text,{parse_mode:'HTML',reply_markup:screen.kb,message_thread_id:ctx.message?.message_thread_id});return
+    }
     const { text, kb } = mainScreen(d,place(ctx))
     const thread = ctx.message?.is_topic_message ? ctx.message.message_thread_id : undefined
     await ctx.reply(text, { parse_mode: 'HTML', reply_markup: kb, message_thread_id: thread })
@@ -203,6 +215,7 @@ export function registerHubCommands(d: Daemon, bot: Bot): void {
 
 /** hub:main|stats|people|rem|mc|set|help|usage|digest|reports, hub:v|n|vo|tr|tv|ts|sa|sf|qh|lg:<value> */
 export async function handleHubCallback(d: Daemon, ctx: Context, data: string): Promise<boolean> {
+  if(await handleResultSettings(d,ctx,data))return true
   const m = /^hub:([a-z]+)(?::(\w+))?$/.exec(data)
   if (!m) return false
   if (!ctx.from || !can(ctx.from.id, 'control')) {
