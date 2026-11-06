@@ -4,7 +4,14 @@ export type KV = {
   keys(prefix: string): string[]
 }
 export type Money = { units?: string | number; nano?: number; currency?: string }
-export type AccountConfig = { id: string; name: string; tokenEnv: string; strategy?: boolean }
+export type AccountConfig = {
+  id: string
+  name: string
+  tokenEnv: string
+  credentialRef?: string
+  brokerType?: string
+  strategy?: boolean
+}
 export type Config = {
   enabled: boolean
   criticalSound?: boolean

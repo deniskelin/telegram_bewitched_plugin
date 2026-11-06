@@ -9,6 +9,15 @@ import { InvestmentRepository } from './repository.ts'
 import type { Broker, Config, News, Snapshot, TradingDay } from './types.ts'
 export class InvestmentService {
   private busy = false
+  private generation = 0
+  settingsChanged(): void {
+    this.generation++
+    this.repo.save('lastAttempt', 0)
+    for (const key of this.repo.keys('outbox:')) {
+      const job = this.repo.read<any>(key, null)
+      if (job?.status === 'pending') this.repo.save(key, { ...job, status: 'cancelled', text: '', pages: [] })
+    }
+  }
   get running(): boolean {
     return this.busy
   }
@@ -23,20 +32,22 @@ export class InvestmentService {
     this.repo.queue(id, text, now, ack, /^(news|move|health|feed-health):/.test(id))
   }
   async flush(now: number): Promise<void> {
+    const generation = this.generation
     const jobs = this.repo
       .keys('outbox:')
       .map((key) => ({ key, job: this.repo.read<any>(key, null) }))
       .filter((j) => j.job?.status === 'pending')
       .sort((a, b) => a.job.at - b.job.at)
     for (const { key, job } of jobs) {
-      if (this.repo.read('paused', false) || job.next > now) break
+      if (generation !== this.generation || this.repo.read('paused', false) || job.next > now) break
       try {
         job.pages ??= htmlPages(job.text)
         job.page ??= 0
         this.repo.save(key, job)
         while (job.page < job.pages.length) {
-          if (this.repo.read('paused', false)) return
+          if (generation !== this.generation || this.repo.read('paused', false)) return
           job.message = await this.send(job.pages[job.page], job.urgent)
+          if (generation !== this.generation) return
           job.page++
           this.repo.save(key, job)
         }
@@ -44,6 +55,7 @@ export class InvestmentService {
         job.status = 'sent'
         this.repo.save(key, job)
       } catch {
+        if (generation !== this.generation) return
         job.attempts++
         job.next = now + Math.min(300_000, 2000 * 2 ** Math.min(8, job.attempts))
         this.repo.save(key, job)
@@ -54,6 +66,7 @@ export class InvestmentService {
   }
   async tick(now = Date.now(), force = false): Promise<void> {
     if (this.busy || !this.config.enabled || this.repo.read('paused', false)) return
+    const generation = this.generation
     this.busy = true
     try {
       if (!force && now - this.repo.read('lastAttempt', 0) < 600_000) {
@@ -75,14 +88,17 @@ export class InvestmentService {
             now,
             old ? Math.max(now - 90 * 86400_000, old.snapshot.at - 2 * 86400_000) : now - 90 * 86400_000
           )
+          if (generation !== this.generation) return
           if (this.broker.calendar && this.repo.read('calendarDay:' + a.id, '') !== day) {
             try {
               data.payments = await this.broker.calendar(a, data.snapshot.positions, now)
+              if (generation !== this.generation) return
               data.calendarFresh = true
             } catch {
               data.warnings.push('calendar unavailable')
             }
           }
+          if (generation !== this.generation) return
           this.repo.saveAccount(a.id, data)
           if (data.calendarFresh) this.repo.save('calendarDay:' + a.id, day)
           successful++
@@ -131,6 +147,7 @@ export class InvestmentService {
             )
           this.repo.save('health:account:' + a.id, 0)
         } catch {
+          if (generation !== this.generation) return
           const count = this.repo.read('health:account:' + a.id, 0) + 1
           this.repo.save('health:account:' + a.id, count)
           if (count === 2)
@@ -147,6 +164,7 @@ export class InvestmentService {
       for (const f of this.config.feeds) {
         try {
           const items = await this.news(f, held, now)
+          if (generation !== this.generation) return
           this.repo.saveNews(items, now)
           if (this.repo.read('health:feed:' + f.name, 0) >= 2)
             this.enqueue(
@@ -162,6 +180,7 @@ export class InvestmentService {
               now
             )
         } catch {
+          if (generation !== this.generation) return
           const count = this.repo.read('health:feed:' + f.name, 0) + 1
           this.repo.save('health:feed:' + f.name, count)
           if (count === 2)
@@ -170,10 +189,13 @@ export class InvestmentService {
       }
       if (this.config.accounts.length && now - this.repo.read('scheduleAt', 0) > 6 * 3600_000) {
         try {
-          this.repo.save('schedule', await this.broker.schedule(now))
+          const schedule = await this.broker.schedule(now)
+          if (generation !== this.generation) return
+          this.repo.save('schedule', schedule)
           this.repo.save('scheduleAt', now)
           this.repo.save('scheduleError', false)
         } catch {
+          if (generation !== this.generation) return
           this.repo.save('scheduleError', true)
         }
       }

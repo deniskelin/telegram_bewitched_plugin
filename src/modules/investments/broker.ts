@@ -7,7 +7,7 @@ export class ReadOnlyBroker implements Broker {
   constructor(
     private readonly token: (env: string) => string | undefined = (e) => process.env[e],
     private readonly fetcher: typeof fetch = fetch,
-    private readonly credential: string = ''
+    private readonly credential: string | (() => string) = ''
   ) {}
   private async call(service: string, method: string, body: unknown, env: string): Promise<any> {
     const token = this.token(env)
@@ -178,10 +178,64 @@ export class ReadOnlyBroker implements Broker {
         from: new Date(now - 2 * 86400_000).toISOString(),
         to: new Date(now + 8 * 86400_000).toISOString()
       },
-      this.credential
+      typeof this.credential === 'function' ? this.credential() : this.credential
     )
     const exchange = r.exchanges?.find((e: any) => e.exchange === 'MOEX')
     if (!Array.isArray(exchange?.days)) throw new Error('Trading schedule unavailable')
     return exchange.days
   }
+}
+
+export async function inspectReadOnlyAccounts(
+  token: string,
+  fetcher: typeof fetch = fetch
+): Promise<import('./accounts.ts').BrokerAccount[]> {
+  if (!token || token.length > 4096 || /[\s\x00-\x1f]/.test(token)) throw new Error('Invalid credential')
+  let response: Response
+  try {
+    response = await fetcher(BASE + 'UsersService/GetAccounts', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: '{}',
+      signal: AbortSignal.timeout(15000),
+      redirect: 'error'
+    })
+  } catch {
+    throw new Error('Broker unavailable')
+  }
+  if (!response.ok) throw new Error('Read-only account verification failed')
+  const data = await response.json()
+  if (
+    !Array.isArray(data.accounts) ||
+    !data.accounts.length ||
+    data.accounts.some((a: any) => a.accessLevel !== 'ACCOUNT_ACCESS_LEVEL_READ_ONLY')
+  )
+    throw new Error('Read-only credential required')
+  const open = data.accounts.filter((a: any) => a.status === 'ACCOUNT_STATUS_OPEN')
+  if (!open.length) throw new Error('No open accounts')
+  return open.map((a: any) => {
+    if (typeof a.id !== 'string' || !/^[\w-]{1,100}$/.test(a.id)) throw new Error('Invalid broker identity')
+    return {
+      id: a.id,
+      name: typeof a.name === 'string' ? a.name.slice(0, 60) : a.id,
+      type: typeof a.type === 'string' ? a.type.slice(0, 100) : 'ACCOUNT_TYPE_UNSPECIFIED'
+    }
+  })
+}
+
+/** Probe the selected portfolio before a credential becomes persistent. */
+export async function probeReadOnlyAccount(token: string, id: string, fetcher: typeof fetch = fetch): Promise<void> {
+  const accounts = await inspectReadOnlyAccounts(token, fetcher)
+  if (!accounts.some((a) => a.id === id)) throw new Error('Account unavailable')
+  const response = await fetcher(BASE + 'OperationsService/GetPortfolio', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ accountId: id, currency: 'RUB' }),
+    signal: AbortSignal.timeout(15000),
+    redirect: 'error'
+  })
+  if (!response.ok) throw new Error('Portfolio unavailable')
+  const data = await response.json()
+  if (!Array.isArray(data.positions) || !data.totalAmountPortfolio) throw new Error('Portfolio incomplete')
+  nano(data.totalAmountPortfolio)
 }
