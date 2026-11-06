@@ -1,5 +1,8 @@
 # Task usage accounting
 
+Automatic separate result reports are **off by default for every session**. Each paired user can opt in for their own session through `/settings` (also available from their `/menu`). The owner can configure a project from `/settings` in its topic or Sessions → session → Notifications. The setting is persisted for the logical user/project session, survives reconnects and does not follow an answer into another destination chat. Another user cannot change it. Ordinary replies and task accounting continue when reports are off; manually reopening a saved result remains available. Existing report messages are retained. `RESULT_CARDS=off` remains a global kill switch and is not overridden by a session opt-in.
+
+
 The **Full usage report** button downloads a JSON report with exact counts and every stage/request, without transcript text or server paths. The card previews up to eight engine/model groups.
 
 Use **Details** on the compact result card to reveal its **Task usage** report and additional actions. **Close report** hides only the report, while **Close task** changes the task lifecycle. Result cards include a collapsed **Task usage** report, with a durable task ID. A result being ready does not close the task: corrections, answers to questions, retries, engine handoffs and another-engine reviews can contribute further stages. **Close task** ends that identity; **Continue task** reopens it. Both buttons run inside the daemon and invoke no model. Repeating an existing result also invokes no model and adds no stage.

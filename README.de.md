@@ -291,3 +291,5 @@ Das Pult priorisiert Sitzungen mit Handlungsbedarf; Listen speichern Filter und 
 Berichtsdetails klappen Vergleich, Kontingente, Modelle und Projekte getrennt ein; Benachrichtigungen haben eine eigene Ansicht mit Agentensymbolen je Fenster.
 
 Die erste `/usage`-Ansicht zeigt für beide Agenten das verbleibende Fünf-Stunden- und Wochenkontingent sowie Rücksetz- und Beobachtungszeiten.
+
+Separate automatische Ergebnisberichte sind standardmäßig aus. Nutzer aktivieren sie für ihre Sitzung über `/settings` oder `/menu`; der Besitzer verwaltet Projektsitzungen in deren Einstellungen oder Benachrichtigungsbereich. Die Auswahl bleibt nach Neuverbindung erhalten; normale Antworten und Verbrauchserfassung laufen weiter.

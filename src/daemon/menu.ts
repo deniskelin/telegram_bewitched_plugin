@@ -1,3 +1,4 @@
+import { resultReportsOn, setResultReports } from './resultsettings.ts'
 import { viewScope } from './usageview.ts'
 import { sessionView, saveSessionView, SESSION_FILTERS, type SessionView } from './sessionview.ts'
 import { taskOf } from './taskcost.ts'
@@ -124,6 +125,8 @@ export async function sessionScreen(d: Daemon, s: Session, group?: CardGroup): P
     } else text += `\n\n<i>${t('Сессия не в tmux — команды не отправить.')}</i>`
     rows.push(back)
   } else if (group === 'n') {
+    const reports=resultReportsOn(d,s.projectKey)
+    rows.push([button(`${reports?'• ':''}${t('📋 Итоги: включить')}`,`sm:rr:${s.id}:on`,reports?'primary':undefined),button(`${!reports?'• ':''}${t('📋 Итоги: выключить')}`,`sm:rr:${s.id}:off`,!reports?'primary':undefined)])
     // The current value is marked; tapping it again does nothing harmful.
     rows.push(([0, 1, 2] as const).map(v => button(`${p.verbose === v ? '• ' : ''}${verboseBadge(v)}`, `sm:v:${s.id}:${v}`, p.verbose === v ? 'primary' : undefined)))
     rows.push((['off', 'long', 'always'] as const).map(v => button(`${p.notifyDone === v ? '• ' : ''}✅ ${v === 'long' ? t('долгие') : t(NOTIFY_DONE_INFO[v])}`, `sm:n:${s.id}:${v}`, p.notifyDone === v ? 'primary' : undefined)))
@@ -624,6 +627,8 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     const text = stuck.length ? t('🗄 Топик в архиве. Сессию #{id} закрыть не смог (не в tmux) — закройте её сами.', { id: s.id }) : t('🗄 В архиве, сессия #{id} закрывается.', { id: s.id })
     await show(ctx, { text, kb: new InlineKeyboard([[button(t('« К списку'), 'sm:list')]]) })
     return true
+  } else if(action==='rr'&&(value==='on'||value==='off')){
+    setResultReports(d,s.projectKey,value==='on');toast=t('Сохранено')
   } else if (action === 'v' && ['0', '1', '2'].includes(value ?? '')) {
     const c = sessionChat(d, s)
     const v = Number(value) as 0 | 1 | 2
@@ -635,7 +640,7 @@ export async function handleSessionMenu(d: Daemon, ctx: Context, data: string): 
     toast = t('✅ готово: {v}', { v: t(NOTIFY_DONE_INFO[value]) })
   }
   // Stay in the group the button was in.
-  const group: CardGroup | undefined = action === 'v' || action === 'n' ? 'n' : action === 'aar' ? 'm' : ['cmp', 'clr', 'clrok', 'model'].includes(action) ? 'c' : undefined
+  const group: CardGroup | undefined = action === 'v' || action === 'n' || action==='rr' ? 'n' : action === 'aar' ? 'm' : ['cmp', 'clr', 'clrok', 'model'].includes(action) ? 'c' : undefined
   await show(ctx, await sessionScreen(d, s, group))
   await answer(toast)
   return true

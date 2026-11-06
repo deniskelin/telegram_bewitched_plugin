@@ -1,3 +1,4 @@
+import { setResultReports } from '../src/daemon/resultsettings.ts'
 import { describe, test, expect } from 'bun:test'
 import { mkdtempSync, mkdirSync, writeFileSync, appendFileSync } from 'fs'
 import { tmpdir } from 'os'
@@ -117,6 +118,7 @@ test('result lifecycle and replay controls never launch a model or add a stage',
   Object.assign(d.bot, { api: new Proxy({}, {get: (_,method:string) => async () => { calls.push(method); return {message_id:900} }}) })
   const { publishResult, lastResult, handleUxCallback } = await import('../src/daemon/ux.ts')
   const previous = process.env.RESULT_CARDS; process.env.RESULT_CARDS = 'on'
+  setResultReports(d,s.projectKey,true)
   try {
     startStage(d,s,meta); prompt(id); usage('result'); finishStage(d,s)
     await publishResult(d,s,chat,[21],'answer',{summary:'done',checks:'verified'})

@@ -1,3 +1,4 @@
+import { setResultReports } from '../src/daemon/resultsettings.ts'
 import { test, expect, describe } from 'bun:test'
 import { Store } from '../src/db.ts'
 import { receiveMessage, deliveryPhase, sessionPhase, renderDelivery, rememberSession, replacementSession, publishResult, lastResult, handleUxCallback } from '../src/daemon/ux.ts'
@@ -66,8 +67,29 @@ describe('reliable UX', () => {
     expect(await verifyStop(d, s, 2)).toBe(false)
     expect(s.status).toBe('working')
   })
+  test('automatic reports default off; enabling is isolated and disabling preserves manual results',async()=>{
+    const {d,s,calls}=setup(),previous=process.env.RESULT_CARDS;process.env.RESULT_CARDS='on'
+    try{
+      await publishResult(d,s,chat,[10],'answer',{summary:'Ready'})
+      expect(calls.filter(c=>c.method==='sendMessage')).toHaveLength(0)
+      expect(lastResult(d,s.projectKey)).toMatchObject({summary:'Ready',unread:false})
+      expect(lastResult(d,s.projectKey)?.card).toBeUndefined()
+      setResultReports(d,s.projectKey,true)
+      await publishResult(d,{...s,id:'reconnected'},chat,[11],'answer',{summary:'On'})
+      expect(calls.filter(c=>c.method==='sendMessage')).toHaveLength(1)
+      await publishResult(d,{...s,projectKey:'/other'},chat,[12],'answer',{summary:'Other'})
+      expect(calls.filter(c=>c.method==='sendMessage')).toHaveLength(1)
+      setResultReports(d,s.projectKey,false)
+      await publishResult(d,s,chat,[13],'answer',{summary:'Off again'})
+      expect(calls.filter(c=>c.method==='sendMessage')).toHaveLength(1)
+      const r=lastResult(d,s.projectKey)!
+      const {ctx}=context();await handleUxCallback(d,ctx,`urx:show:${r.id}`)
+      expect(lastResult(d,s.projectKey)?.expanded).toBe(true)
+    }finally{if(previous===undefined)delete process.env.RESULT_CARDS;else process.env.RESULT_CARDS=previous}
+  })
   test('multipart results and attachments replay from persistent records without model calls', async () => {
     const { d, s, calls } = setup()
+    setResultReports(d,s.projectKey,true)
     const old = process.env.RESULT_CARDS
     process.env.RESULT_CARDS = 'on'
     try {

@@ -1,3 +1,4 @@
+import { resultReportsOn } from './resultsettings.ts'
 import { taskForSession, taskReport, taskUsageData, taskOf, changeTask, refreshTaskCards } from './taskcost.ts'
 /** Persistent UI state. A transport dispatch is not an acknowledgement from the agent. */
 import { randomBytes } from 'crypto'
@@ -120,13 +121,14 @@ export async function publishResult(d: Daemon, s: Session, chat: ChatRef, messag
   const id = randomBytes(8).toString('hex')
   const clean = (x: unknown, n: number) => clip(maskSecrets(typeof x === 'string' ? x : ''), n)
   const pr = typeof details?.pr_url === 'string' ? details.pr_url : text.match(/https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+/)?.[0]
-  const r: Result = { id, session: s.id, project: s.projectKey, chat, messages: [...new Set(messages)], files: messages.filter(id => d.store.getMessage(chat.chatId, id)?.kind === 'document'), summary: clean(details?.summary || text || t('Получить файлы'), 500), ...(details?.checks ? { checks: clean(details.checks, 500) } : {}), ...(details?.remaining ? { remaining: clean(details.remaining, 500) } : {}), ...(pr && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr) ? { pr } : {}), unread: true, at: Date.now() }
+  const r: Result = { id, session: s.id, project: s.projectKey, chat, messages: [...new Set(messages)], files: messages.filter(id => d.store.getMessage(chat.chatId, id)?.kind === 'document'), summary: clean(details?.summary || text || t('Получить файлы'), 500), ...(details?.checks ? { checks: clean(details.checks, 500) } : {}), ...(details?.remaining ? { remaining: clean(details.remaining, 500) } : {}), ...(pr && /^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/pull\/\d+$/.test(pr) ? { pr } : {}), unread: resultReportsOn(d,s.projectKey), at: Date.now() }
   r.taskId = taskForSession(d, s)
   const task = r.taskId ? taskOf(d, r.taskId) : null
   if (!task || task.chat.chatId !== chat.chatId || (task.chat.threadId ?? 0) !== (chat.threadId ?? 0)) r.taskId = undefined
   if (r.taskId) { if (task?.state !== 'closed') changeTask(d, r.taskId, 'ready'); r.cost = taskReport(d, r.taskId) }
   d.store.set(`ux:result:${id}`, JSON.stringify(r))
   d.store.set(`ux:last-result:${s.projectKey}`, id)
+  if(!resultReportsOn(d,s.projectKey))return
   const posted = await inChat(d, chat.chatId, chat.threadId, () => d.bot.api.sendMessage(chat.chatId, resultText(r, false), { parse_mode: 'HTML', disable_notification: true, message_thread_id: chat.threadId, reply_markup: resultButtons(r) }))
   const current: Result = JSON.parse(d.store.get(`ux:result:${id}`)!)
   current.card = posted.message_id

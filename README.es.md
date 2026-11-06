@@ -291,3 +291,5 @@ El panel prioriza sesiones que requieren atención y conserva filtros y páginas
 Los detalles pliegan comparación, cuotas, modelos y proyectos por separado; las notificaciones tienen su propia vista e iconos de agente por ventana.
 
 La primera vista de `/usage` muestra las cuotas restantes de cinco horas y semanales de ambos agentes, sus reinicios y la hora de observación.
+
+Los informes de resultado separados están desactivados por defecto. Cada usuario los activa para su sesión con `/settings` o `/menu`; el propietario configura las sesiones de proyecto en sus ajustes o notificaciones. La elección persiste al reconectar; las respuestas normales y la contabilidad continúan.
