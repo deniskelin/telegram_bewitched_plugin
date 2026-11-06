@@ -1,0 +1,13 @@
+{
+  "enabled": false,
+  "chatId": "-1004291818146",
+  "threadId": 1316,
+  "timezone": "Europe/Moscow",
+  "morning": "10:00",
+  "close": "main",
+  "accounts": [],
+  "feeds": [],
+  "maxPositionPct": 30,
+  "priceAlertPct": 5,
+  "portfolioImpactPct": 1
+}

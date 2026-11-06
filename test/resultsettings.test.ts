@@ -30,6 +30,6 @@ test('members control only their own session, owners can configure project topic
     expect(resultReportsOn(d,own.projectKey)).toBe(false)
     expect(resultReportsOn(d,project.projectKey)).toBe(true)
     expect(resultSettingsTarget(d,ctx(999))).toBeNull()
-    expect(resultSettingsTarget({...d,userSession:()=>null} as Daemon,ctx(222))).toBe(own.projectKey)
+    expect(resultSettingsTarget({...d,userSession:()=>null} as unknown as Daemon,ctx(222))).toBe(own.projectKey)
   }finally{saveAccess(before)}
 })

@@ -100,6 +100,7 @@ export class Daemon {
   readonly bot: Bot
   readonly store: Store
   readonly sessions = new Map<string, Session>()
+  readonly backgroundModules = new Set<string>()
   readonly permissions = new Map<string, PendingPermission>()
   readonly streams: Streams
   botUsername = ''
@@ -560,7 +561,7 @@ export class Daemon {
   startIdleWatch(onExit: () => void): void {
     setInterval(() => {
       const min = settings.idleExitMin
-      if (min > 0 && this.sessions.size === 0 && Date.now() - this.lastClientGone > min * 60_000) onExit()
+      if (min > 0 && this.sessions.size === 0 && this.backgroundModules.size === 0 && Date.now() - this.lastClientGone > min * 60_000) onExit()
     }, 30_000).unref()
   }
 

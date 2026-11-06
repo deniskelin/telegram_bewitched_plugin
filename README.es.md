@@ -293,3 +293,5 @@ Los detalles pliegan comparación, cuotas, modelos y proyectos por separado; las
 La primera vista de `/usage` muestra las cuotas restantes de cinco horas y semanales de ambos agentes, sus reinicios y la hora de observación.
 
 Los informes de resultado separados están desactivados por defecto. Cada usuario los activa para su sesión con `/settings` o `/menu`; el propietario configura las sesiones de proyecto en sus ajustes o notificaciones. La elección persiste al reconectar; las respuestas normales y la contabilidad continúan.
+
+Inversiones es un módulo independiente del demonio: cuentas de solo lectura, monitorización, informes, pagos y simulación local opcional funcionan sin LLM. Menú: `/invest`. Configuración privada y desactivada por defecto; requiere credenciales y fuentes explícitas. [Detalles](docs/investments.md).
