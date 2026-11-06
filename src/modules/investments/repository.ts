@@ -21,7 +21,8 @@ export class InvestmentRepository {
   prune(now: number): void {
     for (const key of this.keys('outbox:')) {
       const job = this.read<any>(key, null)
-      if (job?.status === 'sent' && now - job.at > 30 * 86400_000) this.store.set(this.prefix + key, null)
+      if (['sent', 'cancelled'].includes(job?.status) && now - job.at > 30 * 86400_000)
+        this.store.set(this.prefix + key, null)
     }
   }
   account(id: string): AccountData | null {
@@ -57,7 +58,7 @@ export class InvestmentRepository {
   }
   queue(id: string, text: string, now: number, ack?: { key: string; value: unknown }, urgent = false): void {
     const key = 'outbox:' + createHash('sha256').update(id).digest('hex').slice(0, 32)
-    if (!this.store.get(this.prefix + key))
+    if (!this.store.get(this.prefix + key) || this.read<any>(key, null)?.status === 'cancelled')
       this.save(key, { id, text, at: now, attempts: 0, next: 0, status: 'pending', ack, urgent, page: 0 })
   }
 }

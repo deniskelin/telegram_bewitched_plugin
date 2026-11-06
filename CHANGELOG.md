@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased — investment account management
+
+- Add owner account menus for listing, adding, naming, role selection, key rotation and confirmed disconnection.
+- Verify read-only credentials and the selected portfolio from private local key files, with paths and write commands sent privately to the owner; persist encrypted credentials in private local files.
+- Apply account changes live, invalidate stale collection/delivery and support enabling monitoring from a disabled profile without restarting.
+- Document manual key-file setup, credential migration and security limits in the module guide and all READMEs.
+
 ## Unreleased — independent investments module
 
 - Add broker-enforced read-only account synchronization, exact-money accounting, operation history and upcoming coupon/dividend calendar.

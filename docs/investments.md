@@ -28,7 +28,29 @@ bun bin/investments.ts init /private/investments.json -1004291818146 1316
 bun bin/investments.ts check /private/investments.json
 ```
 
-Then edit it locally:
+### Account management in Telegram
+
+Open `/invest` → **Investment accounts**. The owner can list accounts, add up to four, rename them, choose monitoring or strategy/reporting, replace a credential, and disconnect an account after confirmation. Only one account can have the strategy role. This role does not grant trading permission. Brokerage account type (brokerage/IIS/etc.) comes from T-Bank; the user selects the role separately.
+
+Changes from this menu are persisted immediately and do not require an agent, model, or restart. Start monitoring explicitly with the monitoring play button after connecting accounts. Disconnecting the last account disables monitoring and releases its keep-alive. Disconnection does not close the brokerage account. Previously stored history is retained locally but excluded from account reports/exports. Changes cancel pending delivery envelopes and invalidate in-flight data collection; Telegram pages already accepted for delivery cannot be recalled. A new cycle runs on the next scheduler check.
+
+**Keys are written manually to private files on the server, never sent through Telegram or an agent.** Opening Add account or Replace key prepares an empty 0600 file and sends the owner its path and a copyable zsh command by private message. The command reads the key silently, with no literal key in shell history or process arguments. Run it in an interactive SSH terminal, paste the read-only key at the hidden prompt, and press Enter. Then press **Check file**, select the broker account and confirm connection. No public HTTPS endpoint or web form is required.
+
+An administrator can prepare four input files before the approved deployment/restart:
+
+```bash
+bun bin/investments.ts prepare /private/investments.json
+```
+
+This prints only paths and write commands, never keys. It prepares three monitoring slots and one strategy slot; the owner may change each slot's role in the menu before connection. Setup metadata lives in the adjacent private `.setup.json` file and survives restart. Run `prepare` before starting/restarting the daemon; during normal operation create/cancel slots through the UI, then write only their key files manually. Pending slots can be reopened and cancelled from the account list. The last step validates broker-enforced read-only access and probes the selected portfolio; full-access keys and closed accounts are rejected. Replacement is bound to the original broker account.
+
+After successful connection, the plaintext input file is removed. The key is stored encrypted (AES-256-GCM) in `investments.json.keys`, with a separate random master key in `investments.json.keys.master`; all files are private (0600). The config stores an opaque reference, not the key. Back up the config, vault and master key together with appropriate access protection. Pending input files contain raw keys until connected or cancelled: do not include them in logs, Git or agent prompts. Local encryption does not protect against a process that can read the master key, including root agents. Losing the master key requires re-entering credentials. Key replacement/deletion prunes obsolete local encrypted values; revocation at T-Bank remains an owner action. Legacy credentials in the daemon environment remain supported; removing a connection removes its in-memory credential but does not rewrite your environment file or revoke the token.
+
+Renaming uses an expiring reply prompt in the owner's private chat; unrelated messages are not consumed. Manual external config changes are detected and require a daemon restart before further UI edits, preventing silent overwrites. Do not run multiple daemons against the same profile.
+
+### Manual configuration (optional)
+
+Alternatively, edit the private config locally:
 
 ```json
 {
@@ -50,9 +72,9 @@ Then edit it locally:
 
 The file must have mode 0600 and be at most 128 KiB. Account IDs and aliases are configured explicitly. Broker tokens belong in the daemon's private environment/configuration on the server, under the referenced `INVEST_*` names; never in the JSON example, chat, tool arguments or Git. Tokens must be read-only, preferably restricted at the broker to individual accounts.
 
-Set `INVESTMENTS_CONFIG` to the absolute path, enable the profile only after accounts/sources/thresholds are reviewed, and restart the daemon. Existing operational restart approval still applies. Configuration changes currently require restart. The offline `check` command validates file/settings/credential presence, not live broker connectivity; live account permission checks happen on synchronization. Initial failed connections are reported as errors, not silently considered verified.
+Set `INVESTMENTS_CONFIG` to the absolute path, enable the profile only after accounts/sources/thresholds are reviewed, and restart the daemon. Existing operational restart approval still applies. Manual configuration/environment changes require restart; account changes through the menu apply live. The offline `check` command validates file/settings/credential presence, not live broker connectivity; live account permission checks happen on synchronization; file-based setup additionally verifies account permissions and probes the selected portfolio before saving. Initial failed connections are reported as errors, not silently considered verified.
 
-At module initialization, credential values are captured privately and their configured environment names removed from the daemon environment to reduce accidental inheritance by future agent processes. This is not an OS security boundary against agents running as root: strict confidentiality requires separate service identities and protected secret storage. The module never puts raw credentials in messages, exports or model prompts. Error bodies from the broker are not exposed.
+At module initialization, credential values are captured privately and all matching `INVEST_*` environment names removed from the daemon environment to reduce accidental inheritance by future agent processes. This is not an OS security boundary against agents running as root: strict confidentiality requires separate service identities and protected secret storage. The module never puts raw credentials in messages, exports or model prompts. Error bodies from the broker are not exposed.
 
 ## Feeds and virtual strategy
 
@@ -93,3 +115,5 @@ See [original requirements](investments-spec.md). The owner's follow-up makes th
 No live broker connection or production financial schedule is claimed before credentials/accounts/sources are configured and validated. The supplied topic profile is disabled by default.
 
 Sources: [T-Bank tokens](https://developer.tbank.ru/invest/intro/intro/token), [operations](https://developer.tbank.ru/invest/api/operations-service), [instruments/calendar contracts](https://developer.tbank.ru/invest/services/instruments/methods), [market data](https://developer.tbank.ru/invest/services/quotes/marketdata/), [limits](https://developer.tbank.ru/invest/intro/intro/limits).
+
+Account permission/status/type fields follow the [T-Bank Users service contract](https://developer.tbank.ru/invest/services/accounts/users); setup probes use [GetPortfolio](https://developer.tbank.ru/invest/api/operations-service-get-portfolio).

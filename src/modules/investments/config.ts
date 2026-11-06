@@ -27,11 +27,14 @@ export function validateConfig(value: unknown): Config {
       typeof a.id !== 'string' ||
       !/^[\w-]{1,100}$/.test(a.id) ||
       typeof a.name !== 'string' ||
-      !a.name ||
+      !a.name.trim() ||
+      /[\x00-\x1f\x7f]/.test(a.name) ||
       a.name.length > 60 ||
       typeof a.tokenEnv !== 'string' ||
       !/^INVEST_[A-Z0-9_]+$/.test(a.tokenEnv) ||
-      (a.strategy !== undefined && typeof a.strategy !== 'boolean')
+      (a.strategy !== undefined && typeof a.strategy !== 'boolean') ||
+      (a.credentialRef !== undefined && !/^[a-f0-9]{32}$/.test(a.credentialRef)) ||
+      (a.brokerType !== undefined && (typeof a.brokerType !== 'string' || a.brokerType.length > 100))
     )
       throw new Error('Invalid account configuration')
   if (c.enabled && !c.accounts.length) throw new Error('Select accounts before enabling investments')

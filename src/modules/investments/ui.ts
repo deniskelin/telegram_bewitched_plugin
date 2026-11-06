@@ -13,9 +13,19 @@ import { render } from './render.ts'
 import type { Config } from './types.ts'
 import { inChat } from '../../daemon/lang.ts'
 import { createHash } from 'crypto'
+import { AccountRegistry } from './accounts.ts'
+import { AccountSetup } from './setup.ts'
+import { registerAccountUI } from './account-ui.ts'
 const runtimes = new WeakMap<
   Daemon,
-  { config: Config; service: InvestmentService; views: Map<string, number>; revision: number }
+  {
+    config: Config
+    service: InvestmentService
+    views: Map<string, number>
+    revision: number
+    registry: AccountRegistry
+    setup: AccountSetup
+  }
 >()
 export function investmentScope(config: Config, ctx: Context): boolean {
   const m = ctx.callbackQuery?.message ?? ctx.message,
@@ -37,6 +47,7 @@ function keyboard(section: string, page: number, pages: number): InlineKeyboard 
       button(t('⏸ Мониторинг'), 'iv:pause:0'),
       button(t('▶️ Мониторинг'), 'iv:resume:0')
     ],
+    [button(t('Счета инвестиций'), 'iva:list:0')],
     [button('JSON', 'iv:export:0'), button('CSV', 'iv:csv:0'), button('ICS', 'iv:ics:0')]
   ])
   if (pages > 1)
@@ -106,10 +117,21 @@ export function registerInvestments(d: Daemon, bot: Bot): void {
       const config = loadInvestmentConfig()
       if (config) {
         const tokens = new Map(config.accounts.map((a) => [a.tokenEnv, process.env[a.tokenEnv]]))
-        for (const name of tokens.keys()) delete process.env[name]
-        const repo = new InvestmentRepository(d.store, config.chatId + ':' + config.threadId),
-          broker = new ReadOnlyBroker((name) => tokens.get(name), undefined, config.accounts[0]?.tokenEnv)
-        const service = new InvestmentService(config, repo, broker, async (text, urgent) => {
+        for (const name of Object.keys(process.env)) if (/^INVEST_[A-Z0-9_]+$/.test(name)) delete process.env[name]
+        const repo = new InvestmentRepository(d.store, config.chatId + ':' + config.threadId)
+        let service: InvestmentService
+        const registry = new AccountRegistry(config, process.env.INVESTMENTS_CONFIG!, tokens, () => {
+          service?.settingsChanged()
+          if (config.enabled) d.backgroundModules.add('investments')
+          else d.backgroundModules.delete('investments')
+          runtimes.get(d)?.views.clear()
+        })
+        const broker = new ReadOnlyBroker(
+          (name) => registry.token(name),
+          undefined,
+          () => config.accounts[0]?.tokenEnv ?? ''
+        )
+        service = new InvestmentService(config, repo, broker, async (text, urgent) => {
           const sent = await bot.api.sendMessage(config.chatId, text, {
             parse_mode: 'HTML',
             message_thread_id: config.threadId,
@@ -117,10 +139,11 @@ export function registerInvestments(d: Daemon, bot: Bot): void {
           })
           return sent.message_id
         })
-        runtime = { config, service, views: new Map(), revision: 0 }
+        const setup = new AccountSetup(registry, owner)
+        runtime = { config, service, views: new Map(), revision: 0, registry, setup }
         runtimes.set(d, runtime)
-        if (config.enabled) {
-          d.backgroundModules.add('investments')
+        if (config.enabled) d.backgroundModules.add('investments')
+        {
           const tick = () =>
             void inChat(d, config.chatId, config.threadId, () => service.tick()).catch(() =>
               d.log('investments cycle failed')
@@ -133,6 +156,7 @@ export function registerInvestments(d: Daemon, bot: Bot): void {
       d.log('investments config invalid; module disabled')
     }
   }
+  if (runtime) registerAccountUI(bot, runtime.registry, runtime.setup, investmentScope)
   const draw = async (ctx: Context, section = 'summary', page = 0, edit = false) => {
     if (!ctx.from || !can(ctx.from.id, 'control')) return
     if (!runtime) {
@@ -184,6 +208,14 @@ export function registerInvestments(d: Daemon, bot: Bot): void {
       return
     }
     await ctx.answerCallbackQuery()
+    if (action === 'resume') {
+      try {
+        runtime.registry.enable()
+      } catch {
+        await ctx.reply(t('Сначала подключите хотя бы один счёт.'))
+        return
+      }
+    }
     if (action === 'pause' || action === 'resume') repo.save('paused', action === 'pause')
     if (action === 'refresh' || action === 'resume') {
       const active = runtime,

@@ -295,3 +295,5 @@ Die erste `/usage`-Ansicht zeigt für beide Agenten das verbleibende Fünf-Stund
 Separate automatische Ergebnisberichte sind standardmäßig aus. Nutzer aktivieren sie für ihre Sitzung über `/settings` oder `/menu`; der Besitzer verwaltet Projektsitzungen in deren Einstellungen oder Benachrichtigungsbereich. Die Auswahl bleibt nach Neuverbindung erhalten; normale Antworten und Verbrauchserfassung laufen weiter.
 
 Investitionen ist ein unabhängiges Daemon-Modul: Konten mit Lesezugriff, Überwachung, geplante Berichte, Zahlungen und optionale lokale Simulation laufen ohne LLM. Menü: `/invest`. Private Konfiguration, standardmäßig deaktiviert; eigene Zugangsdaten und Nachrichtenquellen erforderlich. [Details](docs/investments.md).
+
+Kontoverwaltung unter `/invest` → Anlagekonten: hinzufügen, umbenennen, Rolle wählen, Schlüssel ersetzen und trennen. Schlüssel werden manuell in private Serverdateien geschrieben; Pfade und kopierbare Befehle gehen privat an den Besitzer, die Prüfung erfolgt im Menü. Menüänderungen gelten ohne Neustart; der Brokerzugriff bleibt lesend.

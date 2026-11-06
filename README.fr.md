@@ -295,3 +295,5 @@ Le premier écran `/usage` affiche les quotas restants sur cinq heures et une se
 Les rapports de résultat séparés sont désactivés par défaut. Chaque utilisateur les active pour sa session via `/settings` ou `/menu` ; le propriétaire configure les sessions de projet dans leurs paramètres ou notifications. Le choix survit aux reconnexions ; réponses normales et comptabilisation restent actives.
 
 Investissements est un module autonome du démon : comptes en lecture seule, surveillance, rapports, paiements et simulation locale facultative fonctionnent sans LLM. Menu : `/invest`. Configuration privée, désactivée par défaut ; identifiants et sources explicites requis. [Détails](docs/investments.md).
+
+Gestion dans `/invest` → Comptes d’investissement : ajout, nom, rôle, remplacement de clé et déconnexion. Les clés sont écrites manuellement dans des fichiers privés du serveur ; le propriétaire reçoit les chemins et commandes en privé, puis vérifie la connexion dans le menu. Les changements du menu s’appliquent sans redémarrage ; l’accès au courtier reste en lecture seule.

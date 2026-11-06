@@ -312,3 +312,5 @@ The initial `/usage` summary includes remaining five-hour and weekly quota for b
 Automatic separate result reports are off by default. Each user can enable their own via `/settings` (or `/menu`); the owner configures project sessions in their settings or session notification controls. Preferences survive reconnects; ordinary answers and task accounting continue.
 
 Investments is an independent daemon module: read-only accounts, monitoring, scheduled reports, payments and optional local paper simulation run without an LLM. `/invest` opens its menu. Configuration is private and disabled by default; live credentials and explicit news sources are required. [Setup, scope and limitations](docs/investments.md).
+
+Account management is available under `/invest` → Investment accounts: add, rename, select a role, rotate keys and disconnect. Keys are written manually to private server files; the owner receives paths and copyable commands by DM, then verifies the connection in the menu. Menu changes apply without restart; all broker access remains read-only.
